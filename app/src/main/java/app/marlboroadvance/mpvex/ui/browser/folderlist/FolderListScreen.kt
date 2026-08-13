@@ -105,6 +105,8 @@ import app.marlboroadvance.mpvex.ui.browser.dialogs.ViewModeSelector
 import app.marlboroadvance.mpvex.ui.browser.dialogs.VisibilityToggle
 import app.marlboroadvance.mpvex.ui.browser.filesystem.FileSystemDirectoryScreen
 import app.marlboroadvance.mpvex.ui.browser.filesystem.FileSystemBrowserRootScreen
+import app.marlboroadvance.mpvex.ui.browser.networkstreaming.HomeNetworkConnectionsSection
+import app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkBrowserScreen
 import app.marlboroadvance.mpvex.ui.browser.selection.rememberSelectionManager
 import app.marlboroadvance.mpvex.ui.browser.sheets.PlayLinkSheet
 import app.marlboroadvance.mpvex.ui.browser.states.EmptyState
@@ -525,34 +527,53 @@ object FolderListScreen : Screen {
                 }
               }
             } else {
-              FolderListContent(
-                folders = filteredFolders,
-                foldersWithNewCount = foldersWithNewCount,
-                recentlyPlayedFilePath = recentlyPlayedFilePath,
-                isLoading = isLoading,
-                scanStatus = scanStatus,
-                hasCompletedInitialLoad = hasCompletedInitialLoad,
-                foldersWereDeleted = foldersWereDeleted,
-                mediaLayoutMode = mediaLayoutMode,
-                folderGridColumns = folderGridColumns,
-                tapThumbnailToSelect = tapThumbnailToSelect,
-                navigationBarHeight = navigationBarHeight,
-                listState = listState,
-                gridState = gridState,
-                isRefreshing = isRefreshing,
-                selectionManager = selectionManager,
-                onRefresh = { viewModel.refresh() },
-                onFolderClick = { folder ->
-                  if (selectionManager.isInSelectionMode) {
-                    selectionManager.toggle(folder)
-                  } else {
-                    backstack.add(app.marlboroadvance.mpvex.ui.browser.videolist.VideoListScreen(folder.bucketId, folder.name))
-                  }
-                },
-                onFolderLongClick = { folder ->
-                  selectionManager.toggle(folder)
-                },
-              )
+              Column(
+                modifier = Modifier.fillMaxSize(),
+              ) {
+                HomeNetworkConnectionsSection(
+                  onConnectionClick = { conn ->
+                    backstack.add(
+                      NetworkBrowserScreen(
+                        connectionId = conn.id,
+                        connectionName = conn.name,
+                      ),
+                    )
+                  },
+                  modifier = Modifier.fillMaxWidth(),
+                )
+                Box(
+                  modifier = Modifier.weight(1f),
+                ) {
+                  FolderListContent(
+                    folders = filteredFolders,
+                    foldersWithNewCount = foldersWithNewCount,
+                    recentlyPlayedFilePath = recentlyPlayedFilePath,
+                    isLoading = isLoading,
+                    scanStatus = scanStatus,
+                    hasCompletedInitialLoad = hasCompletedInitialLoad,
+                    foldersWereDeleted = foldersWereDeleted,
+                    mediaLayoutMode = mediaLayoutMode,
+                    folderGridColumns = folderGridColumns,
+                    tapThumbnailToSelect = tapThumbnailToSelect,
+                    navigationBarHeight = navigationBarHeight,
+                    listState = listState,
+                    gridState = gridState,
+                    isRefreshing = isRefreshing,
+                    selectionManager = selectionManager,
+                    onRefresh = { viewModel.refresh() },
+                    onFolderClick = { folder ->
+                      if (selectionManager.isInSelectionMode) {
+                        selectionManager.toggle(folder)
+                      } else {
+                        backstack.add(app.marlboroadvance.mpvex.ui.browser.videolist.VideoListScreen(folder.bucketId, folder.name))
+                      }
+                    },
+                    onFolderLongClick = { folder ->
+                      selectionManager.toggle(folder)
+                    },
+                  )
+                }
+              }
             }
           }
 

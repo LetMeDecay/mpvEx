@@ -183,6 +183,26 @@ private suspend fun loadMediaStoreThumbnail(context: Context, uri: Uri): Bitmap?
             }
           }
         }
+        // For local proxy URLs (network playback) serve the cached preview
+        "http" -> {
+          val host = uri.host
+          if (host == "127.0.0.1" || host == "localhost") {
+            val streamId = uri.path?.removePrefix("/")?.substringBefore("/")
+            val info =
+              streamId?.let {
+                app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy.getInstance()
+                  .getStreamInfo(it)
+              }
+            if (info != null) {
+              app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
+                .getCachedThumbnailBitmap(info.connection.id, info.filePath)
+            } else {
+              null
+            }
+          } else {
+            null
+          }
+        }
         else -> null
       }
     } catch (e: Exception) {

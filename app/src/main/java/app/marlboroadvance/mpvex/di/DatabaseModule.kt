@@ -451,9 +451,67 @@ val MIGRATION_8_9 = object : Migration(8, 9) {
         android.util.Log.d("Migration_8_9", "Schema is correct, no repair needed")
       }
       
+      // Add displayInHome column to network_connections table for Home screen display
+      try {
+        db.execSQL("ALTER TABLE `network_connections` ADD COLUMN `displayInHome` INTEGER NOT NULL DEFAULT 0")
+        android.util.Log.d("Migration_8_9", "Added displayInHome column to network_connections")
+      } catch (e: Exception) {
+        android.util.Log.w("Migration_8_9", "Error adding displayInHome column, may already exist", e)
+      }
+      
       android.util.Log.d("Migration_8_9", "Migration completed successfully")
     } catch (e: Exception) {
       android.util.Log.e("Migration_8_9", "Migration failed", e)
+      throw e
+    }
+  }
+}
+
+
+/**
+ * Migration from version 9 to version 10
+ *
+ * Changes:
+ * - Adds preloadCache column to network_connections for pre-warming the
+ *   duration/thumbnail cache on app launch
+ */
+val MIGRATION_9_10 = object : Migration(9, 10) {
+  override fun migrate(db: SupportSQLiteDatabase) {
+    try {
+      android.util.Log.d("Migration_9_10", "Starting migration from version 9 to 10")
+
+      db.execSQL("ALTER TABLE `network_connections` ADD COLUMN `preloadCache` INTEGER NOT NULL DEFAULT 0")
+
+      android.util.Log.d("Migration_9_10", "Migration completed successfully")
+    } catch (e: Exception) {
+      android.util.Log.e("Migration_9_10", "Migration failed", e)
+      throw e
+    }
+  }
+}
+
+
+/**
+ * Migration from version 10 to version 11
+ *
+ * Changes:
+ * - Adds configurable pre-warm settings to network_connections:
+ *   preloadDepth (max directory depth), preloadPerDir (max videos per directory),
+ *   preloadTotal (max videos per connection), preloadThreads (concurrent workers)
+ */
+val MIGRATION_10_11 = object : Migration(10, 11) {
+  override fun migrate(db: SupportSQLiteDatabase) {
+    try {
+      android.util.Log.d("Migration_10_11", "Starting migration from version 10 to 11")
+
+      db.execSQL("ALTER TABLE `network_connections` ADD COLUMN `preloadDepth` INTEGER NOT NULL DEFAULT 10")
+      db.execSQL("ALTER TABLE `network_connections` ADD COLUMN `preloadPerDir` INTEGER NOT NULL DEFAULT 5")
+      db.execSQL("ALTER TABLE `network_connections` ADD COLUMN `preloadTotal` INTEGER NOT NULL DEFAULT 500")
+      db.execSQL("ALTER TABLE `network_connections` ADD COLUMN `preloadThreads` INTEGER NOT NULL DEFAULT 6")
+
+      android.util.Log.d("Migration_10_11", "Migration completed successfully")
+    } catch (e: Exception) {
+      android.util.Log.e("Migration_10_11", "Migration failed", e)
       throw e
     }
   }
@@ -474,7 +532,7 @@ val DatabaseModule =
       Room
         .databaseBuilder(context, MpvExDatabase::class.java, "mpvex.db")
         .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
         .fallbackToDestructiveMigration(true) // Fallback if migration fails (last resort)
         .build()
     }

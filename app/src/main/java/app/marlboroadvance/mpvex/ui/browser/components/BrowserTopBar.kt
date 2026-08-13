@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RemoveCircle
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -94,6 +95,7 @@ fun BrowserTopBar(
   onTitleLongPress: (() -> Unit)? = null,
   useRemoveIcon: Boolean = false,
   onAddToPlaylistClick: (() -> Unit)? = null,
+  onRefreshClick: (() -> Unit)? = null,
 ) {
   if (isInSelectionMode) {
     SelectionTopBar(
@@ -113,6 +115,7 @@ fun BrowserTopBar(
       modifier = modifier,
       useRemoveIcon = useRemoveIcon,
       onAddToPlaylist = onAddToPlaylistClick,
+      onRefresh = onRefreshClick,
     )
   } else {
     NormalTopBar(
@@ -314,6 +317,7 @@ private fun SelectionTopBar(
   modifier: Modifier = Modifier,
   useRemoveIcon: Boolean = false,
   onAddToPlaylist: (() -> Unit)? = null,
+  onRefresh: (() -> Unit)? = null,
 ) {
   var showDropdown by remember { mutableStateOf(false) }
 
@@ -392,6 +396,21 @@ private fun SelectionTopBar(
       }
     },
     actions = {
+      // Refresh cache icon (for network browser)
+      if (onRefresh != null) {
+        IconButton(
+          onClick = onRefresh,
+          modifier = Modifier.padding(horizontal = 2.dp),
+        ) {
+          Icon(
+            Icons.Filled.Refresh,
+            contentDescription = "Refresh cache",
+            modifier = Modifier.size(28.dp),
+            tint = MaterialTheme.colorScheme.primary,
+          )
+        }
+      }
+
       // Play icon
       if (onPlay != null) {
         IconButton(

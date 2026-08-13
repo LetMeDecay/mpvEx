@@ -102,6 +102,8 @@ import app.marlboroadvance.mpvex.ui.browser.dialogs.RenameDialog
 import app.marlboroadvance.mpvex.ui.browser.dialogs.SortDialog
 import app.marlboroadvance.mpvex.ui.browser.dialogs.ViewModeSelector
 import app.marlboroadvance.mpvex.ui.browser.dialogs.VisibilityToggle
+import app.marlboroadvance.mpvex.ui.browser.networkstreaming.HomeNetworkConnectionsSection
+import app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkBrowserScreen
 import app.marlboroadvance.mpvex.ui.browser.selection.rememberSelectionManager
 import app.marlboroadvance.mpvex.ui.browser.sheets.PlayLinkSheet
 import app.marlboroadvance.mpvex.ui.browser.states.EmptyState
@@ -796,73 +798,94 @@ fun FileSystemBrowserScreen(path: String? = null) {
                 modifier = Modifier,
               )
             } else {
-              FileSystemBrowserContent(
-                listState = listState,
-                items = items,
-                videoFilesWithPlayback = videoFilesWithPlayback,
-                isLoading = isLoading && items.isEmpty(),
-                isRefreshing = isRefreshing,
-                error = error,
-                isAtRoot = isAtRoot,
-                breadcrumbs = breadcrumbs,
-                playlistMode = playlistMode,
-                itemsWereDeletedOrMoved = itemsWereDeletedOrMoved,
-                showSubtitleIndicator = showSubtitleIndicator,
-                navigationBarHeight = navigationBarHeight,
-                onRefresh = { viewModel.refresh() },
-                onFolderClick = { folder ->
-                  if (isInSelectionMode) {
-                    folderSelectionManager.toggle(folder)
-                  } else {
-                    backstack.add(FileSystemDirectoryScreen(folder.path))
-                  }
-                },
-                onFolderLongClick = { folder ->
-                  folderSelectionManager.toggle(folder)
-                },
-                onVideoClick = { video ->
-                  if (isInSelectionMode) {
-                    videoSelectionManager.toggle(video)
-                  } else {
-                    // If playlist mode is enabled, play all videos in current folder starting from clicked one
-                    if (playlistMode) {
-                      val allVideos = videos
-                      val startIndex = allVideos.indexOfFirst { it.id == video.id }
-                      if (startIndex >= 0) {
-                        if (allVideos.size == 1) {
-                          // Single video - play normally
-                          MediaUtils.playFile(video, context)
-                        } else {
-                          // Multiple videos - play as playlist starting from clicked video
-                          val intent = Intent(Intent.ACTION_VIEW, allVideos[startIndex].uri)
-                          intent.setClass(context, app.marlboroadvance.mpvex.ui.player.PlayerActivity::class.java)
-                          intent.putExtra("internal_launch", true)
-                          intent.putParcelableArrayListExtra("playlist", ArrayList(allVideos.map { it.uri }))
-                          intent.putExtra("playlist_index", startIndex)
-                          intent.putExtra("launch_source", "playlist")
-                          context.startActivity(intent)
-                        }
+              Column(
+                modifier = Modifier.fillMaxSize(),
+              ) {
+                if (isAtRoot) {
+                  HomeNetworkConnectionsSection(
+                    onConnectionClick = { conn ->
+                      backstack.add(
+                        NetworkBrowserScreen(
+                          connectionId = conn.id,
+                          connectionName = conn.name,
+                        ),
+                      )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                  )
+                }
+                Box(
+                  modifier = Modifier.weight(1f),
+                ) {
+                  FileSystemBrowserContent(
+                    listState = listState,
+                    items = items,
+                    videoFilesWithPlayback = videoFilesWithPlayback,
+                    isLoading = isLoading && items.isEmpty(),
+                    isRefreshing = isRefreshing,
+                    error = error,
+                    isAtRoot = isAtRoot,
+                    breadcrumbs = breadcrumbs,
+                    playlistMode = playlistMode,
+                    itemsWereDeletedOrMoved = itemsWereDeletedOrMoved,
+                    showSubtitleIndicator = showSubtitleIndicator,
+                    navigationBarHeight = navigationBarHeight,
+                    onRefresh = { viewModel.refresh() },
+                    onFolderClick = { folder ->
+                      if (isInSelectionMode) {
+                        folderSelectionManager.toggle(folder)
                       } else {
-                        MediaUtils.playFile(video, context)
+                        backstack.add(FileSystemDirectoryScreen(folder.path))
                       }
-                    } else {
-                      MediaUtils.playFile(video, context)
-                    }
-                  }
-                },
-                onVideoLongClick = { video ->
-                  videoSelectionManager.toggle(video)
-                },
-                onBreadcrumbClick = { component ->
-                  // Navigate to the breadcrumb by popping until we reach it
-                  // or pushing if it's a new path
-                  backstack.add(FileSystemDirectoryScreen(component.fullPath))
-                },
-                folderSelectionManager = folderSelectionManager,
-                videoSelectionManager = videoSelectionManager,
-                modifier = Modifier,
-                isInSelectionMode = isInSelectionMode,
-              )
+                    },
+                    onFolderLongClick = { folder ->
+                      folderSelectionManager.toggle(folder)
+                    },
+                    onVideoClick = { video ->
+                      if (isInSelectionMode) {
+                        videoSelectionManager.toggle(video)
+                      } else {
+                        // If playlist mode is enabled, play all videos in current folder starting from clicked one
+                        if (playlistMode) {
+                          val allVideos = videos
+                          val startIndex = allVideos.indexOfFirst { it.id == video.id }
+                          if (startIndex >= 0) {
+                            if (allVideos.size == 1) {
+                              // Single video - play normally
+                              MediaUtils.playFile(video, context)
+                            } else {
+                              // Multiple videos - play as playlist starting from clicked video
+                              val intent = Intent(Intent.ACTION_VIEW, allVideos[startIndex].uri)
+                              intent.setClass(context, app.marlboroadvance.mpvex.ui.player.PlayerActivity::class.java)
+                              intent.putExtra("internal_launch", true)
+                              intent.putParcelableArrayListExtra("playlist", ArrayList(allVideos.map { it.uri }))
+                              intent.putExtra("playlist_index", startIndex)
+                              intent.putExtra("launch_source", "playlist")
+                              context.startActivity(intent)
+                            }
+                          } else {
+                            MediaUtils.playFile(video, context)
+                          }
+                        } else {
+                          MediaUtils.playFile(video, context)
+                        }
+                      }
+                    },
+                    onVideoLongClick = { video ->
+                      videoSelectionManager.toggle(video)
+                    },
+                    onBreadcrumbClick = { component ->
+                      // Navigate to the breadcrumb by popping until we reach it
+                      // or pushing if it's a new path
+                      backstack.add(FileSystemDirectoryScreen(component.fullPath))
+                    },
+                    folderSelectionManager = folderSelectionManager,
+                    videoSelectionManager = videoSelectionManager,
+                    modifier = Modifier,
+                    isInSelectionMode = isInSelectionMode,
+                  )
+                }
+              }
             }
           }
 

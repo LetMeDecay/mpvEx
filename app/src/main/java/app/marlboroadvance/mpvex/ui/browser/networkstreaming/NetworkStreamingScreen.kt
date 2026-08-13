@@ -61,11 +61,14 @@ import app.marlboroadvance.mpvex.ui.browser.dialogs.EditConnectionSheet
 import app.marlboroadvance.mpvex.ui.browser.states.EmptyState
 import app.marlboroadvance.mpvex.ui.preferences.PreferencesScreen
 import app.marlboroadvance.mpvex.ui.utils.LocalBackStack
+import app.marlboroadvance.mpvex.presentation.components.ConfirmDialog
 import app.marlboroadvance.mpvex.utils.media.MediaUtils
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import org.koin.compose.koinInject
 import app.marlboroadvance.mpvex.preferences.FolderViewMode
+import android.widget.Toast
 
 @Serializable
 object NetworkStreamingScreen : Screen {
@@ -82,6 +85,7 @@ object NetworkStreamingScreen : Screen {
     val browserPreferences = koinInject<app.marlboroadvance.mpvex.preferences.BrowserPreferences>()
     var showAddSheet by remember { mutableStateOf(false) }
     var editingConnection by remember { mutableStateOf<NetworkConnection?>(null) }
+    var connectionToClearCache by remember { mutableStateOf<NetworkConnection?>(null) }
     val navigationBarHeight = app.marlboroadvance.mpvex.ui.browser.LocalNavigationBarHeight.current
 
     // LazyList state for scroll tracking
@@ -249,6 +253,25 @@ object NetworkStreamingScreen : Screen {
                 onAutoConnectChange = { conn, autoConnect ->
                   viewModel.updateConnection(conn.copy(autoConnect = autoConnect))
                 },
+                onDisplayInHomeChange = { conn, displayInHome ->
+                  viewModel.updateConnection(conn.copy(displayInHome = displayInHome))
+                },
+                onPreloadCacheChange = { conn, preloadCache ->
+                  viewModel.updateConnection(conn.copy(preloadCache = preloadCache))
+                },
+                onPreloadConfigChange = { conn, setting, value ->
+                  val updated =
+                    when (setting) {
+                      app.marlboroadvance.mpvex.ui.browser.cards.PreloadSetting.Depth -> conn.copy(preloadDepth = value)
+                      app.marlboroadvance.mpvex.ui.browser.cards.PreloadSetting.PerDir -> conn.copy(preloadPerDir = value)
+                      app.marlboroadvance.mpvex.ui.browser.cards.PreloadSetting.Total -> conn.copy(preloadTotal = value)
+                      app.marlboroadvance.mpvex.ui.browser.cards.PreloadSetting.Threads -> conn.copy(preloadThreads = value)
+                    }
+                  viewModel.updateConnection(updated)
+                },
+                onClearPreviewCache = { conn ->
+                  connectionToClearCache = conn
+                },
                 isConnected = status?.isConnected ?: false,
                 isConnecting = status?.isConnecting ?: false,
                 error = status?.error,
@@ -278,6 +301,28 @@ object NetworkStreamingScreen : Screen {
             viewModel.updateConnection(updatedConnection)
             editingConnection = null
           },
+        )
+      }
+
+      // Clear preview cache confirmation for a single connection
+      connectionToClearCache?.let { connection ->
+        ConfirmDialog(
+          title = "Clear preview cache?",
+          subtitle = "Delete all cached previews (thumbnails and durations) for \"${connection.name}\"? They will regenerate when you browse again.",
+          onConfirm = {
+            coroutineScope.launch(Dispatchers.IO) {
+              val cleared = NetworkMetadataProbe.clearConnectionCache(connection.id)
+              coroutineScope.launch {
+                connectionToClearCache = null
+                if (cleared) {
+                  Toast.makeText(context, "Preview cache cleared for ${connection.name}", Toast.LENGTH_SHORT).show()
+                } else {
+                  Toast.makeText(context, "Failed to clear preview cache for ${connection.name}", Toast.LENGTH_LONG).show()
+                }
+              }
+            }
+          },
+          onCancel = { connectionToClearCache = null },
         )
       }
     }

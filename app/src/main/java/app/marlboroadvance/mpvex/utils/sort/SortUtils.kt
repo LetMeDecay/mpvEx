@@ -3,7 +3,9 @@ package app.marlboroadvance.mpvex.utils.sort
 import app.marlboroadvance.mpvex.domain.browser.FileSystemItem
 import app.marlboroadvance.mpvex.domain.media.model.Video
 import app.marlboroadvance.mpvex.domain.media.model.VideoFolder
+import app.marlboroadvance.mpvex.domain.network.NetworkFile
 import app.marlboroadvance.mpvex.preferences.FolderSortType
+import app.marlboroadvance.mpvex.preferences.NetworkSortType
 import app.marlboroadvance.mpvex.preferences.SortOrder
 import app.marlboroadvance.mpvex.preferences.VideoSortType
 
@@ -73,6 +75,69 @@ object SortUtils {
         FolderSortType.Date -> videos.sortedBy { it.lastModified }
         FolderSortType.Size -> videos.sortedBy { it.video.size }
         FolderSortType.VideoCount -> videos.sortedBy { it.video.duration } // Use duration for videos
+      }
+
+    // Apply sort order
+    val orderedFolders = if (sortOrder.isAscending) sortedFolders else sortedFolders.reversed()
+    val orderedVideos = if (sortOrder.isAscending) sortedVideos else sortedVideos.reversed()
+
+    // Return folders first, then videos
+    return orderedFolders + orderedVideos
+  }
+
+  /**
+   * Sort network files (folders and videos) by the specified type and order
+   * Directories are always shown first, then files.
+   *
+   * A stable secondary sort on the file name is always applied so that items
+   * sharing the same primary sort key (e.g. identical timestamps, durations,
+   * or the still-unknown duration 0) keep a deterministic order. This prevents
+   * items from flickering when durations are updated progressively in the
+   * background.
+   */
+  fun sortNetworkFiles(
+    files: List<NetworkFile>,
+    sortType: NetworkSortType,
+    sortOrder: SortOrder,
+  ): List<NetworkFile> {
+    // Secondary comparator: stable order by natural name comparison
+    val byName: Comparator<NetworkFile> =
+      Comparator { t1, t2 -> NaturalOrderComparator.DEFAULT.compare(t1.name, t2.name) }
+
+    // Separate directories and files
+    val folders = files.filter { it.isDirectory }
+    val videos = files.filter { !it.isDirectory }
+
+    // Sort folders
+    val sortedFolders =
+      when (sortType) {
+        NetworkSortType.Title -> folders.sortedWith(byName)
+        NetworkSortType.Date -> folders.sortedWith(
+          compareBy<NetworkFile> { it.lastModified }.then(byName),
+        )
+        NetworkSortType.Size -> folders.sortedWith(
+          compareBy<NetworkFile> { it.size }.then(byName),
+        )
+        NetworkSortType.Duration -> folders.sortedWith(byName) // Folders have no duration
+      }
+
+    // Sort files
+    val sortedVideos =
+      when (sortType) {
+        NetworkSortType.Title -> videos.sortedWith(byName)
+        NetworkSortType.Date -> videos.sortedWith(
+          compareBy<NetworkFile> { it.lastModified }.then(byName),
+        )
+        NetworkSortType.Size -> videos.sortedWith(
+          compareBy<NetworkFile> { it.size }.then(byName),
+        )
+        // Sort by duration, keep files with unknown duration (0) at the end,
+        // and use the name as a stable tie-breaker.
+        NetworkSortType.Duration -> videos.sortedWith(
+          compareBy<NetworkFile> { it.duration <= 0L }
+            .thenBy { it.duration }
+            .then(byName),
+        )
       }
 
     // Apply sort order

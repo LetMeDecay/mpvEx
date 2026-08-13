@@ -30,6 +30,16 @@ class NetworkRepository(
   fun getAllConnections(): Flow<List<NetworkConnection>> = dao.getAllConnections()
 
   /**
+   * Get connections that should be displayed on the Home screen
+   */
+  fun getHomeConnections(): Flow<List<NetworkConnection>> = dao.getHomeConnections()
+
+  /**
+   * Get connections that should pre-warm the cache on app launch
+   */
+  suspend fun getPreloadCacheConnections(): List<NetworkConnection> = dao.getPreloadCacheConnections()
+
+  /**
    * Get connections that should auto-connect on launch
    */
   suspend fun getAutoConnectConnections(): List<NetworkConnection> = dao.getAutoConnectConnections()

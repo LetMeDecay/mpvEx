@@ -56,6 +56,7 @@ import `is`.xyz.mpv.MPVNode
 import `is`.xyz.mpv.Utils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
@@ -1311,6 +1312,9 @@ class PlayerActivity :
    * @return The display name/title of the file
    */
   internal fun getPlaylistItemTitle(uri: Uri): String {
+    // Local proxy URLs carry a stream id in the path, not the real filename.
+    resolveProxyFileName(uri)?.let { return it }
+
     // Try content resolver first for content:// URIs
     getDisplayNameFromUri(uri)?.let { return it }
 
@@ -3060,14 +3064,107 @@ class PlayerActivity :
       // Refresh playlist items to update the currently playing indicator
       viewModel.refreshPlaylistItems()
     }
+
+    // Pre-warm the next network item so switching is seamless
+    startNextPrefetch()
+  }
+
+  /**
+   * Watches playback progress and, shortly before the current file ends,
+   * pre-fetches the next playlist item's file header into the proxy cache so
+   * the track switch doesn't stall on downloading the container header.
+   */
+  private fun startNextPrefetch() {
+    if (playlist.size <= 1) return
+    val isNetworkPlayback = playlist.any { it.host == "127.0.0.1" || it.host == "localhost" }
+    if (!isNetworkPlayback) return
+
+    lifecycleScope.launch(Dispatchers.IO) {
+      while (isActive) {
+        val duration = MPVLib.getPropertyDouble("duration") ?: 0.0
+        val pos = MPVLib.getPropertyDouble("time-pos") ?: 0.0
+        if (duration > 0) {
+          if (duration - pos <= NEXT_PREFETCH_SECONDS) {
+            prefetchNextPlaylistItem()
+            return@launch
+          }
+        } else {
+          // Duration unknown yet - give the file a moment to load before polling
+          kotlinx.coroutines.delay(1000)
+          continue
+        }
+        kotlinx.coroutines.delay(500)
+      }
+    }
+  }
+
+  /**
+   * Pre-fetch the file header (first ~2MB) of the next playlist item through
+   * the proxy, so mpv opens it instantly at switch time. Handles repeat-all
+   * wrap-around; shuffle leaves the next item unpredictable and is skipped.
+   */
+  private fun prefetchNextPlaylistItem() {
+    var next = playlistIndex + 1
+    if (next >= playlist.size) {
+      if (playlist.size > 1 && viewModel.repeatMode.value == app.marlboroadvance.mpvex.ui.player.RepeatMode.ALL) {
+        next = 0
+      } else {
+        return
+      }
+    }
+
+    val uri = playlist.getOrNull(next) ?: return
+    val host = uri.host
+    if (host != "127.0.0.1" && host != "localhost") return
+
+    val streamId = uri.path?.removePrefix("/")?.substringBefore("/") ?: return
+    val info = app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy.getInstance().getStreamInfo(streamId)
+      ?: return
+
+    lifecycleScope.launch(Dispatchers.IO) {
+      val file =
+        app.marlboroadvance.mpvex.domain.network.NetworkFile(
+          name = info.filePath.substringAfterLast('/').ifBlank { info.filePath },
+          path = info.filePath,
+          size = info.fileSize,
+          isDirectory = false,
+          mimeType = info.mimeType,
+        )
+      runCatching {
+        app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe.prefetchHeader(info.connection, file)
+        Log.d(TAG, "Prefetched next item header: ${info.filePath}")
+      }
+    }
   }
 
   /**
    * Get file name from URI (used for playlist items)
    */
   private fun getFileNameFromUri(uri: Uri): String {
+    // Local proxy URLs carry a stream id in the path, not the real filename,
+    // so resolve the actual network file name from the proxy registry first.
+    resolveProxyFileName(uri)?.let { return it }
     getDisplayNameFromUri(uri)?.let { return it }
     return extractFileNameFromUri(uri)
+  }
+
+  /**
+   * For local proxy URLs (http://127.0.0.1:port/<streamId>) the path segment is
+   * a generated stream id, so the real file name is looked up from the proxy.
+   */
+  private fun resolveProxyFileName(uri: Uri): String? {
+    val host = uri.host ?: return null
+    if (host != "127.0.0.1" && host != "localhost") return null
+    val streamId = uri.path?.removePrefix("/")?.substringBefore("/") ?: return null
+    val info =
+      app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy.getInstance()
+        .getStreamInfo(streamId) ?: return null
+    val name = info.filePath.substringAfterLast('/').ifBlank { info.filePath }
+    return try {
+      java.net.URLDecoder.decode(name, "UTF-8")
+    } catch (e: Exception) {
+      name
+    }
   }
 
   /**
@@ -3314,6 +3411,12 @@ class PlayerActivity :
      * Intent action used to return playback result data to the calling activity.
      */
     private const val RESULT_INTENT = "app.marlboroadvance.mpvex.ui.player.PlayerActivity.result"
+
+    /**
+     * Trigger the next-item header prefetch when this many seconds remain in
+     * the current file.
+     */
+    private const val NEXT_PREFETCH_SECONDS = 20
 
     /**
      * Constant for "brightness not set".

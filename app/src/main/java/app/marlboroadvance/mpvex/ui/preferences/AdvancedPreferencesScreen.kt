@@ -8,6 +8,7 @@ import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
+import app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
 import app.marlboroadvance.mpvex.utils.media.OpenDocumentTreeContract
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -514,6 +515,7 @@ object AdvancedPreferencesScreen : Screen {
             PreferenceCard {
               var mpvConf by remember { mutableStateOf(preferences.mpvConf.get()) }
               var isClearThumbsConfirmShown by remember { mutableStateOf(false) }
+              var isClearAllPreviewsConfirmShown by remember { mutableStateOf(false) }
               val thumbnailRepository = koinInject<ThumbnailRepository>()
               
               Preference(
@@ -578,6 +580,45 @@ object AdvancedPreferencesScreen : Screen {
                     }
                   },
                   onCancel = { isClearThumbsConfirmShown = false },
+                )
+              }
+
+              PreferenceDivider()
+
+              Preference(
+                title = { Text(text = "Clear all preview images") },
+                summary = {
+                  Text(
+                    text = "Delete ALL cached video previews (local folders + network shares). They will regenerate as you browse.",
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+                onClick = { isClearAllPreviewsConfirmShown = true },
+              )
+
+              if (isClearAllPreviewsConfirmShown) {
+                ConfirmDialog(
+                  title = "Clear all preview images?",
+                  subtitle = "This will delete local and network video previews (including durations) from storage and memory.",
+                  onConfirm = {
+                    scope.launch(Dispatchers.IO) {
+                      runCatching {
+                        thumbnailRepository.clearThumbnailCache()
+                        NetworkMetadataProbe.clearCache()
+                      }.onSuccess {
+                        withContext(Dispatchers.Main) {
+                          isClearAllPreviewsConfirmShown = false
+                          Toast.makeText(context, "All preview images cleared", Toast.LENGTH_SHORT).show()
+                        }
+                      }.onFailure { error ->
+                        withContext(Dispatchers.Main) {
+                          isClearAllPreviewsConfirmShown = false
+                          Toast.makeText(context, "Failed to clear: ${error.message}", Toast.LENGTH_LONG).show()
+                        }
+                      }
+                    }
+                  },
+                  onCancel = { isClearAllPreviewsConfirmShown = false },
                 )
               }
               

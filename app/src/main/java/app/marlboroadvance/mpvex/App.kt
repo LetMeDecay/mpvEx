@@ -7,6 +7,8 @@ import app.marlboroadvance.mpvex.di.FileManagerModule
 import app.marlboroadvance.mpvex.di.PreferencesModule
 import app.marlboroadvance.mpvex.presentation.crash.CrashActivity
 import app.marlboroadvance.mpvex.presentation.crash.GlobalExceptionHandler
+import app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkCacheWarmer
+import app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
 import app.marlboroadvance.mpvex.utils.media.MediaLibraryEvents
 import `is`.xyz.mpv.FastThumbnails
 import kotlinx.coroutines.CoroutineScope
@@ -40,6 +42,11 @@ class App : Application() {
     Thread.setDefaultUncaughtExceptionHandler(GlobalExceptionHandler(applicationContext, CrashActivity::class.java))
 
     FastThumbnails.initialize(this)
+
+    // Initialize the persistent network metadata cache so it survives app restarts
+    NetworkMetadataProbe.init(this)
+    // Pre-warm duration/thumbnail caches for connections marked for it
+    NetworkCacheWarmer.start(this)
 
     // Perform cache maintenance on app startup (non-blocking)
     applicationScope.launch {

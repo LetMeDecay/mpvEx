@@ -99,6 +99,7 @@ class WebDavClient(private val connection: NetworkConnection) : NetworkClient {
                 size = resource.contentLength ?: 0,
                 lastModified = resource.modified?.time ?: 0,
                 mimeType = if (!resource.isDirectory) getMimeType(resourceName) else null,
+                etag = resource.etag?.takeIf { it.isNotEmpty() },
               )
             }
 

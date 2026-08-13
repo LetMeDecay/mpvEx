@@ -31,6 +31,9 @@ import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.Flow
@@ -1462,7 +1465,36 @@ class PlayerViewModel(
 
       // Try to get from cache first (synchronized access)
       val cacheKey = uri.toString()
-      val (durationStr, resolutionStr) = synchronized(metadataCache) { metadataCache[cacheKey] } ?: ("" to "")
+      var (durationStr, resolutionStr) = synchronized(metadataCache) { metadataCache[cacheKey] } ?: ("" to "")
+
+      // For local proxy URLs (network playback) resolve cached duration and
+      // resolution by the network file path, since the stream-id URL has no
+      // MediaStore metadata.
+      if ((durationStr.isBlank() || resolutionStr.isBlank()) && (uri.host == "127.0.0.1" || uri.host == "localhost")) {
+        val streamId = uri.path?.removePrefix("/")?.substringBefore("/")
+        val info =
+          streamId?.let {
+            app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy.getInstance()
+              .getStreamInfo(it)
+          }
+        if (info != null) {
+          if (durationStr.isBlank()) {
+            val durationMs =
+              app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
+                .getCachedDuration(info.connection.id, info.filePath)
+            if (durationMs > 0) durationStr = formatDuration(durationMs)
+          }
+          if (resolutionStr.isBlank()) {
+            val res =
+              app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
+                .getCachedResolution(info.connection.id, info.filePath)
+            if (res != null) resolutionStr = "${res.first}×${res.second}"
+          }
+          if (durationStr.isNotBlank() || resolutionStr.isNotBlank()) {
+            metadataCache.put(cacheKey, durationStr to resolutionStr)
+          }
+        }
+      }
 
       app.marlboroadvance.mpvex.ui.player.controls.components.sheets.PlaylistItem(
         uri = uri,
@@ -1695,6 +1727,65 @@ class PlayerViewModel(
         // Load metadata asynchronously in the background
         loadPlaylistMetadataAsync(updatedItems)
       }
+      // Probe network items whose duration/resolution are not cached yet, then
+      // refresh so the values appear live instead of on the next list opening.
+      probeMissingNetworkMetadata()
+    }
+  }
+
+  @Volatile
+  private var probingNetworkMetadata = false
+
+  /**
+   * For local-proxy (network) playlist items without cached duration, probe the
+   * metadata in the background and refresh the list once cached.
+   */
+  private suspend fun probeMissingNetworkMetadata() {
+    if (probingNetworkMetadata) return
+    val activity = host as? PlayerActivity ?: return
+    if (activity.playlist.isEmpty()) return
+
+    probingNetworkMetadata = true
+    try {
+      val missing =
+        activity.playlist.mapNotNull { uri ->
+          if (uri.host != "127.0.0.1" && uri.host != "localhost") return@mapNotNull null
+          val streamId = uri.path?.removePrefix("/")?.substringBefore("/") ?: return@mapNotNull null
+          val info =
+            app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy.getInstance()
+              .getStreamInfo(streamId) ?: return@mapNotNull null
+          val hasDuration =
+            app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
+              .getCachedDuration(info.connection.id, info.filePath) > 0L
+          if (hasDuration) null else info
+        }
+      if (missing.isEmpty()) return
+
+      // Probe concurrently - NetworkMetadataProbe caps the real concurrency
+      // (durationSemaphore = 6), so batching here only speeds up completion
+      // without risking the network/CPU.
+      coroutineScope {
+        missing.map { info ->
+          async {
+            val file =
+              app.marlboroadvance.mpvex.domain.network.NetworkFile(
+                name = info.filePath.substringAfterLast('/').ifBlank { info.filePath },
+                path = info.filePath,
+                size = info.fileSize,
+                isDirectory = false,
+                mimeType = info.mimeType,
+              )
+            runCatching {
+              app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
+                .probeDuration(info.connection, file)
+            }
+          }
+        }.awaitAll()
+      }
+      // Duration (and resolution) are now cached - refresh so the list shows them
+      refreshPlaylistItems()
+    } finally {
+      probingNetworkMetadata = false
     }
   }
 

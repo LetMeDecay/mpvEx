@@ -1,10 +1,13 @@
 package app.marlboroadvance.mpvex.ui.browser.cards
 
+import android.graphics.Bitmap
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -25,6 +28,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.marlboroadvance.mpvex.preferences.AppearancePreferences
@@ -46,6 +51,7 @@ fun NetworkVideoCard(
   modifier: Modifier = Modifier,
   onLongClick: (() -> Unit)? = null,
   isSelected: Boolean = false,
+  thumbnail: Bitmap? = null,
 ) {
   val appearancePreferences = koinInject<AppearancePreferences>()
   val browserPreferences = koinInject<BrowserPreferences>()
@@ -92,13 +98,24 @@ fun NetworkVideoCard(
             ),
         contentAlignment = Alignment.Center,
       ) {
-        // Play icon overlay
-        Icon(
-          Icons.Filled.PlayArrow,
-          contentDescription = "Play",
-          modifier = Modifier.size(48.dp),
-          tint = MaterialTheme.colorScheme.secondary,
-        )
+        if (thumbnail != null) {
+          Image(
+            bitmap = thumbnail.asImageBitmap(),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+              .fillMaxSize()
+              .clip(RoundedCornerShape(12.dp)),
+          )
+        } else {
+          // Play icon overlay
+          Icon(
+            Icons.Filled.PlayArrow,
+            contentDescription = "Play",
+            modifier = Modifier.size(48.dp),
+            tint = MaterialTheme.colorScheme.secondary,
+          )
+        }
       }
       Spacer(modifier = Modifier.width(16.dp))
       Column(
@@ -116,6 +133,20 @@ fun NetworkVideoCard(
           horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
           verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp)
         ) {
+          if (file.duration > 0) {
+            Text(
+              formatDuration(file.duration),
+              style = MaterialTheme.typography.labelSmall,
+              modifier =
+                Modifier
+                  .background(
+                    MaterialTheme.colorScheme.surfaceContainerHigh,
+                    RoundedCornerShape(8.dp),
+                  )
+                  .padding(horizontal = 8.dp, vertical = 4.dp),
+              color = MaterialTheme.colorScheme.onSurface,
+            )
+          }
           if (showSizeChip && file.size > 0) {
             Text(
               formatFileSize(file.size),
@@ -147,6 +178,18 @@ fun NetworkVideoCard(
         }
       }
     }
+  }
+}
+
+private fun formatDuration(durationMs: Long): String {
+  val totalSeconds = durationMs / 1000
+  val hours = totalSeconds / 3600
+  val minutes = (totalSeconds % 3600) / 60
+  val seconds = totalSeconds % 60
+  return if (hours > 0) {
+    String.format("%d:%02d:%02d", hours, minutes, seconds)
+  } else {
+    String.format("%d:%02d", minutes, seconds)
   }
 }
 

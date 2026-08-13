@@ -105,6 +105,26 @@ enum class VideoSortType {
 }
 
 /**
+ * Network file sorting options
+ */
+enum class NetworkSortType {
+  Title,
+  Date,
+  Size,
+  Duration,
+  ;
+
+  val displayName: String
+    get() =
+      when (this) {
+        Title -> "Title"
+        Date -> "Date"
+        Size -> "Size"
+        Duration -> "Duration"
+      }
+}
+
+/**
  * Folder view mode options
  */
 enum class FolderViewMode {

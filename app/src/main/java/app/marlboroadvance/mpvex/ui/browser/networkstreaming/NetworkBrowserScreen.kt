@@ -1,5 +1,6 @@
 package app.marlboroadvance.mpvex.ui.browser.networkstreaming
 
+import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -10,8 +11,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Title
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -25,6 +32,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,18 +42,28 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import app.marlboroadvance.mpvex.database.dao.NetworkConnectionDao
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
+import app.marlboroadvance.mpvex.preferences.AppearancePreferences
+import app.marlboroadvance.mpvex.preferences.BrowserPreferences
+import app.marlboroadvance.mpvex.preferences.NetworkSortType
+import app.marlboroadvance.mpvex.preferences.SortOrder
 import app.marlboroadvance.mpvex.preferences.preference.collectAsState
 import app.marlboroadvance.mpvex.presentation.Screen
 import app.marlboroadvance.mpvex.presentation.components.pullrefresh.PullRefreshBox
 import app.marlboroadvance.mpvex.ui.browser.cards.NetworkFolderCard
 import app.marlboroadvance.mpvex.ui.browser.cards.NetworkVideoCard
 import app.marlboroadvance.mpvex.ui.browser.components.BrowserTopBar
+import app.marlboroadvance.mpvex.ui.browser.dialogs.SortDialog
+import app.marlboroadvance.mpvex.ui.browser.dialogs.VisibilityToggle
 import app.marlboroadvance.mpvex.ui.browser.states.EmptyState
 import app.marlboroadvance.mpvex.ui.preferences.PreferencesScreen
 import app.marlboroadvance.mpvex.ui.utils.LocalBackStack
 import kotlinx.serialization.Serializable
 import my.nanihadesuka.compose.LazyColumnScrollbar
 import my.nanihadesuka.compose.ScrollbarSettings
+import org.koin.compose.koinInject
+
+// How many items beyond the viewport to prefetch thumbnails for while scrolling.
+private const val THUMBNAIL_PREFETCH_AHEAD = 10
 
 @Serializable
 data class NetworkBrowserScreen(
@@ -73,16 +91,52 @@ data class NetworkBrowserScreen(
     val files by viewModel.files.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
+    val thumbnails by viewModel.thumbnails.collectAsState()
 
     // UI State
     val isRefreshing = remember { mutableStateOf(false) }
+    var sortDialogOpen by rememberSaveable { mutableStateOf(false) }
+    // Saveable so the scroll position is restored when returning from a sub-directory.
+    // navigation3 keeps rememberSaveable state per NavEntry via SaveableStateHolder.
+    val listState = rememberLazyListState()
+
+    // Preferences
+    val browserPreferences = koinInject<BrowserPreferences>()
+    val appearancePreferences = koinInject<AppearancePreferences>()
+    val networkSortType by viewModel.sortType.collectAsState()
+    val networkSortOrder by viewModel.sortOrder.collectAsState()
+    val showSizeChip by browserPreferences.showSizeChip.collectAsState()
+    val unlimitedNameLines by appearancePreferences.unlimitedNameLines.collectAsState()
+    val showNetworkThumbnails by appearancePreferences.showNetworkThumbnails.collectAsState()
 
     // Load files when connectionId or currentPath changes
     LaunchedEffect(connectionId, currentPath) {
       viewModel.loadFiles()
     }
 
-    BackHandler {
+    // Selection state (long-press to enter selection mode)
+    var selectedPaths by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val isInSelectionMode = selectedPaths.isNotEmpty()
+    val selectedItems = files.filter { selectedPaths.contains(it.path) }
+
+    fun toggleSelection(item: NetworkFile) {
+      selectedPaths =
+        if (selectedPaths.contains(item.path)) {
+          selectedPaths - item.path
+        } else {
+          selectedPaths + item.path
+        }
+    }
+
+    fun clearSelection() {
+      selectedPaths = emptySet()
+    }
+
+    BackHandler(enabled = isInSelectionMode) {
+      clearSelection()
+    }
+
+    BackHandler(enabled = !isInSelectionMode) {
       backstack.removeLastOrNull()
     }
 
@@ -90,12 +144,12 @@ data class NetworkBrowserScreen(
       topBar = {
         BrowserTopBar(
           title = connectionName,
-          isInSelectionMode = false,
-          selectedCount = 0,
-          totalCount = 0,
+          isInSelectionMode = isInSelectionMode,
+          selectedCount = selectedPaths.size,
+          totalCount = files.size,
           onBackClick = { backstack.removeLastOrNull() },
-          onCancelSelection = {},
-          onSortClick = null,
+          onCancelSelection = { clearSelection() },
+          onSortClick = { sortDialogOpen = true },
           onSearchClick = null,
           onSettingsClick = {
             backstack.add(app.marlboroadvance.mpvex.ui.preferences.PreferencesScreen)
@@ -109,6 +163,12 @@ data class NetworkBrowserScreen(
           onSelectAll = null,
           onInvertSelection = null,
           onDeselectAll = null,
+          onRefreshClick = {
+            selectedItems.forEach { item ->
+              viewModel.refreshCache(item)
+            }
+            clearSelection()
+          },
         )
       },
     ) { padding ->
@@ -119,22 +179,102 @@ data class NetworkBrowserScreen(
         isLoading = isLoading && files.isEmpty(),
         isRefreshing = isRefreshing,
         error = error,
+        thumbnails = thumbnails,
+        listState = listState,
+        selectedPaths = selectedPaths,
         onRefresh = { viewModel.loadFiles() },
         onFolderClick = { folder ->
-          backstack.add(
-            NetworkBrowserScreen(
-              connectionId = connectionId,
-              connectionName = connectionName,
-              currentPath = folder.path,
-            ),
-          )
+          if (isInSelectionMode) {
+            toggleSelection(folder)
+          } else {
+            backstack.add(
+              NetworkBrowserScreen(
+                connectionId = connectionId,
+                connectionName = connectionName,
+                currentPath = folder.path,
+              ),
+            )
+          }
         },
         onVideoClick = { video ->
-          viewModel.playVideo(video)
+          if (isInSelectionMode) {
+            toggleSelection(video)
+          } else {
+            viewModel.playVideo(video)
+          }
+        },
+        onVideoVisible = { video ->
+          viewModel.ensureThumbnail(video)
+        },
+        onCancelPrefetch = { keepPaths ->
+          viewModel.cancelThumbnailsExcept(keepPaths)
+        },
+        onItemLongClick = { item ->
+          toggleSelection(item)
         },
         modifier = Modifier.padding(padding),
       )
     }
+
+    // Sort & View Options dialog
+    SortDialog(
+      isOpen = sortDialogOpen,
+      onDismiss = { sortDialogOpen = false },
+      title = "Sort & View Options",
+      sortType = networkSortType.displayName,
+      onSortTypeChange = { typeName ->
+        NetworkSortType.entries
+          .find { it.displayName == typeName }
+          ?.let { viewModel.setSortType(it) }
+      },
+      sortOrderAsc = networkSortOrder.isAscending,
+      onSortOrderChange = { isAsc ->
+        viewModel.setSortOrder(if (isAsc) SortOrder.Ascending else SortOrder.Descending)
+      },
+      types = listOf(
+        NetworkSortType.Title.displayName,
+        NetworkSortType.Date.displayName,
+        NetworkSortType.Size.displayName,
+        NetworkSortType.Duration.displayName,
+      ),
+      icons = listOf(
+        Icons.Filled.Title,
+        Icons.Filled.CalendarToday,
+        Icons.Filled.SwapVert,
+        Icons.Filled.Timer,
+      ),
+      getLabelForType = { type, _ ->
+        when (type) {
+          NetworkSortType.Title.displayName -> Pair("A-Z", "Z-A")
+          NetworkSortType.Date.displayName -> Pair("Oldest", "Newest")
+          NetworkSortType.Size.displayName -> Pair("Smallest", "Largest")
+          NetworkSortType.Duration.displayName -> Pair("Shortest", "Longest")
+          else -> Pair("Asc", "Desc")
+        }
+      },
+      visibilityToggles = listOf(
+        VisibilityToggle(
+          label = "Full Name",
+          checked = unlimitedNameLines,
+          onCheckedChange = { appearancePreferences.unlimitedNameLines.set(it) },
+        ),
+        VisibilityToggle(
+          label = "Size",
+          checked = showSizeChip,
+          onCheckedChange = { browserPreferences.showSizeChip.set(it) },
+        ),
+        VisibilityToggle(
+          label = "Video Thumbnails",
+          checked = showNetworkThumbnails,
+          onCheckedChange = {
+            appearancePreferences.showNetworkThumbnails.set(it)
+            if (it) {
+              viewModel.reloadWithThumbnails()
+            }
+          },
+        ),
+      ),
+    )
   }
 }
 
@@ -146,9 +286,15 @@ private fun NetworkBrowserContent(
   isLoading: Boolean,
   isRefreshing: MutableState<Boolean>,
   error: String?,
+  thumbnails: Map<String, Bitmap>,
+  listState: LazyListState,
+  selectedPaths: Set<String>,
   onRefresh: suspend () -> Unit,
   onFolderClick: (NetworkFile) -> Unit,
   onVideoClick: (NetworkFile) -> Unit,
+  onVideoVisible: (NetworkFile) -> Unit,
+  onCancelPrefetch: (Set<String>) -> Unit,
+  onItemLongClick: (NetworkFile) -> Unit,
   modifier: Modifier = Modifier,
 ) {
   // Load connection details
@@ -203,7 +349,31 @@ private fun NetworkBrowserContent(
     else -> {
       val folders = files.filter { it.isDirectory }
       val videos = files.filter { !it.isDirectory && it.mimeType?.startsWith("video/") == true }
-      val networkListState = LazyListState()
+      val networkListState = listState
+
+      // Keep window of paths we still care about: visible items plus the
+      // prefetch-ahead distance. When it shrinks during fast scrolling, cancel
+      // queued thumbnail jobs that have scrolled far out of view.
+      val keepWindow by remember(files) {
+        derivedStateOf {
+          val layout = networkListState.layoutInfo
+          val total = layout.totalItemsCount
+          val videoStart = (total - videos.size).coerceAtLeast(0)
+          val firstVis = networkListState.firstVisibleItemIndex
+          val lastVis = layout.visibleItemsInfo.lastOrNull()?.index ?: firstVis
+          val lastIndex = (videos.size - 1).coerceAtLeast(0)
+          val firstVideo = (firstVis - videoStart).coerceIn(0, lastIndex)
+          val lastVideo = (lastVis - videoStart).coerceIn(0, lastIndex)
+          buildSet {
+            for (i in (firstVideo - THUMBNAIL_PREFETCH_AHEAD)..(lastVideo + THUMBNAIL_PREFETCH_AHEAD)) {
+              videos.getOrNull(i)?.path?.let(::add)
+            }
+          }
+        }
+      }
+      LaunchedEffect(keepWindow) {
+        onCancelPrefetch(keepWindow)
+      }
 
       // Check if at top of list to hide scrollbar during pull-to-refresh
       val isAtTop by remember {
@@ -268,6 +438,8 @@ private fun NetworkBrowserContent(
                 NetworkFolderCard(
                   file = folder,
                   onClick = { onFolderClick(folder) },
+                  onLongClick = { onItemLongClick(folder) },
+                  isSelected = selectedPaths.contains(folder.path),
                   modifier = Modifier,
                 )
               }
@@ -283,16 +455,29 @@ private fun NetworkBrowserContent(
                   modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp),
                 )
               }
-              items(
+              itemsIndexed(
                 items = videos,
-                key = { it.path },
-              ) { video ->
+                key = { _, video -> video.path },
+              ) { index, video ->
+                // Trigger lazy thumbnail loading when the item becomes visible,
+                // prefetching a few items ahead so thumbnails are ready as the
+                // user scrolls. ensureThumbnail is idempotent (memory + disk cache),
+                // and actual network work stays capped by NetworkMetadataProbe.
+                LaunchedEffect(video.path) {
+                  onVideoVisible(video)
+                  for (offset in 1..THUMBNAIL_PREFETCH_AHEAD) {
+                    videos.getOrNull(index + offset)?.let(onVideoVisible)
+                  }
+                }
                 // Only show card if connection is loaded
                 connection?.let { conn ->
                   NetworkVideoCard(
                     file = video,
                     connection = conn,
                     onClick = { onVideoClick(video) },
+                    onLongClick = { onItemLongClick(video) },
+                    isSelected = selectedPaths.contains(video.path),
+                    thumbnail = thumbnails[video.path],
                     modifier = Modifier,
                   )
                 }

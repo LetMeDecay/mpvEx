@@ -23,6 +23,12 @@ interface NetworkConnectionDao {
   @Query("SELECT * FROM network_connections WHERE autoConnect = 1 ORDER BY id ASC")
   suspend fun getAutoConnectConnections(): List<NetworkConnection>
 
+  @Query("SELECT * FROM network_connections WHERE displayInHome = 1 ORDER BY id ASC")
+  fun getHomeConnections(): Flow<List<NetworkConnection>>
+
+  @Query("SELECT * FROM network_connections WHERE preloadCache = 1 ORDER BY id ASC")
+  suspend fun getPreloadCacheConnections(): List<NetworkConnection>
+
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insert(connection: NetworkConnection): Long
 
