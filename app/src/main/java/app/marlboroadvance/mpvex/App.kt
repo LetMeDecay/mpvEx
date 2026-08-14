@@ -1,6 +1,7 @@
 package app.marlboroadvance.mpvex
 
 import android.app.Application
+import android.content.Context
 import app.marlboroadvance.mpvex.database.repository.VideoMetadataCacheRepository
 import app.marlboroadvance.mpvex.di.DatabaseModule
 import app.marlboroadvance.mpvex.di.FileManagerModule
@@ -9,6 +10,7 @@ import app.marlboroadvance.mpvex.presentation.crash.CrashActivity
 import app.marlboroadvance.mpvex.presentation.crash.GlobalExceptionHandler
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkCacheWarmer
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
+import app.marlboroadvance.mpvex.utils.LocaleManager
 import app.marlboroadvance.mpvex.utils.media.MediaLibraryEvents
 import `is`.xyz.mpv.FastThumbnails
 import kotlinx.coroutines.CoroutineScope
@@ -24,6 +26,10 @@ import org.koin.core.annotation.KoinExperimentalAPI
 class App : Application() {
   private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
   private val metadataCache: VideoMetadataCacheRepository by inject()
+
+  override fun attachBaseContext(newBase: Context) {
+    super.attachBaseContext(LocaleManager.wrap(newBase))
+  }
 
   override fun onCreate() {
     super.onCreate()

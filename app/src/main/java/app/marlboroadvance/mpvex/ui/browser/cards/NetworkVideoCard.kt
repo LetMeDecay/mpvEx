@@ -30,8 +30,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.preferences.AppearancePreferences
 import app.marlboroadvance.mpvex.preferences.BrowserPreferences
 import app.marlboroadvance.mpvex.preferences.preference.collectAsState
@@ -111,7 +113,7 @@ fun NetworkVideoCard(
           // Play icon overlay
           Icon(
             Icons.Filled.PlayArrow,
-            contentDescription = "Play",
+            contentDescription = stringResource(R.string.network_play),
             modifier = Modifier.size(48.dp),
             tint = MaterialTheme.colorScheme.secondary,
           )
@@ -193,12 +195,17 @@ private fun formatDuration(durationMs: Long): String {
   }
 }
 
+@Composable
 private fun formatFileSize(bytes: Long): String {
+  val b = stringResource(R.string.file_size_bytes)
+  val kb = stringResource(R.string.file_size_kb)
+  val mb = stringResource(R.string.file_size_mb)
+  val gb = stringResource(R.string.file_size_gb)
   return when {
-    bytes < 1024 -> "$bytes B"
-    bytes < 1024 * 1024 -> "${bytes / 1024} KB"
-    bytes < 1024 * 1024 * 1024 -> "${bytes / (1024 * 1024)} MB"
-    else -> String.format("%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0))
+    bytes < 1024 -> "$bytes $b"
+    bytes < 1024 * 1024 -> "${bytes / 1024} $kb"
+    bytes < 1024 * 1024 * 1024 -> "${bytes / (1024 * 1024)} $mb"
+    else -> String.format("%.2f $gb", bytes / (1024.0 * 1024.0 * 1024.0))
   }
 }
 

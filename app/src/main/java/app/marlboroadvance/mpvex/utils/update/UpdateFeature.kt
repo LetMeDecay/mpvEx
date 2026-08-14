@@ -26,11 +26,14 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.marlboroadvance.mpvex.BuildConfig
+import app.marlboroadvance.mpvex.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -404,6 +407,7 @@ fun UpdateDialog(
 ) {
     val downloadSize = release.assets.find { it.name.endsWith(".apk") }?.size ?: 0L
     val formattedDate = formatDate(release.publishedAt)
+    val context = LocalContext.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -417,7 +421,7 @@ fun UpdateDialog(
         title = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = if (actionLabel == "Install") "Ready to Install" else "Update Available",
+                    text = if (actionLabel == "Install") stringResource(R.string.update_ready_to_install) else stringResource(R.string.update_available),
                     style = MaterialTheme.typography.titleLarge
                 )
                 Spacer(modifier = Modifier.height(4.dp))
@@ -436,10 +440,10 @@ fun UpdateDialog(
             ) {
                 if (actionLabel != "Install") {
                     // Show version info for update available state
-                    InfoRow(label = "Current Version", value = currentVersion)
-                    InfoRow(label = "Latest Version", value = release.tagName.removePrefix("v"))
-                    InfoRow(label = "Release Date", value = formattedDate)
-                    InfoRow(label = "Size", value = formatFileSize(downloadSize))
+                    InfoRow(label = stringResource(R.string.update_current_version), value = currentVersion)
+                    InfoRow(label = stringResource(R.string.update_latest_version), value = release.tagName.removePrefix("v"))
+                    InfoRow(label = stringResource(R.string.update_release_date), value = formattedDate)
+                    InfoRow(label = stringResource(R.string.update_size), value = formatFileSize(downloadSize, context))
                 }
 
                 if (isDownloading) {
@@ -448,7 +452,7 @@ fun UpdateDialog(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(text = "Downloading...", style = MaterialTheme.typography.bodySmall)
+                        Text(text = stringResource(R.string.update_downloading), style = MaterialTheme.typography.bodySmall)
                         Text(text = "${progress.toInt()}%", style = MaterialTheme.typography.bodySmall)
                     }
                     Spacer(modifier = Modifier.height(8.dp))
@@ -464,7 +468,7 @@ fun UpdateDialog(
         confirmButton = {
             if (!isDownloading) {
                 Button(onClick = onAction) {
-                    Text(if (actionLabel == "Install") "Install" else "Download")
+                    Text(if (actionLabel == "Install") stringResource(R.string.install) else stringResource(R.string.download))
                 }
             }
         },
@@ -473,11 +477,11 @@ fun UpdateDialog(
                 Row {
                     if (actionLabel != "Install") {
                         TextButton(onClick = onIgnore) {
-                            Text("Ignore")
+                            Text(stringResource(R.string.ignore))
                         }
                     }
                     TextButton(onClick = onDismiss) {
-                        Text("Cancel")
+                        Text(stringResource(R.string.generic_cancel))
                     }
                 }
             }
@@ -506,8 +510,8 @@ private fun InfoRow(label: String, value: String) {
     }
 }
 
-private fun formatFileSize(size: Long): String {
-    if (size <= 0) return "Unknown size"
+private fun formatFileSize(size: Long, context: Context): String {
+    if (size <= 0) return context.getString(R.string.update_unknown_size)
     val units = arrayOf("B", "KB", "MB", "GB", "TB")
     val digitGroups = (Math.log10(size.toDouble()) / Math.log10(1024.0)).toInt()
     return String.format("%.1f %s", size / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])

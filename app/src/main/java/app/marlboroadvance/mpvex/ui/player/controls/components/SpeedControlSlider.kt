@@ -42,9 +42,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.ui.theme.spacing
 import kotlinx.coroutines.delay
 
@@ -171,7 +173,7 @@ fun SpeedControlSlider(
             modifier = Modifier.size(16.dp),
           )
           Text(
-            text = "${currentSpeed.format()}x Speed Playing",
+            text = stringResource(R.string.speed_playing, currentSpeed.format()),
             fontSize = 14.sp,
             fontWeight = FontWeight.Bold,
             style = MaterialTheme.typography.bodyLarge,

@@ -166,7 +166,7 @@ object PlayerPreferencesScreen : Screen {
                 title = { Text("Auto Picture-in-Picture") },
                 summary = {
                   Text(
-                    text = "Automatically enter PIP mode when pressing home or back",
+                    text = stringResource(R.string.pref_auto_pip_summary),
                     color = MaterialTheme.colorScheme.outline,
                   )
                 },
@@ -178,7 +178,7 @@ object PlayerPreferencesScreen : Screen {
               SwitchPreference(
                 value = keepScreenOnWhenPaused,
                 onValueChange = preferences.keepScreenOnWhenPaused::set,
-                title = { Text("Keep screen on when paused") },
+                title = { Text(stringResource(R.string.pref_keep_screen_on_title)) },
                 summary = {
                   Text(
                     text = if (keepScreenOnWhenPaused)
@@ -331,7 +331,7 @@ object PlayerPreferencesScreen : Screen {
               SwitchPreference(
                 value = showDynamicSpeedOverlay,
                 onValueChange = preferences.showDynamicSpeedOverlay::set,
-                title = { Text("Dynamic Speed Overlay") },
+                title = { Text(stringResource(R.string.pref_dynamic_speed_overlay_title)) },
                 summary = { 
                   Text(
                     "Show advance overlay for speed control during long press and swipe",
@@ -398,7 +398,7 @@ object PlayerPreferencesScreen : Screen {
               SwitchPreference(
                 value = showSystemNavigationBar,
                 onValueChange = preferences.showSystemNavigationBar::set,
-                title = { Text("Show navigation bar with controls") },
+                title = { Text(stringResource(R.string.pref_show_navigation_bar_title)) },
               )
               
               PreferenceDivider()

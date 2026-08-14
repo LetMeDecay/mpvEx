@@ -172,14 +172,14 @@ fun VideoCard(
             thumbnail?.let {
               Image(
                 bitmap = it.asImageBitmap(),
-                contentDescription = "Thumbnail",
+                contentDescription = stringResource(R.string.playlist_thumbnail),
                 modifier = Modifier.matchParentSize(),
                 contentScale = ContentScale.Crop,
               )
             } ?: run {
               Icon(
                 Icons.Filled.PlayArrow,
-                contentDescription = "Play",
+                contentDescription = stringResource(R.string.network_play),
                 modifier = Modifier.size(48.dp),
                 tint = MaterialTheme.colorScheme.secondary,
               )
@@ -187,7 +187,7 @@ fun VideoCard(
           } else {
             Icon(
               Icons.Filled.PlayArrow,
-              contentDescription = "Play",
+              contentDescription = stringResource(R.string.network_play),
               modifier = Modifier.size(48.dp),
               tint = MaterialTheme.colorScheme.secondary,
             )
@@ -449,14 +449,14 @@ fun VideoCard(
             thumbnail?.let {
               Image(
                 bitmap = it.asImageBitmap(),
-                contentDescription = "Thumbnail",
+                contentDescription = stringResource(R.string.playlist_thumbnail),
                 modifier = Modifier.matchParentSize(),
                 contentScale = ContentScale.Crop,
               )
             } ?: run {
               Icon(
                 Icons.Filled.PlayArrow,
-                contentDescription = "Play",
+                contentDescription = stringResource(R.string.network_play),
                 modifier = Modifier.size(48.dp),
                 tint = MaterialTheme.colorScheme.secondary,
               )
@@ -464,7 +464,7 @@ fun VideoCard(
           } else {
             Icon(
               Icons.Filled.PlayArrow,
-              contentDescription = "Play",
+              contentDescription = stringResource(R.string.network_play),
               modifier = Modifier.size(48.dp),
               tint = MaterialTheme.colorScheme.secondary,
             )

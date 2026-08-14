@@ -9,6 +9,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
 import app.marlboroadvance.mpvex.domain.network.NetworkProtocol
@@ -128,7 +129,7 @@ class NetworkBrowserViewModel(
 
       try {
         val connection = repository.getConnectionById(connectionId)
-          ?: throw Exception("Connection not found")
+          ?: throw Exception(application.getString(R.string.network_connection_not_found))
 
         repository.listFiles(connection, currentPath)
           .onSuccess { fileList ->
@@ -142,10 +143,10 @@ class NetworkBrowserViewModel(
             probeMissingDurations(connection, fileList)
           }
           .onFailure { e ->
-            _error.value = e.message ?: "Unknown error"
+            _error.value = e.message ?: application.getString(R.string.network_unknown_error)
           }
       } catch (e: Exception) {
-        _error.value = e.message ?: "Unknown error"
+        _error.value = e.message ?: application.getString(R.string.network_unknown_error)
       } finally {
         _isLoading.value = false
       }
@@ -383,7 +384,7 @@ class NetworkBrowserViewModel(
     viewModelScope.launch {
       try {
         val connection = repository.getConnectionById(connectionId)
-          ?: throw Exception("Connection not found")
+          ?: throw Exception(application.getString(R.string.network_connection_not_found))
 
         // Build the playback queue from the current directory listing
         val queue =
@@ -440,7 +441,7 @@ class NetworkBrowserViewModel(
         application.startActivity(intent)
       } catch (e: Exception) {
         Log.e(TAG, "Error playing video", e)
-        _error.value = e.message ?: "Unknown error"
+        _error.value = e.message ?: application.getString(R.string.network_unknown_error)
       }
     }
   }

@@ -258,7 +258,7 @@ private fun NormalTopBar(
         ) {
           Icon(
             Icons.Filled.Search,
-            contentDescription = "Search",
+            contentDescription = stringResource(R.string.search),
             modifier = Modifier.size(24.dp),
             tint = MaterialTheme.colorScheme.secondary,
           )
@@ -284,7 +284,7 @@ private fun NormalTopBar(
         ) {
           Icon(
             Icons.Filled.Settings,
-            contentDescription = "Settings",
+            contentDescription = stringResource(R.string.settings),
             modifier = Modifier.size(24.dp),
             tint = MaterialTheme.colorScheme.secondary,
           )
@@ -404,7 +404,7 @@ private fun SelectionTopBar(
         ) {
           Icon(
             Icons.Filled.Refresh,
-            contentDescription = "Refresh cache",
+            contentDescription = stringResource(R.string.refresh_cache),
             modifier = Modifier.size(28.dp),
             tint = MaterialTheme.colorScheme.primary,
           )
@@ -419,7 +419,7 @@ private fun SelectionTopBar(
         ) {
           Icon(
             Icons.Filled.PlayArrow,
-            contentDescription = "Play",
+            contentDescription = stringResource(R.string.network_play),
             modifier = Modifier.size(28.dp),
             tint = MaterialTheme.colorScheme.primary,
           )
@@ -434,7 +434,7 @@ private fun SelectionTopBar(
         ) {
           Icon(
             Icons.AutoMirrored.Filled.PlaylistAdd,
-            contentDescription = "Add to Playlist",
+            contentDescription = stringResource(R.string.add_to_playlist),
             modifier = Modifier.size(28.dp),
             tint = MaterialTheme.colorScheme.secondary,
           )

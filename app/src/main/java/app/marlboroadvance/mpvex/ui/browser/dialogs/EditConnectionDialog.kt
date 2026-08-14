@@ -29,10 +29,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkProtocol
 
@@ -84,7 +86,7 @@ fun EditConnectionSheet(
     modifier = Modifier.widthIn(min = 400.dp, max = 600.dp),
     title = {
       Text(
-        text = "Edit Connection",
+        text = stringResource(R.string.edit_connection),
         style = MaterialTheme.typography.headlineSmall,
         fontWeight = FontWeight.Medium,
       )
@@ -105,7 +107,7 @@ fun EditConnectionSheet(
               OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = { Text("Name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                label = { Text(stringResource(R.string.name), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 modifier = Modifier.weight(0.60f),
                 singleLine = true,
               )
@@ -120,7 +122,7 @@ fun EditConnectionSheet(
                   value = protocol.displayName,
                   onValueChange = { },
                   readOnly = true,
-                  label = { Text("Protocol", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                  label = { Text(stringResource(R.string.protocol), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                   trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = protocolMenuExpanded) },
                   modifier = Modifier
                     .fillMaxWidth()
@@ -148,7 +150,7 @@ fun EditConnectionSheet(
             OutlinedTextField(
               value = host,
               onValueChange = { host = it },
-              label = { Text("Host/IP Address", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+              label = { Text(stringResource(R.string.host_ip_address), maxLines = 1, overflow = TextOverflow.Ellipsis) },
               modifier = Modifier.fillMaxWidth(),
               singleLine = true,
               placeholder = { Text("192.168.1.100", maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -163,7 +165,7 @@ fun EditConnectionSheet(
               OutlinedTextField(
                 value = port,
                 onValueChange = { port = it },
-                label = { Text("Port", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                label = { Text(stringResource(R.string.port), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 modifier = Modifier.weight(0.3f),
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -173,7 +175,7 @@ fun EditConnectionSheet(
               OutlinedTextField(
                 value = path,
                 onValueChange = { path = it },
-                label = { Text("Path", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                label = { Text(stringResource(R.string.path), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 modifier = Modifier.weight(0.7f),
                 singleLine = true,
                 placeholder = { Text("/", maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -190,7 +192,7 @@ fun EditConnectionSheet(
                 onCheckedChange = { isAnonymous = it },
               )
               Spacer(modifier = Modifier.width(8.dp))
-              Text("Anonymous/Guest Access")
+              Text(stringResource(R.string.anonymous_guest_access))
             }
             
             // HTTPS checkbox (only for WebDAV)
@@ -212,7 +214,7 @@ fun EditConnectionSheet(
                   },
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Use HTTPS (Secure Connection)")
+                Text(stringResource(R.string.use_https_secure_connection))
               }
             }
 
@@ -225,7 +227,7 @@ fun EditConnectionSheet(
           OutlinedTextField(
             value = username,
             onValueChange = { username = it },
-            label = { Text("Username", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            label = { Text(stringResource(R.string.username), maxLines = 1, overflow = TextOverflow.Ellipsis) },
             modifier = Modifier.weight(0.50f),
             singleLine = true,
             enabled = !isAnonymous,
@@ -235,7 +237,7 @@ fun EditConnectionSheet(
           OutlinedTextField(
             value = password,
             onValueChange = { password = it },
-            label = { Text("Password", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            label = { Text(stringResource(R.string.password), maxLines = 1, overflow = TextOverflow.Ellipsis) },
             modifier = Modifier.weight(0.50f),
             singleLine = true,
             enabled = !isAnonymous,
@@ -249,7 +251,7 @@ fun EditConnectionSheet(
         enabled = host.isNotBlank() && (isAnonymous || username.isNotBlank()),
       ) {
         Text(
-          text = "Save",
+          text = stringResource(R.string.save),
           fontWeight = FontWeight.SemiBold,
         )
       }
@@ -257,7 +259,7 @@ fun EditConnectionSheet(
     dismissButton = {
       TextButton(onClick = handleDismiss) {
         Text(
-          text = "Cancel",
+          text = stringResource(R.string.cancel),
           fontWeight = FontWeight.Medium,
         )
       }

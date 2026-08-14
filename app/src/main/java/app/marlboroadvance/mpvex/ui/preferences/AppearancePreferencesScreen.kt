@@ -1,25 +1,39 @@
 package app.marlboroadvance.mpvex.ui.preferences
 
+import androidx.activity.compose.LocalActivity
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.annotation.StringRes
 import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.preferences.AppearancePreferences
 import app.marlboroadvance.mpvex.preferences.BrowserPreferences
@@ -30,16 +44,22 @@ import app.marlboroadvance.mpvex.presentation.Screen
 import app.marlboroadvance.mpvex.ui.preferences.components.ThemePicker
 import app.marlboroadvance.mpvex.ui.theme.DarkMode
 import app.marlboroadvance.mpvex.ui.utils.LocalBackStack
+import app.marlboroadvance.mpvex.utils.LocaleManager
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.serialization.Serializable
+import me.zhanghai.compose.preference.Preference
 import me.zhanghai.compose.preference.ProvidePreferenceLocals
 import me.zhanghai.compose.preference.SliderPreference
 import me.zhanghai.compose.preference.SwitchPreference
 import org.koin.compose.koinInject
 import kotlin.math.roundToInt
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
+
+private enum class AppLanguage(@StringRes val labelRes: Int, val tag: String) {
+  System(R.string.language_system, ""),
+  English(R.string.language_english, "en"),
+  SimplifiedChinese(R.string.language_simplified_chinese, "zh"),
+}
 
 @Serializable
 object AppearancePreferencesScreen : Screen {
@@ -137,6 +157,70 @@ object AppearancePreferencesScreen : Screen {
                                 },
                                 enabled = darkMode != DarkMode.Light
                             )
+                        }
+                    }
+
+                    item {
+                        PreferenceCard {
+                            val appLocale by preferences.appLocale.collectAsState()
+                            val activity = LocalActivity.current
+                            var showLanguageDialog by remember { mutableStateOf(false) }
+                            val currentLanguageLabel =
+                                AppLanguage.entries
+                                    .firstOrNull { it.tag == appLocale }
+                                    ?.let { stringResource(it.labelRes) }
+                                    ?: appLocale.ifBlank { stringResource(R.string.language_system) }
+
+                            Preference(
+                                title = { Text(stringResource(R.string.pref_appearance_language_title)) },
+                                summary = {
+                                    Text(
+                                        text = currentLanguageLabel,
+                                        color = MaterialTheme.colorScheme.outline,
+                                    )
+                                },
+                                onClick = { showLanguageDialog = true },
+                            )
+
+                            if (showLanguageDialog) {
+                                AlertDialog(
+                                    onDismissRequest = { showLanguageDialog = false },
+                                    title = { Text(stringResource(R.string.pref_appearance_language_title)) },
+                                    text = {
+                                        Column {
+                                            AppLanguage.entries.forEach { option ->
+                                                val selected =
+                                                    option.tag == appLocale ||
+                                                        (appLocale.isBlank() && option.tag.isEmpty())
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clickable {
+                                                            preferences.appLocale.set(option.tag)
+                                                            LocaleManager.setLanguage(activity ?: return@clickable, option.tag)
+                                                            showLanguageDialog = false
+                                                            activity?.recreate()
+                                                        }
+                                                        .padding(vertical = 12.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                ) {
+                                                    RadioButton(selected = selected, onClick = null)
+                                                    Spacer(Modifier.width(8.dp))
+                                                    Text(
+                                                        text = stringResource(option.labelRes),
+                                                        style = MaterialTheme.typography.bodyLarge,
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    },
+                                    confirmButton = {
+                                        TextButton(onClick = { showLanguageDialog = false }) {
+                                            Text(stringResource(R.string.generic_cancel))
+                                        }
+                                    },
+                                )
+                            }
                         }
                     }
 

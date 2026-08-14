@@ -423,13 +423,14 @@ class PlayerActivity :
       return
     }
 
-    val originalConfiguration = newBase.resources.configuration
+    val localeContext = app.marlboroadvance.mpvex.utils.LocaleManager.wrap(newBase)
+    val originalConfiguration = localeContext.resources.configuration
     val contextToUse =
       if (originalConfiguration.fontScale == 1f) {
-        newBase
+        localeContext
       } else {
         val updatedConfiguration = Configuration(originalConfiguration).apply { fontScale = 1f }
-        val configurationContext = newBase.createConfigurationContext(updatedConfiguration)
+        val configurationContext = localeContext.createConfigurationContext(updatedConfiguration)
         val configurationDisplayMetrics = configurationContext.resources.displayMetrics
         configurationDisplayMetrics.scaledDensity = updatedConfiguration.fontScale * configurationDisplayMetrics.density
         configurationContext

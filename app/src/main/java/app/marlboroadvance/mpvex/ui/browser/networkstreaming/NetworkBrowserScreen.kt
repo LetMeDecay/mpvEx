@@ -37,8 +37,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.database.dao.NetworkConnectionDao
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
@@ -217,10 +219,23 @@ data class NetworkBrowserScreen(
     }
 
     // Sort & View Options dialog
+    val sortOrderLabels =
+      mapOf(
+        NetworkSortType.Title.displayName to
+          Pair(stringResource(R.string.network_sort_az), stringResource(R.string.network_sort_za)),
+        NetworkSortType.Date.displayName to
+          Pair(stringResource(R.string.network_sort_oldest), stringResource(R.string.network_sort_newest)),
+        NetworkSortType.Size.displayName to
+          Pair(stringResource(R.string.network_sort_smallest), stringResource(R.string.network_sort_largest)),
+        NetworkSortType.Duration.displayName to
+          Pair(stringResource(R.string.network_sort_shortest), stringResource(R.string.network_sort_longest)),
+      )
+    val defaultSortOrderLabels =
+      Pair(stringResource(R.string.network_sort_asc), stringResource(R.string.network_sort_desc))
     SortDialog(
       isOpen = sortDialogOpen,
       onDismiss = { sortDialogOpen = false },
-      title = "Sort & View Options",
+      title = stringResource(R.string.network_sort_view_options),
       sortType = networkSortType.displayName,
       onSortTypeChange = { typeName ->
         NetworkSortType.entries
@@ -244,27 +259,21 @@ data class NetworkBrowserScreen(
         Icons.Filled.Timer,
       ),
       getLabelForType = { type, _ ->
-        when (type) {
-          NetworkSortType.Title.displayName -> Pair("A-Z", "Z-A")
-          NetworkSortType.Date.displayName -> Pair("Oldest", "Newest")
-          NetworkSortType.Size.displayName -> Pair("Smallest", "Largest")
-          NetworkSortType.Duration.displayName -> Pair("Shortest", "Longest")
-          else -> Pair("Asc", "Desc")
-        }
+        sortOrderLabels[type] ?: defaultSortOrderLabels
       },
       visibilityToggles = listOf(
         VisibilityToggle(
-          label = "Full Name",
+          label = stringResource(R.string.network_visibility_full_name),
           checked = unlimitedNameLines,
           onCheckedChange = { appearancePreferences.unlimitedNameLines.set(it) },
         ),
         VisibilityToggle(
-          label = "Size",
+          label = stringResource(R.string.network_visibility_size),
           checked = showSizeChip,
           onCheckedChange = { browserPreferences.showSizeChip.set(it) },
         ),
         VisibilityToggle(
-          label = "Video Thumbnails",
+          label = stringResource(R.string.network_visibility_thumbnails),
           checked = showNetworkThumbnails,
           onCheckedChange = {
             appearancePreferences.showNetworkThumbnails.set(it)
@@ -327,7 +336,7 @@ private fun NetworkBrowserContent(
       ) {
         EmptyState(
           icon = Icons.Filled.Folder,
-          title = "Error loading files",
+          title = stringResource(R.string.network_error_loading_files),
           message = error,
         )
       }
@@ -340,8 +349,8 @@ private fun NetworkBrowserContent(
       ) {
         EmptyState(
           icon = Icons.Filled.Folder,
-          title = "Empty folder",
-          message = "This folder contains no files or directories",
+          title = stringResource(R.string.network_empty_folder),
+          message = stringResource(R.string.network_empty_folder_message),
         )
       }
     }
@@ -425,7 +434,7 @@ private fun NetworkBrowserContent(
             if (folders.isNotEmpty()) {
               item {
                 Text(
-                  text = "Folders",
+                  text = stringResource(R.string.network_section_folders),
                   style = MaterialTheme.typography.titleMedium,
                   color = MaterialTheme.colorScheme.primary,
                   modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp),
@@ -449,7 +458,7 @@ private fun NetworkBrowserContent(
             if (videos.isNotEmpty()) {
               item {
                 Text(
-                  text = "Videos",
+                  text = stringResource(R.string.network_section_videos),
                   style = MaterialTheme.typography.titleMedium,
                   color = MaterialTheme.colorScheme.primary,
                   modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp),

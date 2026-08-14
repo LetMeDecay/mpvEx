@@ -113,7 +113,7 @@ object GesturePreferencesScreen : Screen {
             values = predefinedValues + listOf(-1),
             valueToText = { value ->
               if (value == -1) {
-                AnnotatedString("Custom")
+                AnnotatedString(context.getString(R.string.custom))
               } else {
                 AnnotatedString("${value}s")
               }
@@ -122,7 +122,7 @@ object GesturePreferencesScreen : Screen {
             summary = {
               Text(
                 text = if (isCustomValue) {
-                  "Custom (${doubleTapSeekDuration}s)"
+                  stringResource(R.string.custom_duration_summary, doubleTapSeekDuration)
                 } else {
                   "${doubleTapSeekDuration}s"
                 },
@@ -140,13 +140,13 @@ object GesturePreferencesScreen : Screen {
               text = {
                 Column {
                   Text(
-                    text = "Enter custom seek duration in seconds (1-120)",
+                    text = stringResource(R.string.enter_custom_seek_duration),
                     modifier = Modifier.padding(bottom = 8.dp),
                   )
                   OutlinedTextField(
                     value = customSeekValue,
                     onValueChange = { customSeekValue = it },
-                    label = { Text("Seconds") },
+                    label = { Text(stringResource(R.string.seconds)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
@@ -182,10 +182,10 @@ object GesturePreferencesScreen : Screen {
             onValueChange = { preferences.doubleTapSeekAreaWidth.set(it) },
             values = seekAreaValues,
             valueToText = { AnnotatedString("${it}%") },
-            title = { Text(text = "Double Tap Seek Area Width") },
+            title = { Text(text = stringResource(R.string.pref_double_tap_seek_area_width_title)) },
             summary = {
               Text(
-                text = "Current: ${doubleTapSeekAreaWidth}%",
+                text = stringResource(R.string.pref_double_tap_seek_area_width_summary, doubleTapSeekAreaWidth),
                 color = MaterialTheme.colorScheme.outline,
               )
             },

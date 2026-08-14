@@ -23,9 +23,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.repository.NetworkRepository
 import org.koin.compose.koinInject
@@ -47,7 +49,7 @@ fun HomeNetworkConnectionsSection(
 
   Column(modifier = modifier) {
     Text(
-      text = "Network",
+      text = stringResource(R.string.network),
       style = MaterialTheme.typography.titleLarge,
       fontWeight = FontWeight.Bold,
       color = MaterialTheme.colorScheme.primary,
@@ -134,7 +136,7 @@ private fun HomeNetworkConnectionCard(
         )
         if (error != null) {
           Text(
-            text = "Error: $error",
+            text = stringResource(R.string.network_error, error),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.error,
             maxLines = 1,
@@ -145,9 +147,9 @@ private fun HomeNetworkConnectionCard(
 
       Text(
         text = when {
-          isConnecting -> "Connecting"
-          isConnected -> "Connected"
-          else -> "Open"
+          isConnecting -> stringResource(R.string.network_connecting)
+          isConnected -> stringResource(R.string.network_connected)
+          else -> stringResource(R.string.network_open)
         },
         style = MaterialTheme.typography.labelMedium,
         fontWeight = FontWeight.SemiBold,

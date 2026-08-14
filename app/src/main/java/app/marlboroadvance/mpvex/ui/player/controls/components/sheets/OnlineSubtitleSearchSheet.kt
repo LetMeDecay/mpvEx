@@ -27,7 +27,7 @@ import kotlinx.collections.immutable.toImmutableList
 
 sealed class OnlineSubtitleItem {
   data class OnlineTrack(val subtitle: WyzieSubtitle) : OnlineSubtitleItem()
-  data class Header(val title: String) : OnlineSubtitleItem()
+  data class Header(val title: String, val isOnline: Boolean = false) : OnlineSubtitleItem()
   object Divider : OnlineSubtitleItem()
 }
 
@@ -57,12 +57,13 @@ fun OnlineSubtitleSearchSheet(
   onSelectEpisode: (app.marlboroadvance.mpvex.repository.wyzie.WyzieEpisode) -> Unit = {},
   onClearMediaSelection: () -> Unit = {}
 ) {
-  val items = remember(searchResults, isSearching, isOnlineSectionExpanded) {
+  val onlineResultsLabel = stringResource(R.string.online_results, searchResults.size)
+  val items = remember(searchResults, isSearching, isOnlineSectionExpanded, onlineResultsLabel) {
     val list = mutableListOf<OnlineSubtitleItem>()
     
     // Online Search Results section
     if (searchResults.isNotEmpty() || isSearching) {
-        list.add(OnlineSubtitleItem.Header("Online Results (${searchResults.size})"))
+        list.add(OnlineSubtitleItem.Header(onlineResultsLabel, isOnline = true))
         if (isOnlineSectionExpanded) {
             list.addAll(searchResults.map { OnlineSubtitleItem.OnlineTrack(it) })
         }
@@ -246,7 +247,7 @@ fun OnlineSubtitleSearchSheet(
             )
         }
         is OnlineSubtitleItem.Header -> {
-            val isOnlineHeader = item.title.startsWith("Online Results")
+            val isOnlineHeader = item.isOnline
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -392,7 +393,7 @@ fun SeriesDetailsSection(
                       shape = RoundedCornerShape(8.dp)
                   ) {
                       Text(
-                          text = selectedSeason?.let { "S${it.season_number}" } ?: "Season",
+                          text = selectedSeason?.let { "S${it.season_number}" } ?: stringResource(R.string.season),
                           style = MaterialTheme.typography.labelLarge,
                           fontWeight = FontWeight.Bold,
                           maxLines = 1
@@ -410,7 +411,7 @@ fun SeriesDetailsSection(
                           DropdownMenuItem(
                               text = { 
                                 Text(
-                                  "Season ${season.season_number}",
+                                  stringResource(R.string.season_number, season.season_number),
                                   style = MaterialTheme.typography.bodyLarge
                                 ) 
                               },
@@ -442,7 +443,7 @@ fun SeriesDetailsSection(
                           Spacer(Modifier.width(6.dp))
                       }
                       Text(
-                          text = selectedEpisode?.let { "E${it.episode_number}" } ?: "Ep",
+                          text = selectedEpisode?.let { "E${it.episode_number}" } ?: stringResource(R.string.episode_abbr),
                           style = MaterialTheme.typography.labelLarge,
                           fontWeight = FontWeight.Bold,
                           maxLines = 1
@@ -461,7 +462,7 @@ fun SeriesDetailsSection(
                               text = { 
                                 Column(modifier = Modifier.padding(vertical = 4.dp)) {
                                   Text(
-                                    "Ep ${episode.episode_number}", 
+                                    stringResource(R.string.episode_number, episode.episode_number), 
                                     style = MaterialTheme.typography.bodyLarge,
                                     fontWeight = FontWeight.Bold
                                   )

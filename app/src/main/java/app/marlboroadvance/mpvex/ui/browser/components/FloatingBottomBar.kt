@@ -25,7 +25,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import app.marlboroadvance.mpvex.R
 
 /**
  * Material 3 Floating Button Bar for file/folder operations
@@ -77,7 +79,7 @@ fun BrowserBottomBar(
         ) {
           Icon(
             Icons.Filled.ContentCopy, 
-            contentDescription = "Copy",
+            contentDescription = stringResource(R.string.copy),
             modifier = Modifier.size(24.dp)
           )
         }
@@ -93,7 +95,7 @@ fun BrowserBottomBar(
         ) {
           Icon(
             Icons.AutoMirrored.Filled.DriveFileMove, 
-            contentDescription = "Move",
+            contentDescription = stringResource(R.string.move),
             modifier = Modifier.size(24.dp)
           )
         }
@@ -109,7 +111,7 @@ fun BrowserBottomBar(
         ) {
           Icon(
             Icons.Filled.DriveFileRenameOutline, 
-            contentDescription = "Rename",
+            contentDescription = stringResource(R.string.rename),
             modifier = Modifier.size(24.dp)
           )
         }
@@ -122,7 +124,7 @@ fun BrowserBottomBar(
         ) {
           Icon(
             Icons.AutoMirrored.Filled.PlaylistAdd, 
-            contentDescription = "Add to Playlist",
+            contentDescription = stringResource(R.string.add_to_playlist),
             modifier = Modifier.size(24.dp)
           )
         }
@@ -138,7 +140,7 @@ fun BrowserBottomBar(
         ) {
           Icon(
             Icons.Filled.Delete, 
-            contentDescription = "Delete",
+            contentDescription = stringResource(R.string.delete),
             modifier = Modifier.size(24.dp)
           )
         }

@@ -30,8 +30,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.presentation.components.ExpandableCard
 import app.marlboroadvance.mpvex.presentation.components.OutlinedNumericChooser
@@ -102,21 +104,21 @@ fun NetworkConnectionCard(
           ) {
             Icon(
               Icons.Filled.DeleteSweep,
-              contentDescription = "Clear preview cache",
+              contentDescription = stringResource(R.string.network_clear_preview_cache),
               tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
           }
           IconButton(onClick = { onEdit(connection) }) {
             Icon(
               Icons.Filled.Edit,
-              contentDescription = "Edit",
+              contentDescription = stringResource(R.string.network_edit),
               tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
           }
           IconButton(onClick = { onDelete(connection) }) {
             Icon(
               Icons.Filled.Delete,
-              contentDescription = "Delete",
+              contentDescription = stringResource(R.string.delete),
               tint = MaterialTheme.colorScheme.error,
             )
           }
@@ -126,7 +128,7 @@ fun NetworkConnectionCard(
       // Connection details
       if (connection.path != "/") {
         Text(
-          text = "Path: ${connection.path}",
+          text = stringResource(R.string.network_path, connection.path),
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           modifier = Modifier.padding(top = 4.dp),
@@ -135,7 +137,7 @@ fun NetworkConnectionCard(
 
       if (connection.username.isNotEmpty() && !connection.isAnonymous) {
         Text(
-          text = "User: ${connection.username}",
+          text = stringResource(R.string.network_user, connection.username),
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           modifier = Modifier.padding(top = 4.dp),
@@ -145,7 +147,7 @@ fun NetworkConnectionCard(
       // Error message
       if (error != null) {
         Text(
-          text = "Error: $error",
+          text = stringResource(R.string.network_error, error),
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.error,
           modifier = Modifier.padding(top = 8.dp),
@@ -166,7 +168,7 @@ fun NetworkConnectionCard(
           },
         )
         Text(
-          text = "Connect automatically on app launch",
+          text = stringResource(R.string.network_connect_auto_launch),
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -186,7 +188,7 @@ fun NetworkConnectionCard(
           },
         )
         Text(
-          text = "Display on Home",
+          text = stringResource(R.string.network_display_on_home),
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -206,7 +208,7 @@ fun NetworkConnectionCard(
           },
         )
         Text(
-          text = "Refresh cache on app launch",
+          text = stringResource(R.string.network_refresh_cache_launch),
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -219,7 +221,7 @@ fun NetworkConnectionCard(
           isExpanded = preloadExpanded,
           title = {
             Text(
-              text = "Preload Settings",
+              text = stringResource(R.string.network_preload_settings),
               style = MaterialTheme.typography.bodySmall,
               fontWeight = FontWeight.SemiBold,
               color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -233,7 +235,7 @@ fun NetworkConnectionCard(
         ) {
           Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             OutlinedNumericChooser(
-              label = { Text("Max depth") },
+              label = { Text(stringResource(R.string.network_max_depth)) },
               value = connection.preloadDepth,
               onChange = { onPreloadConfigChange(connection, PreloadSetting.Depth, it) },
               max = 100,
@@ -241,7 +243,7 @@ fun NetworkConnectionCard(
               min = 1,
             )
             OutlinedNumericChooser(
-              label = { Text("Per directory") },
+              label = { Text(stringResource(R.string.network_per_directory)) },
               value = connection.preloadPerDir,
               onChange = { onPreloadConfigChange(connection, PreloadSetting.PerDir, it) },
               max = 1000,
@@ -249,7 +251,7 @@ fun NetworkConnectionCard(
               min = 0,
             )
             OutlinedNumericChooser(
-              label = { Text("Total") },
+              label = { Text(stringResource(R.string.network_total)) },
               value = connection.preloadTotal,
               onChange = { onPreloadConfigChange(connection, PreloadSetting.Total, it) },
               max = 100000,
@@ -257,7 +259,7 @@ fun NetworkConnectionCard(
               min = 0,
             )
             OutlinedNumericChooser(
-              label = { Text("Threads") },
+              label = { Text(stringResource(R.string.network_threads)) },
               value = connection.preloadThreads,
               onChange = { onPreloadConfigChange(connection, PreloadSetting.Threads, it) },
               max = 20,
@@ -291,7 +293,7 @@ fun NetworkConnectionCard(
                   color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
                 )
                 Text(
-                  "Connecting",
+                  stringResource(R.string.network_connecting),
                   color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
                 )
               }
@@ -314,7 +316,7 @@ fun NetworkConnectionCard(
                   contentDescription = null,
                   modifier = Modifier.padding(end = 8.dp),
                 )
-                Text("Browse")
+                Text(stringResource(R.string.network_browse))
               }
 
               FilledTonalButton(
@@ -329,7 +331,7 @@ fun NetworkConnectionCard(
                   contentDescription = null,
                   modifier = Modifier.padding(end = 8.dp),
                 )
-                Text("Disconnect")
+                Text(stringResource(R.string.disconnect))
               }
             }
           }
@@ -347,7 +349,7 @@ fun NetworkConnectionCard(
                 contentDescription = null,
                 modifier = Modifier.padding(end = 8.dp),
               )
-              Text("Connect")
+              Text(stringResource(R.string.connect))
             }
           }
         }

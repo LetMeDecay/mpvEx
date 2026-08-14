@@ -81,6 +81,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import android.util.Log
+import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.domain.browser.FileSystemItem
 import app.marlboroadvance.mpvex.domain.media.model.VideoFolder
 import app.marlboroadvance.mpvex.preferences.AppearancePreferences
@@ -311,11 +312,11 @@ object FolderListScreen : Screen {
                 onSearch = { },
                 expanded = false,
                 onExpandedChange = { },
-                placeholder = { Text("Search folders and videos...") },
+                placeholder = { Text(stringResource(R.string.search_folders_and_videos)) },
                 leadingIcon = {
                   Icon(
                     imageVector = Icons.Filled.Search,
-                    contentDescription = "Search",
+                    contentDescription = stringResource(R.string.search),
                   )
                 },
                 trailingIcon = {
@@ -327,7 +328,7 @@ object FolderListScreen : Screen {
                   ) {
                     Icon(
                       imageVector = Icons.Filled.Close,
-                      contentDescription = "Cancel",
+                      contentDescription = stringResource(R.string.cancel),
                     )
                   }
                 },
@@ -428,7 +429,7 @@ object FolderListScreen : Screen {
                   TooltipAnchorPosition.Above
                 }
               ),
-              tooltip = { PlainTooltip { Text("Toggle menu") } },
+              tooltip = { PlainTooltip { Text(stringResource(R.string.toggle_menu)) } },
               state = rememberTooltipState(),
             ) {
               ToggleFloatingActionButton(
@@ -459,7 +460,7 @@ object FolderListScreen : Screen {
               filePicker.launch(arrayOf("video/*"))
             },
             icon = { Icon(Icons.Filled.FileOpen, contentDescription = null) },
-            text = { Text(text = "Open File") },
+            text = { Text(text = stringResource(R.string.open_file)) },
           )
 
           FloatingActionButtonMenuItem(
@@ -474,7 +475,7 @@ object FolderListScreen : Screen {
               }
             },
             icon = { Icon(Icons.Filled.History, contentDescription = null) },
-            text = { Text(text = "Recently Played") },
+            text = { Text(text = stringResource(R.string.recently_played)) },
           )
 
           FloatingActionButtonMenuItem(
@@ -483,7 +484,7 @@ object FolderListScreen : Screen {
               showLinkDialog.value = true
             },
             icon = { Icon(Icons.Filled.Link, contentDescription = null) },
-            text = { Text(text = "Open Link") },
+            text = { Text(text = stringResource(R.string.open_link)) },
           )
         }
       },
@@ -506,8 +507,8 @@ object FolderListScreen : Screen {
                   // No results
                   EmptyState(
                     icon = Icons.Filled.Search,
-                    title = "No results found",
-                    message = "No folders or videos match your search query",
+                    title = stringResource(R.string.no_results_found),
+                    message = stringResource(R.string.no_folders_or_videos_match),
                     modifier = Modifier.fillMaxSize(),
                   )
                 } else {
@@ -671,14 +672,14 @@ private fun FolderListContent(
         if (showLoading) {
           LoadingState(
             icon = Icons.Filled.Folder,
-            title = "Scanning for videos...",
+            title = stringResource(R.string.scanning_for_videos),
             message = scanStatus ?: "Please wait while we search your device",
           )
         } else if (showEmpty) {
           EmptyState(
             icon = Icons.Filled.Folder,
-            title = "No video folders found",
-            message = "Add some video files to your device to see them here",
+            title = stringResource(R.string.no_video_folders_found),
+            message = stringResource(R.string.no_video_folders_message),
           )
         }
       }
@@ -901,7 +902,7 @@ private fun FolderSortDialog(
 
   val folderGridColumnSelector = if (mediaLayoutMode == MediaLayoutMode.GRID) {
     GridColumnSelector(
-      label = "Grid Columns (${if (isLandscape) "Landscape" else "Portrait"})",
+      label = stringResource(R.string.grid_columns, if (isLandscape) stringResource(R.string.landscape) else stringResource(R.string.portrait)),
       currentValue = folderGridColumns,
       onValueChange = {
         if (isLandscape) browserPreferences.folderGridColumnsLandscape.set(it)
@@ -914,7 +915,7 @@ private fun FolderSortDialog(
 
   val videoGridColumnSelector = if (mediaLayoutMode == MediaLayoutMode.GRID) {
     GridColumnSelector(
-      label = "Video Grid Columns (${if (isLandscape) "Landscape" else "Portrait"})",
+      label = stringResource(R.string.video_grid_columns, if (isLandscape) stringResource(R.string.landscape) else stringResource(R.string.portrait)),
       currentValue = videoGridColumns,
       onValueChange = {
         if (isLandscape) browserPreferences.videoGridColumnsLandscape.set(it)
@@ -961,7 +962,7 @@ private fun FolderSortDialog(
     },
     showSortOptions = isAlbumView,
     viewModeSelector = ViewModeSelector(
-      label = "View Mode",
+      label = stringResource(R.string.view_mode),
       firstOptionLabel = "Folder",
       secondOptionLabel = "Tree",
       firstOptionIcon = Icons.Filled.ViewModule,
@@ -974,7 +975,7 @@ private fun FolderSortDialog(
       },
     ),
     layoutModeSelector = ViewModeSelector(
-      label = "Layout",
+      label = stringResource(R.string.layout),
       firstOptionLabel = "List",
       secondOptionLabel = "Grid",
       firstOptionIcon = Icons.AutoMirrored.Filled.ViewList,
@@ -988,32 +989,32 @@ private fun FolderSortDialog(
     ),
     visibilityToggles = listOf(
       VisibilityToggle(
-        label = "Full Name",
+        label = stringResource(R.string.network_visibility_full_name),
         checked = unlimitedNameLines,
         onCheckedChange = { appearancePreferences.unlimitedNameLines.set(it) },
       ),
       VisibilityToggle(
-        label = "Path",
+        label = stringResource(R.string.path),
         checked = showFolderPath,
         onCheckedChange = { browserPreferences.showFolderPath.set(it) },
       ),
       VisibilityToggle(
-        label = "Total Videos",
+        label = stringResource(R.string.total_videos),
         checked = showTotalVideosChip,
         onCheckedChange = { browserPreferences.showTotalVideosChip.set(it) },
       ),
       VisibilityToggle(
-        label = "Total Duration",
+        label = stringResource(R.string.total_duration),
         checked = showTotalDurationChip,
         onCheckedChange = { browserPreferences.showTotalDurationChip.set(it) },
       ),
       VisibilityToggle(
-        label = "Folder Size",
+        label = stringResource(R.string.folder_size),
         checked = showTotalSizeChip,
         onCheckedChange = { browserPreferences.showTotalSizeChip.set(it) },
       ),
       VisibilityToggle(
-        label = "Date",
+        label = stringResource(R.string.date),
         checked = showDateChip,
         onCheckedChange = { browserPreferences.showDateChip.set(it) },
       ),

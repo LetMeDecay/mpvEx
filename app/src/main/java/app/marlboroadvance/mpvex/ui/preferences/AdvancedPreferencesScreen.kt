@@ -100,7 +100,7 @@ object AdvancedPreferencesScreen : Screen {
               onFailure = { error ->
                 Toast.makeText(
                   context,
-                  "Export failed: ${error.message}",
+                  context.getString(R.string.advanced_export_failed, error.message),
                   Toast.LENGTH_LONG,
                 ).show()
               },
@@ -124,7 +124,7 @@ object AdvancedPreferencesScreen : Screen {
               onFailure = { error ->
                 Toast.makeText(
                   context,
-                  "Import failed: ${error.message}",
+                  context.getString(R.string.advanced_import_failed, error.message),
                   Toast.LENGTH_LONG,
                 ).show()
               },
@@ -137,7 +137,7 @@ object AdvancedPreferencesScreen : Screen {
     if (showExportDialog && exportStats != null) {
       AlertDialog(
         onDismissRequest = { showExportDialog = false },
-        title = { Text("Export Complete") },
+        title = { Text(stringResource(R.string.advanced_export_complete)) },
         text = {
           Column(
             modifier = Modifier
@@ -145,13 +145,13 @@ object AdvancedPreferencesScreen : Screen {
               .verticalScroll(rememberScrollState()),
           ) {
             Text(
-              "Successfully exported ${exportStats?.totalExported} items!\n\n"
+              stringResource(R.string.advanced_export_success, exportStats?.totalExported ?: 0)
             )
           }
         },
         confirmButton = {
           TextButton(onClick = { showExportDialog = false }) {
-            Text("OK")
+            Text(stringResource(R.string.generic_ok))
           }
         },
       )
@@ -161,18 +161,20 @@ object AdvancedPreferencesScreen : Screen {
     if (showImportDialog && importStats != null) {
       AlertDialog(
         onDismissRequest = { showImportDialog = false },
-        title = { Text("Import Complete") },
+        title = { Text(stringResource(R.string.advanced_import_complete)) },
         text = {
           Text(
-            "Successfully imported: ${importStats?.imported}\n" +
-              "Failed: ${importStats?.failed}\n" +
-              "Version: ${importStats?.version}\n\n" +
-              "Please restart the app for all changes to take effect.",
+            stringResource(
+              R.string.advanced_import_success,
+              importStats?.imported ?: 0,
+              importStats?.failed ?: 0,
+              importStats?.version ?: 0,
+            ),
           )
         },
         confirmButton = {
           TextButton(onClick = { showImportDialog = false }) {
-            Text("OK")
+            Text(stringResource(R.string.generic_ok))
           }
         },
       )
@@ -234,7 +236,7 @@ object AdvancedPreferencesScreen : Screen {
                     tree.createFile("application/octet-stream", "mpv.conf")
                   }
                   withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "MPV directory ready ✓", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, context.getString(R.string.advanced_mpv_dir_ready), Toast.LENGTH_SHORT).show()
                   }
                 }
               }.onFailure { e ->
@@ -250,16 +252,16 @@ object AdvancedPreferencesScreen : Screen {
         ) {
           // Backup & Restore Section
           item {
-            PreferenceSectionHeader(title = "Backup & Restore")
+            PreferenceSectionHeader(title = stringResource(R.string.advanced_section_backup_restore))
           }
           
           item {
             PreferenceCard {
               Preference(
-                title = { Text(text = "Export Settings") },
+                title = { Text(text = stringResource(R.string.pref_export_settings_title)) },
                 summary = { 
                   Text(
-                    text = "Export settings to an XML file",
+                    text = stringResource(R.string.pref_export_settings_summary),
                     color = MaterialTheme.colorScheme.outline,
                   ) 
                 },
@@ -278,10 +280,10 @@ object AdvancedPreferencesScreen : Screen {
               PreferenceDivider()
               
               Preference(
-                title = { Text(text = "Import Settings") },
+                title = { Text(text = stringResource(R.string.pref_import_settings_title)) },
                 summary = { 
                   Text(
-                    text = "Import settings from an XML file",
+                    text = stringResource(R.string.pref_import_settings_summary),
                     color = MaterialTheme.colorScheme.outline,
                   ) 
                 },
@@ -301,7 +303,7 @@ object AdvancedPreferencesScreen : Screen {
           
           // MPV Configuration Section
           item {
-            PreferenceSectionHeader(title = "MPV Configuration")
+            PreferenceSectionHeader(title = stringResource(R.string.advanced_section_mpv_config))
           }
           
           item {
@@ -402,7 +404,7 @@ object AdvancedPreferencesScreen : Screen {
                     )
                   } else {
                     Text(
-                      "Tap to edit configuration",
+                      stringResource(R.string.advanced_tap_to_edit),
                       color = MaterialTheme.colorScheme.outline,
                     )
                   }
@@ -425,7 +427,7 @@ object AdvancedPreferencesScreen : Screen {
                     )
                   } else {
                     Text(
-                      "Tap to edit configuration",
+                      stringResource(R.string.advanced_tap_to_edit),
                       color = MaterialTheme.colorScheme.outline,
                     )
                   }
@@ -440,7 +442,7 @@ object AdvancedPreferencesScreen : Screen {
           // Scripts Section
           // History Section
           item {
-            PreferenceSectionHeader(title = "History")
+            PreferenceSectionHeader(title = stringResource(R.string.advanced_section_history))
           }
           
           item {
@@ -493,7 +495,7 @@ object AdvancedPreferencesScreen : Screen {
                           Toast
                             .makeText(
                               context,
-                              "Failed to clear: ${error.message}",
+                              context.getString(R.string.advanced_clear_failed, error.message),
                               Toast.LENGTH_LONG,
                             ).show()
                         }
@@ -508,7 +510,7 @@ object AdvancedPreferencesScreen : Screen {
           
           // Cache Section
           item {
-            PreferenceSectionHeader(title = "Cache")
+            PreferenceSectionHeader(title = stringResource(R.string.advanced_section_cache))
           }
           
           item {
@@ -519,10 +521,10 @@ object AdvancedPreferencesScreen : Screen {
               val thumbnailRepository = koinInject<ThumbnailRepository>()
               
               Preference(
-                title = { Text(text = "Clear config cache") },
+                title = { Text(text = stringResource(R.string.pref_clear_config_cache_title)) },
                 summary = { 
                   Text(
-                    text = "Clear the cached mpv.conf settings",
+                    text = stringResource(R.string.pref_clear_config_cache_summary),
                     color = MaterialTheme.colorScheme.outline,
                   ) 
                 },
@@ -537,7 +539,7 @@ object AdvancedPreferencesScreen : Screen {
                       Toast
                         .makeText(
                           context,
-                          "Config cache cleared",
+                          context.getString(R.string.advanced_config_cache_cleared),
                           Toast.LENGTH_SHORT,
                         ).show()
                     }
@@ -548,10 +550,10 @@ object AdvancedPreferencesScreen : Screen {
               PreferenceDivider()
 
               Preference(
-                title = { Text(text = "Clear thumbnail cache") },
+                title = { Text(text = stringResource(R.string.pref_clear_thumbnail_cache_title)) },
                 summary = {
                   Text(
-                    text = "Delete all cached video thumbnails (will regenerate as you browse folders)",
+                    text = stringResource(R.string.pref_clear_thumbnail_cache_summary),
                     color = MaterialTheme.colorScheme.outline,
                   )
                 },
@@ -560,8 +562,8 @@ object AdvancedPreferencesScreen : Screen {
 
               if (isClearThumbsConfirmShown) {
                 ConfirmDialog(
-                  title = "Clear thumbnail cache?",
-                  subtitle = "This will delete cached thumbnails from storage and memory.",
+                  title = stringResource(R.string.advanced_clear_thumbnail_confirm),
+                  subtitle = stringResource(R.string.advanced_clear_thumbnail_confirm_message),
                   onConfirm = {
                     scope.launch(Dispatchers.IO) {
                       runCatching {
@@ -569,12 +571,12 @@ object AdvancedPreferencesScreen : Screen {
                       }.onSuccess {
                         withContext(Dispatchers.Main) {
                           isClearThumbsConfirmShown = false
-                          Toast.makeText(context, "Thumbnail cache cleared", Toast.LENGTH_SHORT).show()
+                          Toast.makeText(context, context.getString(R.string.advanced_thumbnail_cache_cleared), Toast.LENGTH_SHORT).show()
                         }
                       }.onFailure { error ->
                         withContext(Dispatchers.Main) {
                           isClearThumbsConfirmShown = false
-                          Toast.makeText(context, "Failed to clear: ${error.message}", Toast.LENGTH_LONG).show()
+                          Toast.makeText(context, context.getString(R.string.advanced_clear_failed, error.message), Toast.LENGTH_LONG).show()
                         }
                       }
                     }
@@ -586,10 +588,10 @@ object AdvancedPreferencesScreen : Screen {
               PreferenceDivider()
 
               Preference(
-                title = { Text(text = "Clear all preview images") },
+                title = { Text(text = stringResource(R.string.advanced_clear_all_previews)) },
                 summary = {
                   Text(
-                    text = "Delete ALL cached video previews (local folders + network shares). They will regenerate as you browse.",
+                    text = stringResource(R.string.advanced_clear_all_previews_summary),
                     color = MaterialTheme.colorScheme.outline,
                   )
                 },
@@ -598,8 +600,8 @@ object AdvancedPreferencesScreen : Screen {
 
               if (isClearAllPreviewsConfirmShown) {
                 ConfirmDialog(
-                  title = "Clear all preview images?",
-                  subtitle = "This will delete local and network video previews (including durations) from storage and memory.",
+                  title = stringResource(R.string.advanced_clear_all_previews_confirm),
+                  subtitle = stringResource(R.string.advanced_clear_all_previews_confirm_message),
                   onConfirm = {
                     scope.launch(Dispatchers.IO) {
                       runCatching {
@@ -608,12 +610,12 @@ object AdvancedPreferencesScreen : Screen {
                       }.onSuccess {
                         withContext(Dispatchers.Main) {
                           isClearAllPreviewsConfirmShown = false
-                          Toast.makeText(context, "All preview images cleared", Toast.LENGTH_SHORT).show()
+                          Toast.makeText(context, context.getString(R.string.advanced_all_previews_cleared), Toast.LENGTH_SHORT).show()
                         }
                       }.onFailure { error ->
                         withContext(Dispatchers.Main) {
                           isClearAllPreviewsConfirmShown = false
-                          Toast.makeText(context, "Failed to clear: ${error.message}", Toast.LENGTH_LONG).show()
+                          Toast.makeText(context, context.getString(R.string.advanced_clear_failed, error.message), Toast.LENGTH_LONG).show()
                         }
                       }
                     }
@@ -628,7 +630,7 @@ object AdvancedPreferencesScreen : Screen {
                 title = { Text(text = stringResource(id = R.string.pref_advanced_clear_fonts_cache)) },
                 summary = { 
                   Text(
-                    text = "Remove all cached subtitle fonts",
+                    text = stringResource(R.string.advanced_remove_subtitle_fonts),
                     color = MaterialTheme.colorScheme.outline,
                   ) 
                 },
@@ -663,7 +665,7 @@ object AdvancedPreferencesScreen : Screen {
           
           // Logging Section
           item {
-            PreferenceSectionHeader(title = "Logging")
+            PreferenceSectionHeader(title = stringResource(R.string.advanced_section_logging))
           }
           
           item {
