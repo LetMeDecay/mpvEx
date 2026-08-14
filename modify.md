@@ -1,10 +1,11 @@
 # mpvEx 修改记录
 
-> 本文件记录相对上游的分支修改（基于 commit 4151a45）。本次提交：`2ef9f16`
+> 本文件记录相对上游的分支修改（基于 commit 4151a45）。当前提交：`a320f02`（`v1.2.9-rev0814`）
 
 ## 版本
 
-- 版本号：`1.2.9` → `1.2.9-rev1`（versionCode 129 不变）
+- 版本号：`1.2.9` → `1.2.9-rev1` → `1.2.9-rev0814`（versionCode 129 不变）
+- 已发布 GitHub Release：`v1.2.9-rev0814`（含 universal / arm64-v8a / armeabi-v7a / x86_64 / x86 五个已签名 APK）
 
 ## 数据库（Room，v8 → v11）
 
@@ -48,11 +49,22 @@
 - 设置 → 高级 → Clear all preview images（`clearThumbnailCache()`）
 - 连接卡片 DeleteSweep 按钮：按连接清理预览缓存（`clearConnectionCache(connId)`）
 
+## i18n 国际化与汉化（本次新增）
+
+- **语言切换**：`utils/LocaleManager.kt`（新增）+ 外观设置新增"语言"选项（跟随系统 / English / 简体中文）
+  - 通过 `createConfigurationContext` + `attachBaseContext` 应用到 Application 与全部 4 个 Activity（MainActivity / PlayerActivity / CrashActivity / MediaInfoActivity），选择后自动重建界面
+  - 偏好存默认 SharedPreferences 的 `app_locale` 键（`AppearancePreferences.appLocale`），与 LocaleManager 共用
+- **字符串外部化**：将约 300 条硬编码用户可见字符串迁移到 `values/strings.xml`（覆盖 63 个文件，含无障碍 contentDescription、Toast、错误信息、占位符格式串）
+- **中文翻译**：新增 `values-zh/strings.xml`，覆盖全部可翻译字符串（默认 789 条中除 12 条 `translatable="false"` 外的全部）
+- 特殊处理：
+  - 非 composable lambda 内不能调用 `stringResource`，在 `remember` 前先解析（OnlineSubtitleSearchSheet / ControlLayoutEditorScreen）
+  - `grid_columns`（带占位符）与 `grid_columns_label`（静态）分开命名，避免格式串冲突
+
 ## 修改文件
 
 | 文件 | 说明 |
 |---|---|
-| `app/build.gradle.kts` | 版本号 → 1.2.9-rev1 |
+| `app/build.gradle.kts` | 版本号 → 1.2.9-rev0814 |
 | `database/MpvExDatabase.kt` | version 11 |
 | `database/dao/NetworkConnectionDao.kt` | 新字段查询 |
 | `di/DatabaseModule.kt` | 迁移链 v8→v11 |
@@ -73,6 +85,13 @@
 | `ui/player/controls/components/sheets/PlaylistSheet.kt` | 预览图/时长/分辨率展示 |
 | `ui/preferences/AdvancedPreferencesScreen.kt` | Clear all preview images |
 | `utils/sort/SortUtils.kt` | 网络文件排序 |
+| `utils/LocaleManager.kt` | 语言切换（createConfigurationContext + attachBaseContext 包装） |
+| `App.kt` | attachBaseContext 应用语言 |
+| `MainActivity.kt` / `PlayerActivity.kt` / `CrashActivity.kt` / `MediaInfoActivity.kt` | attachBaseContext 应用语言 |
+| `preferences/AppearancePreferences.kt` | 新增 `appLocale` 偏好 |
+| `preferences/AppearancePreferencesScreen.kt` | 语言选择器 UI |
+| `res/values/strings.xml` | 新增约 197 条资源（网络功能 + 全量外部化字符串） |
+| `res/values-zh/strings.xml` | 简体中文全量翻译 |
 | `gradlew` | 可执行权限修正 |
 
 ## 已知限制
@@ -81,3 +100,5 @@
 2. 播放列表分辨率/预览图仅当文件被探测过才显示
 3. HeaderCache 仅对 fast-start MP4（moov 在头部）有效
 4. `preloadThreads` 配置保留但预热固定串行
+5. 语言切换通过 Activity `recreate()` 生效；`PlayerActivity` 原有 fontScale=1f 处理已保留
+6. 少数字符串（如剪贴板标签、`android.R.string.*`、纯数字/百分比/倍速格式）未外部化，保持动态或框架默认
