@@ -28,11 +28,14 @@ class App : Application() {
   private val metadataCache: VideoMetadataCacheRepository by inject()
 
   override fun attachBaseContext(newBase: Context) {
-    super.attachBaseContext(LocaleManager.wrap(newBase))
+    // Keep Application.getString() aligned with the selected locale on API
+    // <=32. Activities continue to use AppCompat's per-app locale handling.
+    super.attachBaseContext(LocaleManager.wrapApplicationContext(newBase))
   }
 
   override fun onCreate() {
     super.onCreate()
+    LocaleManager.applySavedLanguage(this)
 
     // Initialize Koin
     startKoin {

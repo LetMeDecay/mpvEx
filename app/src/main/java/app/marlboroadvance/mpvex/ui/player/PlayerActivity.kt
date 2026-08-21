@@ -433,25 +433,7 @@ class PlayerActivity :
   }
 
   override fun attachBaseContext(newBase: Context?) {
-    if (newBase == null) {
-      super.attachBaseContext(null)
-      return
-    }
-
-    val localeContext = app.marlboroadvance.mpvex.utils.LocaleManager.wrap(newBase)
-    val originalConfiguration = localeContext.resources.configuration
-    val contextToUse =
-      if (originalConfiguration.fontScale == 1f) {
-        localeContext
-      } else {
-        val updatedConfiguration = Configuration(originalConfiguration).apply { fontScale = 1f }
-        val configurationContext = localeContext.createConfigurationContext(updatedConfiguration)
-        val configurationDisplayMetrics = configurationContext.resources.displayMetrics
-        configurationDisplayMetrics.scaledDensity = updatedConfiguration.fontScale * configurationDisplayMetrics.density
-        configurationContext
-      }
-
-    super.attachBaseContext(contextToUse)
+    super.attachBaseContext(newBase)
   }
 
   private fun setupBackPressHandler() {
@@ -3222,19 +3204,13 @@ class PlayerActivity :
     val info = app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy.getInstance().getStreamInfo(streamId)
       ?: return
 
-    val streamKey = NetworkMediaIdentity.forFile(info.connection.id, info.filePath)
+    val streamKey = app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
+      .cacheIdentity(info.connection, info.file)
     // add() is atomic, so a cancelled watcher that is still finishing an
     // in-flight request cannot start a duplicate request for the same file.
     if (!inFlightPrefetchKeys.tryStart(streamKey)) return
 
-    val file =
-      app.marlboroadvance.mpvex.domain.network.NetworkFile(
-        name = info.filePath.substringAfterLast('/').ifBlank { info.filePath },
-        path = info.filePath,
-        size = info.fileSize,
-        isDirectory = false,
-        mimeType = info.mimeType,
-      )
+    val file = info.file
     try {
       val prefetched = app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
         .prefetchHeader(info.connection, file)

@@ -12,6 +12,15 @@ import app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStream
 import `is`.xyz.mpv.FastThumbnails
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -68,10 +77,202 @@ object NetworkMetadataProbe {
   // (black) frame, so normal videos cost exactly one seek.
   private val thumbnailTimestamps = doubleArrayOf(2.0, 5.0, 10.0, 30.0)
 
-  // Thumbnail generation is strictly serial inside the native grabThumbnailFast
-  // (a global FFmpeg mutex covers open+probe+decode), so 1 permit is both the
-  // actual and optimal concurrency - anything larger only queues work uselessly.
-  private val thumbnailSemaphore = Semaphore(1)
+  enum class ThumbnailPriority { CURRENT, VISIBLE, PREFETCH, BACKGROUND }
+
+  private data class ThumbnailRequest(
+    val key: String,
+    val connection: NetworkConnection,
+    val file: NetworkFile,
+    var priority: ThumbnailPriority,
+    val result: CompletableDeferred<Bitmap?> = CompletableDeferred(),
+  ) {
+    var waiters: Int = 0
+  }
+
+  /** One native consumer shared by browser, playlist and startup pre-warm. */
+  private object ThumbnailDispatcher {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val wakeUp = Channel<Unit>(Channel.CONFLATED)
+    private val lock = Any()
+    private val requests = ThumbnailPriorityQueue<String, ThumbnailPriority> { it.ordinal }
+    private val byKey = mutableMapOf<String, ThumbnailRequest>()
+    private var running: ThumbnailRequest? = null
+    private var runningJob: Job? = null
+
+    init {
+      scope.launch {
+        for (ignored in wakeUp) {
+          while (true) {
+            val request = synchronized(lock) {
+              requests.poll()?.let { entry ->
+                byKey[entry.key]?.also { running = it }
+              }
+            } ?: break
+
+            // Dequeue and job assignment are separate operations because the
+            // native call must run in a child Job. Re-check the shared request
+            // under the same lock before creating that Job; a last waiter may
+            // have cancelled in the gap.
+            val claimed = synchronized(lock) {
+              val canStart = ThumbnailDispatchGuard.canStart(
+                ThumbnailDispatchSnapshot(
+                  waiters = request.waiters,
+                  resultCancelled = request.result.isCancelled,
+                  stillRegistered = byKey[request.key] === request,
+                ),
+              )
+              if (!canStart) {
+                byKey.remove(request.key, request)
+                if (running === request) running = null
+              }
+              canStart
+            }
+            if (!claimed) {
+              request.result.cancel()
+              continue
+            }
+
+            // Start lazily so cancellation can never race assignment of the
+            // active job. The assignment gate below handles cancellation that
+            // arrives after this child is created but before it is started.
+            val job = launch(start = CoroutineStart.LAZY) {
+              val canEnterNative = synchronized(lock) {
+                ThumbnailDispatchGuard.canStart(
+                  ThumbnailDispatchSnapshot(
+                    waiters = request.waiters,
+                    resultCancelled = request.result.isCancelled,
+                    stillRegistered = byKey[request.key] === request,
+                  ),
+                )
+              }
+              if (!canEnterNative || !currentCoroutineContext().isActive) {
+                request.result.cancel()
+                return@launch
+              }
+              try {
+                request.result.complete(probeThumbnailNow(request.connection, request.file))
+              } catch (e: CancellationException) {
+                request.result.cancel(e)
+              } catch (e: Exception) {
+                Log.w(TAG, "Thumbnail request failed for ${request.file.path}", e)
+                request.result.complete(null)
+              }
+            }
+
+            val assigned = synchronized(lock) {
+              val canStart = ThumbnailDispatchGuard.canStart(
+                ThumbnailDispatchSnapshot(
+                  waiters = request.waiters,
+                  resultCancelled = request.result.isCancelled,
+                  stillRegistered = byKey[request.key] === request,
+                ),
+              )
+              if (canStart) {
+                runningJob = job
+              }
+              canStart
+            }
+            if (!assigned) {
+              request.result.cancel()
+              job.cancel()
+              job.join()
+              synchronized(lock) {
+                byKey.remove(request.key, request)
+                if (running === request) running = null
+                if (runningJob === job) runningJob = null
+              }
+              continue
+            }
+
+            job.start()
+            job.join()
+            synchronized(lock) {
+              byKey.remove(request.key, request)
+              running = null
+              runningJob = null
+            }
+          }
+        }
+      }
+    }
+
+    suspend fun submit(
+      key: String,
+      connection: NetworkConnection,
+      file: NetworkFile,
+      priority: ThumbnailPriority,
+    ): Bitmap? {
+      val request = synchronized(lock) {
+        val existing = byKey[key]
+        val selected = if (existing != null && !existing.result.isCancelled) {
+          if (existing !== running && priority.ordinal < existing.priority.ordinal) {
+            requests.promote(existing.key, priority)
+            existing.priority = priority
+          }
+          existing
+        } else {
+          val request = ThumbnailRequest(key, connection, file, priority)
+          byKey[key] = request
+          requests.offer(key, priority)
+          wakeUp.trySend(Unit)
+          request
+        }
+        selected.also { it.waiters++ }
+      }
+      return try {
+        request.result.await()
+      } finally {
+        // A cancelled screen must be able to withdraw queued work. Shared
+        // requests stay alive until their last waiter leaves, so a playlist
+        // sheet and a browser card can safely deduplicate the same thumbnail.
+        if (!currentCoroutineContext().isActive) {
+          synchronized(lock) {
+            request.waiters = (request.waiters - 1).coerceAtLeast(0)
+            if (request.waiters == 0 && !request.result.isCompleted) {
+              if (request === running) {
+                // A worker can dequeue just before assigning runningJob. Mark
+                // the shared result cancelled in that tiny window so it will
+                // not start native decoding after its last waiter disappears.
+                runningJob?.cancel() ?: request.result.cancel()
+              } else if (requests.cancel(request.key)) {
+                byKey.remove(request.key, request)
+                request.result.cancel()
+              }
+            }
+          }
+        } else {
+          synchronized(lock) {
+            request.waiters = (request.waiters - 1).coerceAtLeast(0)
+          }
+        }
+      }
+    }
+
+    fun promote(key: String, priority: ThumbnailPriority) {
+      synchronized(lock) {
+        val request = byKey[key] ?: return
+        if (priority.ordinal >= request.priority.ordinal) return
+        if (request === running || requests.promote(key, priority)) {
+          request.priority = priority
+        }
+      }
+    }
+
+    fun cancelBackgroundExcept(retainedKeys: Set<String>) {
+      synchronized(lock) {
+        requests.entries()
+          .filter { it.priority.ordinal >= ThumbnailPriority.PREFETCH.ordinal && it.key !in retainedKeys }
+          .forEach { entry ->
+            requests.cancel(entry.key)
+            byKey.remove(entry.key)?.result?.cancel()
+          }
+        val active = running
+        if (active != null && active.priority.ordinal >= ThumbnailPriority.PREFETCH.ordinal && active.key !in retainedKeys) {
+          runningJob?.cancel() ?: active.result.cancel()
+        }
+      }
+    }
+  }
   // MediaMetadataRetriever instances are independent and truly parallel, so
   // durations keep a higher concurrency for real gains.
   private val durationSemaphore = Semaphore(6)
@@ -103,8 +304,16 @@ object NetworkMetadataProbe {
   // values can vary in precision across servers. Including etag (when the
   // protocol exposes one, e.g. WebDAV PROPFIND) catches the case where a file
   // was replaced in place with the same name and size.
-  private fun cacheKey(connection: NetworkConnection, file: NetworkFile): String =
+  /**
+   * Canonical identity shared by metadata caches, proxy range segments and
+   * playlist retry tracking. Keep this in one place so every consumer treats
+   * a replacement with the same path as a new remote object.
+   */
+  fun cacheIdentity(connection: NetworkConnection, file: NetworkFile): String =
     "${connection.id}::${file.path}::${file.size}::${file.etag ?: ""}::${file.lastModified}"
+
+  private fun cacheKey(connection: NetworkConnection, file: NetworkFile): String =
+    cacheIdentity(connection, file)
 
   /**
    * Returns the duration of a network file in milliseconds, or 0 if unknown.
@@ -139,9 +348,7 @@ object NetworkMetadataProbe {
             proxy.registerStream(
               streamId = streamId,
               connection = connection,
-              filePath = file.path,
-              fileSize = file.size,
-              mimeType = file.mimeType ?: "video/mp4",
+              file = file,
             )
           try {
             val retriever = MediaMetadataRetriever()
@@ -163,11 +370,15 @@ object NetworkMetadataProbe {
                   ?.toIntOrNull()
                   ?: 0
               ProbeResult(duration, width, height)
+            } catch (e: CancellationException) {
+              throw e
             } catch (e: Exception) {
               ProbeResult(0L, 0, 0)
             } finally {
               runCatching { retriever.release() }
             }
+          } catch (e: CancellationException) {
+            throw e
           } catch (e: Exception) {
             ProbeResult(0L, 0, 0)
           } finally {
@@ -176,28 +387,32 @@ object NetworkMetadataProbe {
         }
       }
 
-    if (result.duration > 0) {
-      durationCache[key] = result.duration
+    if (result.duration > 0 || (result.width > 0 && result.height > 0)) {
       keyIndex["${connection.id}::${file.path}"] = key
       // Remove stale entries for the same path (old size/etag/lastModified
       // versions may hold bogus durations from failed probes).
       val prefix = "${connection.id}::"
       val needle = "::${file.path}::"
       prefs.all.keys
-        .filter { it.startsWith(prefix) && it.contains(needle) && it != key }
+        .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
         .forEach { stale ->
           prefs.edit().remove(stale).remove("${stale}:w").remove("${stale}:h").apply()
+          runCatching { thumbnailFile(stale, connection).delete() }
         }
       durationCache.keys
-        .filter { it.startsWith(prefix) && it.contains(needle) && it != key }
+        .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
         .forEach { durationCache.remove(it) }
       thumbnailCache.keys
-        .filter { it.startsWith(prefix) && it.contains(needle) && it != key }
+        .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
         .forEach { thumbnailCache.remove(it) }
       resolutionCache.keys
-        .filter { it.startsWith(prefix) && it.contains(needle) && it != key }
+        .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
         .forEach { resolutionCache.remove(it) }
-      val editor = prefs.edit().putLong(key, result.duration)
+      val editor = prefs.edit()
+      if (result.duration > 0) {
+        durationCache[key] = result.duration
+        editor.putLong(key, result.duration)
+      }
       if (result.width > 0 && result.height > 0) {
         resolutionCache[key] = result.width to result.height
         editor.putLong("${key}:w", result.width.toLong())
@@ -227,6 +442,7 @@ object NetworkMetadataProbe {
   suspend fun probeThumbnail(
     connection: NetworkConnection,
     file: NetworkFile,
+    priority: ThumbnailPriority = ThumbnailPriority.VISIBLE,
   ): Bitmap? {
     if (file.isDirectory) return null
     val key = cacheKey(connection, file)
@@ -246,26 +462,37 @@ object NetworkMetadataProbe {
       }
     }
 
-    // Probe over the network using mpv (efficient Range-based seeking)
+    return ThumbnailDispatcher.submit(key, connection, file, priority)
+  }
+
+  private suspend fun probeThumbnailNow(
+    connection: NetworkConnection,
+    file: NetworkFile,
+  ): Bitmap? {
+    val key = cacheKey(connection, file)
+    thumbnailCache[key]?.let { return it }
+    val diskFile = thumbnailFile(key, connection)
+    if (diskFile.exists()) {
+      BitmapFactory.decodeFile(diskFile.absolutePath)?.let {
+        thumbnailCache[key] = it
+        return it
+      }
+    }
     val result =
       withContext(Dispatchers.IO) {
-        thumbnailSemaphore.withPermit {
           val proxy = NetworkStreamingProxy.getInstance()
           val streamId = "thumb_${connection.id}_${System.nanoTime()}"
           val url =
             proxy.registerStream(
               streamId = streamId,
               connection = connection,
-              filePath = file.path,
-              fileSize = file.size,
-              mimeType = file.mimeType ?: "video/mp4",
+              file = file,
             )
           try {
             generateThumbnailWithFallbacks(url)
           } finally {
             proxy.unregisterStream(streamId)
           }
-        }
       }
 
     val bitmap = result?.bitmap
@@ -298,6 +525,22 @@ object NetworkMetadataProbe {
     return bitmap
   }
 
+  fun cancelBackgroundThumbnailsExcept(
+    retained: Collection<Pair<NetworkConnection, NetworkFile>>,
+  ) {
+    ThumbnailDispatcher.cancelBackgroundExcept(retained.mapTo(mutableSetOf()) { cacheKey(it.first, it.second) })
+  }
+
+  /** Promote an already queued request without creating another native job. */
+  fun promoteThumbnail(
+    connection: NetworkConnection,
+    file: NetworkFile,
+    priority: ThumbnailPriority,
+  ) {
+    if (file.isDirectory) return
+    ThumbnailDispatcher.promote(cacheKey(connection, file), priority)
+  }
+
   private data class ThumbnailResult(
     val bitmap: Bitmap,
     val usedTimestamp: Double,
@@ -314,6 +557,8 @@ object NetworkMetadataProbe {
       for (useHwDec in hardwareDecodeAttempts) {
         val bitmap = try {
           FastThumbnails.generateAsync(url, timestamp, THUMBNAIL_SIZE, useHwDec = useHwDec)
+        } catch (e: CancellationException) {
+          throw e
         } catch (e: Exception) {
           Log.d(TAG, "Thumbnail decode failed ts=${timestamp}s hw=$useHwDec: ${e.message}")
           null
@@ -353,10 +598,8 @@ object NetworkMetadataProbe {
   }
 
   /**
-   * Pre-fetch the first ~2MB (file header / moov) of a network file into the
-   * proxy's in-memory header cache. Used by the player before switching to the
-   * next playlist item so mpv can start the next video without re-downloading
-   * the container header from the remote server.
+   * Pre-fetch bounded head and tail segments. The tail covers MP4 files whose
+   * moov/index is not fast-started and other containers with end indexes.
    */
   suspend fun prefetchHeader(
     connection: NetworkConnection,
@@ -369,23 +612,37 @@ object NetworkMetadataProbe {
       proxy.registerStream(
         streamId = streamId,
         connection = connection,
-        filePath = file.path,
-        fileSize = file.size,
-        mimeType = file.mimeType ?: "video/mp4",
+        file = file,
       )
     return try {
-      val request =
-        okhttp3.Request.Builder()
-          .url(url)
-          .header("Range", "bytes=0-${2 * 1024 * 1024 - 1}")
-          .build()
       try {
-        okhttp3.OkHttpClient.Builder()
+        val client = okhttp3.OkHttpClient.Builder()
           .callTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
           .build()
-          .newCall(request)
-          .execute()
-          .use { resp -> resp.isSuccessful }
+        val segmentSize = minOf(
+          file.size.takeIf { it > 0 } ?: (2L * 1024 * 1024),
+          2L * 1024 * 1024,
+        )
+        suspend fun fetch(start: Long, end: Long): Boolean {
+          if (start < 0L || end < start) return false
+          val request = okhttp3.Request.Builder().url(url).header("Range", "bytes=$start-$end").build()
+          return client.newCall(request).execute().use { response ->
+            if (response.code != 206) return@use false
+            val contentRange = response.header("Content-Range") ?: return@use false
+            val range = contentRange.removePrefix("bytes ").split('-', limit = 2)
+            val returnedStart = range.getOrNull(0)?.toLongOrNull()
+            val returnedEnd = range.getOrNull(1)?.substringBefore('/')?.toLongOrNull()
+            returnedStart == start && returnedEnd != null && returnedEnd in start..end
+          }
+        }
+        val headOk = fetch(0L, segmentSize - 1)
+        val tailStart = (file.size - segmentSize).coerceAtLeast(0L)
+        val tailOk = if (file.size > segmentSize && tailStart > 0L) {
+          fetch(tailStart, file.size - 1)
+        } else {
+          true
+        }
+        headOk && tailOk
       } catch (e: CancellationException) {
         throw e
       } catch (e: Exception) {
@@ -479,8 +736,9 @@ object NetworkMetadataProbe {
     // short duration without resolution). Prefer the key with resolution data,
     // which is the product of a complete successful probe.
     val matchingKeys =
-      prefs.all.keys.filter { it.startsWith(prefix) && it.contains(needle) } +
-        durationCache.keys.filter { it.startsWith(prefix) && it.contains(needle) }
+      (prefs.all.keys.filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) } +
+        durationCache.keys.filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) })
+        .distinct()
     val best =
       matchingKeys.firstOrNull { key ->
         prefs.getLong("${key}:w", 0L) > 0 && prefs.getLong("${key}:h", 0L) > 0
@@ -490,6 +748,9 @@ object NetworkMetadataProbe {
     }
     return best
   }
+
+  private fun isCanonicalCacheKey(key: String): Boolean =
+    !key.endsWith(":w") && !key.endsWith(":h")
 
   private fun indexKey(
     connection: NetworkConnection,
@@ -512,6 +773,15 @@ object NetworkMetadataProbe {
     return durationCache[key] ?: prefs.getLong(key, 0L)
   }
 
+  /** Exact-version lookup used by active proxy streams. */
+  fun getCachedDuration(
+    connection: NetworkConnection,
+    file: NetworkFile,
+  ): Long {
+    val key = cacheKey(connection, file)
+    return durationCache[key] ?: prefs.getLong(key, 0L)
+  }
+
   /**
    * Cached resolution (width x height) for a network file, matched by
    * connection id + path, or null when unknown.
@@ -521,6 +791,18 @@ object NetworkMetadataProbe {
     filePath: String,
   ): Pair<Int, Int>? {
     val key = findKey(connectionId, filePath) ?: return null
+    resolutionCache[key]?.let { return it }
+    val w = prefs.getLong("${key}:w", 0L).toInt()
+    val h = prefs.getLong("${key}:h", 0L).toInt()
+    return if (w > 0 && h > 0) (w to h).also { resolutionCache[key] = it } else null
+  }
+
+  /** Exact-version lookup used by active proxy streams. */
+  fun getCachedResolution(
+    connection: NetworkConnection,
+    file: NetworkFile,
+  ): Pair<Int, Int>? {
+    val key = cacheKey(connection, file)
     resolutionCache[key]?.let { return it }
     val w = prefs.getLong("${key}:w", 0L).toInt()
     val h = prefs.getLong("${key}:h", 0L).toInt()

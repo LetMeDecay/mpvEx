@@ -69,6 +69,10 @@ import app.marlboroadvance.mpvex.preferences.preference.collectAsState
 import app.marlboroadvance.mpvex.ui.theme.spacing
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 
 data class PlaylistItem(
@@ -88,11 +92,11 @@ data class PlaylistItem(
  * This prevents memory issues when dealing with large playlists (100+ videos).
  */
 class LRUBitmapCache(private val maxSize: Int) {
-  private val cache = LinkedHashMap<String, Bitmap?>(maxSize + 1, 1f, true)
+  private val cache = LinkedHashMap<String, Bitmap>(maxSize + 1, 1f, true)
 
   operator fun get(key: String): Bitmap? = synchronized(this) { cache[key] }
 
-  operator fun set(key: String, value: Bitmap?) = synchronized(this) {
+  operator fun set(key: String, value: Bitmap) = synchronized(this) {
     cache[key] = value
     if (cache.size > maxSize) {
       // Remove the least recently used item
@@ -110,7 +114,11 @@ class LRUBitmapCache(private val maxSize: Int) {
  * Uses the modern loadThumbnail API on Android Q+ for better performance.
  * Falls back to null if no cached thumbnail exists (in which case a placeholder will be shown).
  */
-private suspend fun loadMediaStoreThumbnail(context: Context, uri: Uri): Bitmap? {
+private suspend fun loadMediaStoreThumbnail(
+  context: Context,
+  uri: Uri,
+  priority: app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe.ThumbnailPriority,
+): Bitmap? {
   return withContext(Dispatchers.IO) {
     try {
       when (uri.scheme) {
@@ -197,7 +205,7 @@ private suspend fun loadMediaStoreThumbnail(context: Context, uri: Uri): Bitmap?
               }
             if (info != null) {
               app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
-                .getCachedThumbnailBitmap(info.connection.id, info.filePath)
+                .probeThumbnail(info.connection, info.file, priority)
             } else {
               null
             }
@@ -207,6 +215,8 @@ private suspend fun loadMediaStoreThumbnail(context: Context, uri: Uri): Bitmap?
         }
         else -> null
       }
+    } catch (e: CancellationException) {
+      throw e
     } catch (e: Exception) {
       // Fallback with placeholder if thumbnail loading fails
       android.util.Log.w("PlaylistSheet", "Failed to load MediaStore thumbnail for $uri", e)
@@ -302,6 +312,35 @@ fun PlaylistSheet(
   LaunchedEffect(playingItemIndex) {
     if (playingItemIndex >= 0) {
       lazyListState.animateScrollToItem(playingItemIndex)
+    }
+  }
+
+  // Prime the current item and a small adjacent window. Visible item effects
+  // below can promote the same deduplicated request to VISIBLE priority.
+  LaunchedEffect(playlist, playingItemIndex, isM3UPlaylist) {
+    if (!isM3UPlaylist && playingItemIndex >= 0) {
+      val indices = buildList {
+        add(playingItemIndex)
+        for (distance in 1..3) {
+          if (playingItemIndex - distance >= 0) add(playingItemIndex - distance)
+          if (playingItemIndex + distance < playlist.size) add(playingItemIndex + distance)
+        }
+      }
+      coroutineScope {
+        indices.mapIndexed { order, index ->
+          async {
+            loadMediaStoreThumbnail(
+              context,
+              playlist[index].uri,
+              if (order == 0) {
+                app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe.ThumbnailPriority.CURRENT
+              } else {
+                app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe.ThumbnailPriority.PREFETCH
+              },
+            )
+          }
+        }.awaitAll()
+      }
     }
   }
 
@@ -462,11 +501,19 @@ fun PlaylistTrackListItem(
 
   // Load thumbnail asynchronously
   // Skip thumbnail loading for M3U playlists (network streams)
-  LaunchedEffect(videoPath) {
-    if (!skipThumbnail && !thumbnailCache.containsKey(videoPath)) {
-      val bmp = loadMediaStoreThumbnail(context, item.uri)
+  LaunchedEffect(videoPath, item.duration, item.resolution) {
+    if (!skipThumbnail && thumbnail == null) {
+      val bmp = loadMediaStoreThumbnail(
+        context,
+        item.uri,
+        if (item.isPlaying) {
+          app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe.ThumbnailPriority.CURRENT
+        } else {
+          app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe.ThumbnailPriority.VISIBLE
+        },
+      )
       thumbnail = bmp
-      thumbnailCache[videoPath] = bmp
+      if (bmp != null) thumbnailCache[videoPath] = bmp
     }
   }
 
@@ -662,11 +709,19 @@ fun PlaylistTrackGridItem(
 
   // Load thumbnail asynchronously
   // Skip thumbnail loading for M3U playlists (network streams)
-  LaunchedEffect(videoPath) {
-    if (!skipThumbnail && !thumbnailCache.containsKey(videoPath)) {
-      val bmp = loadMediaStoreThumbnail(context, item.uri)
+  LaunchedEffect(videoPath, item.duration, item.resolution) {
+    if (!skipThumbnail && thumbnail == null) {
+      val bmp = loadMediaStoreThumbnail(
+        context,
+        item.uri,
+        if (item.isPlaying) {
+          app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe.ThumbnailPriority.CURRENT
+        } else {
+          app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe.ThumbnailPriority.VISIBLE
+        },
+      )
       thumbnail = bmp
-      thumbnailCache[videoPath] = bmp
+      if (bmp != null) thumbnailCache[videoPath] = bmp
     }
   }
 

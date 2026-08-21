@@ -6,10 +6,16 @@ import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
 import app.marlboroadvance.mpvex.repository.NetworkRepository
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 /**
  * Pre-warms the duration and thumbnail cache for network connections marked with
@@ -50,11 +56,15 @@ object NetworkCacheWarmer {
         connections.forEach { connection ->
           try {
             preloadConnection(repository, connection)
+          } catch (e: CancellationException) {
+            throw e
           } catch (e: Exception) {
             Log.w(TAG, "Error preloading ${connection.name}", e)
           }
         }
         Log.d(TAG, "Cache preloading finished")
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         Log.w(TAG, "Cache preloading failed", e)
       }
@@ -106,20 +116,42 @@ object NetworkCacheWarmer {
       return
     }
 
-    // Process strictly in list order: thumbnail generation is serial inside
-    // the native layer anyway, so concurrent async only shuffles completion
-    // order without any speed gain.
-    targetVideos.forEachIndexed { index, file ->
-      try {
-        NetworkMetadataProbe.probeDuration(connection, file)
-        if (showThumbnails) {
-          NetworkMetadataProbe.probeThumbnail(connection, file)
+    // Duration/resolution retrievers are independent and obey the connection's
+    // configured concurrency. Native thumbnails remain in the single global
+    // priority dispatcher and are intentionally never parallelized.
+    val durationConcurrency = NetworkPreloadPolicy.clampThreads(connection.preloadThreads)
+    val durationGate = Semaphore(durationConcurrency)
+    coroutineScope {
+      targetVideos.mapIndexed { index, file ->
+        async {
+          durationGate.withPermit {
+            try {
+              NetworkMetadataProbe.probeDuration(connection, file)
+              if ((index + 1) % 20 == 0) {
+                Log.d(TAG, "Probed ${index + 1}/${targetVideos.size} for ${connection.name}")
+              }
+            } catch (e: CancellationException) {
+              throw e
+            } catch (e: Exception) {
+              Log.w(TAG, "Error probing ${file.name}", e)
+            }
+          }
         }
-        if ((index + 1) % 20 == 0) {
-          Log.d(TAG, "Preloaded ${index + 1}/${targetVideos.size} for ${connection.name}")
+      }.awaitAll()
+    }
+    if (showThumbnails) {
+      targetVideos.forEach { file ->
+        try {
+          NetworkMetadataProbe.probeThumbnail(
+            connection,
+            file,
+            NetworkMetadataProbe.ThumbnailPriority.BACKGROUND,
+          )
+        } catch (e: CancellationException) {
+          throw e
+        } catch (e: Exception) {
+          Log.w(TAG, "Error preloading thumbnail ${file.name}", e)
         }
-      } catch (e: Exception) {
-        Log.w(TAG, "Error preloading ${file.name}", e)
       }
     }
     Log.d(TAG, "Done preloading ${connection.name} (${targetVideos.size} videos)")

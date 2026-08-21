@@ -2,6 +2,9 @@ package app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy
 
 import android.util.Log
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
+import app.marlboroadvance.mpvex.domain.network.NetworkFile
+import app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
+import app.marlboroadvance.mpvex.ui.browser.networkstreaming.RangeSegmentCache
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.NetworkClient
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.NetworkClientFactory
 import com.hierynomus.msdtyp.AccessMask
@@ -57,74 +60,19 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
 
   data class StreamInfo(
     val connection: NetworkConnection,
-    val filePath: String,
+    val file: NetworkFile,
     val client: NetworkClient,
-    var fileSize: Long = -1L,
-    var mimeType: String = "video/mp4",
-  )
-
-  /**
-   * Strictly-capped in-memory LRU for the first ~2MB of each network file.
-   * Avoids re-downloading file headers (ftyp/moov for fast-start MP4s) across
-   * the thumbnail / player-open / metadata-probe / seek sequence. Bounded so
-   * memory never grows unboundedly.
-   */
-  private object HeaderCache {
-    const val HEADER_CACHE_MAX = 2 * 1024 * 1024 // 2 MB
-    private const val MAX_ENTRIES = 8
-    private const val MAX_TOTAL_BYTES = 16 * 1024 * 1024 // 16 MB
-
-    private val cache =
-      object : LinkedHashMap<String, ByteArray>(16, 0.75f, true) {
-        private var totalBytes = 0
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ByteArray>?): Boolean {
-          if (size > MAX_ENTRIES) {
-            eldest?.value?.let { totalBytes -= it.size }
-            return true
-          }
-          return false
-        }
-
-        override fun put(key: String, value: ByteArray): ByteArray? {
-          val old = super.get(key)
-          if (old != null) totalBytes -= old.size
-          totalBytes += value.size
-          if (totalBytes > MAX_TOTAL_BYTES) {
-            // Evict eldest entries until back under the cap
-            val iterator = entries.iterator()
-            while (iterator.hasNext() && totalBytes > MAX_TOTAL_BYTES) {
-              val entry = iterator.next()
-              totalBytes -= entry.value.size
-              iterator.remove()
-            }
-          }
-          return super.put(key, value)
-        }
-      }
-
-    @Synchronized
-    fun get(key: String): ByteArray? = cache[key]
-
-    @Synchronized
-    fun populate(key: String, stream: java.io.InputStream) {
-      if (cache.containsKey(key)) return
-      val buffer = java.io.ByteArrayOutputStream()
-      val chunk = ByteArray(64 * 1024)
-      var total = 0
-      while (total < HEADER_CACHE_MAX) {
-        val read = stream.read(chunk, 0, minOf(chunk.size, HEADER_CACHE_MAX - total))
-        if (read <= 0) break
-        buffer.write(chunk, 0, read)
-        total += read
-      }
-      if (total > 0) {
-        cache[key] = buffer.toByteArray()
-      }
-    }
+  ) {
+    val filePath: String get() = file.path
+    var fileSize: Long = file.size
+    val mimeType: String get() = file.mimeType ?: "video/mp4"
   }
 
-  private fun cacheKey(streamInfo: StreamInfo): String =
-    "${streamInfo.connection.id}::${streamInfo.filePath}::${streamInfo.fileSize}"
+  private val rangeSegmentCache =
+    RangeSegmentCache()
+
+  private fun fileCacheKey(streamInfo: StreamInfo): String =
+    NetworkMetadataProbe.cacheIdentity(streamInfo.connection, streamInfo.file)
 
   /**
    * Register a stream for proxying
@@ -137,14 +85,30 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     fileSize: Long = -1L,
     mimeType: String = "video/mp4",
   ): String {
+    return registerStream(
+      streamId,
+      connection,
+      NetworkFile(
+        name = filePath.substringAfterLast('/').ifBlank { filePath },
+        path = filePath,
+        size = fileSize,
+        isDirectory = false,
+        mimeType = mimeType,
+      ),
+    )
+  }
+
+  fun registerStream(
+    streamId: String,
+    connection: NetworkConnection,
+    file: NetworkFile,
+  ): String {
     val client = NetworkClientFactory.createClient(connection)
 
     val streamInfo = StreamInfo(
       connection = connection,
-      filePath = filePath,
+      file = file,
       client = client,
-      fileSize = fileSize,
-      mimeType = mimeType,
     )
 
     activeStreams[streamId] = streamInfo
@@ -722,20 +686,20 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
   /**
    * Get WebDAV stream with offset using HTTP Range header (efficient seeking)
    *
-   * File-header ranges (0 ~ [HeaderCache.HEADER_CACHE_MAX]) are served from an
-   * in-memory LRU so repeated reads (thumbnail -> player open -> metadata probe
-   * -> seek) don't re-download the first ~2MB of each file.
+   * Small ranges at any offset are served from a strictly bounded segment LRU.
+   * The identity includes remote version fields, so an in-place replacement
+   * cannot reuse bytes from the prior object.
    */
   private suspend fun getStreamWithOffsetWebDAV(
     streamInfo: StreamInfo,
     offset: Long,
     end: Long,
   ): InputStream? {
-    // Serve fully cached header regions without touching the network
-    if (end < HeaderCache.HEADER_CACHE_MAX) {
-      val cached = HeaderCache.get(cacheKey(streamInfo))
-      if (cached != null && end < cached.size) {
-        return java.io.ByteArrayInputStream(cached, offset.toInt(), (end - offset + 1).toInt())
+    val requestedLength = end - offset + 1
+    val fileIdentity = fileCacheKey(streamInfo)
+    if (requestedLength in 1..RangeSegmentCache.MAX_SEGMENT_BYTES.toLong()) {
+      rangeSegmentCache.get(fileIdentity, offset, end)?.let { cached ->
+        return java.io.ByteArrayInputStream(cached)
       }
     }
 
@@ -772,16 +736,28 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
       // Range integrity: a ranged request MUST be answered with 206.
       // Some servers ignore the Range header and reply 200 with the whole body.
       // Streaming that body back as a "partial" response would download the
-      // entire file (e.g. 1.76 GB) just to build a 256px thumbnail, so we
-      // refuse it. The only tolerated exception is offset==0, where a 200
-      // full-body response is byte-for-byte the content we asked for.
+      // entire file (e.g. 1.76 GB) just to build a 256px thumbnail, so refuse
+      // every 200 response, including offset==0. The caller can still use a
+      // normal (non-Range) request when it genuinely needs the full file.
       if (response.code != 206) {
-        if (offset != 0L || response.code != 200) {
-          Log.w(TAG, "WebDAV Range not honored (HTTP ${response.code}) for offset=$offset - aborting to avoid full download")
-          response.close()
-          return null
-        }
-        Log.d(TAG, "WebDAV Range ignored by server (HTTP 200) but offset==0, accepting as full-file stream")
+        Log.w(TAG, "WebDAV Range not honored (HTTP ${response.code}) for offset=$offset - aborting to avoid full download")
+        response.close()
+        return null
+      }
+
+      val contentRange = response.header("Content-Range")
+      val expectedPrefix = "bytes $offset-$end/"
+      val reportedTotal = contentRange
+        ?.substringAfter('/', missingDelimiterValue = "")
+        ?.toLongOrNull()
+      if (
+        contentRange == null ||
+        !contentRange.startsWith(expectedPrefix) ||
+        (streamInfo.fileSize > 0 && reportedTotal != streamInfo.fileSize)
+      ) {
+        Log.w(TAG, "WebDAV returned mismatched Content-Range '$contentRange', expected $expectedPrefix")
+        response.close()
+        return null
       }
 
       val rawStream = response.body?.byteStream()
@@ -790,17 +766,19 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
         return null
       }
 
-      // When the whole request falls within the header region, buffer it into
-      // the LRU and serve from memory. This consumes rawStream, so it must NOT
-      // be returned afterwards - the cached slice is served instead.
-      if (response.code == 206 && offset == 0L && end < HeaderCache.HEADER_CACHE_MAX) {
-        HeaderCache.populate(cacheKey(streamInfo), rawStream)
+      // Cache exact bounded segments at arbitrary offsets. readBounded is
+      // deliberately capped by requestedLength, so an incorrect server can
+      // never turn prefetch into an unbounded download.
+      if (requestedLength in 1..RangeSegmentCache.MAX_SEGMENT_BYTES.toLong()) {
+        val expected = requestedLength.toInt()
+        val bytes = readBounded(rawStream, expected)
         response.close()
-        val cached = HeaderCache.get(cacheKey(streamInfo))
-        if (cached != null && end < cached.size) {
-          return java.io.ByteArrayInputStream(cached, offset.toInt(), (end - offset + 1).toInt())
+        if (bytes.size != expected) {
+          Log.w(TAG, "WebDAV short range: ${bytes.size}/$expected bytes for $offset-$end")
+          return null
         }
-        return null
+        rangeSegmentCache.put(fileIdentity, offset, end, bytes)
+        return java.io.ByteArrayInputStream(bytes)
       }
 
       // Wrap stream to handle cleanup
@@ -829,6 +807,18 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     } catch (e: Exception) {
       return null
     }
+  }
+
+  /** Read at most [expected] bytes without relying on API-33 InputStream APIs. */
+  private fun readBounded(stream: InputStream, expected: Int): ByteArray {
+    val buffer = ByteArray(expected)
+    var offset = 0
+    while (offset < expected) {
+      val read = stream.read(buffer, offset, expected - offset)
+      if (read <= 0) break
+      offset += read
+    }
+    return if (offset == expected) buffer else buffer.copyOf(offset)
   }
 
   /**

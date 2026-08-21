@@ -2,6 +2,7 @@ package app.marlboroadvance.mpvex
 
 import android.os.Bundle
 import android.util.Log
+import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -53,14 +54,10 @@ import org.koin.android.ext.android.inject
 /**
  * Main entry point for the application
  */
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
   private val appearancePreferences by inject<AppearancePreferences>()
   private val networkRepository by inject<NetworkRepository>()
 
-  override fun attachBaseContext(newBase: android.content.Context) {
-    super.attachBaseContext(app.marlboroadvance.mpvex.utils.LocaleManager.wrap(newBase))
-  }
-  
   // Create a coroutine scope tied to the activity lifecycle
   private val activityScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 

@@ -138,7 +138,8 @@ object SubtitlesPreferencesScreen : Screen {
         // Load fonts when folder changes or trigger is fired
         LaunchedEffect(fontsFolder, fontLoadTrigger) {
           customFontEntries = loadCustomFontEntries(context)
-          availableFonts = listOf("Default") + customFontEntries.map { it.familyName }
+          availableFonts = listOf(context.getString(R.string.default_font)) +
+            customFontEntries.map { it.familyName }
         }
 
         // Auto-refresh fonts on app restart if directory is set
@@ -401,7 +402,7 @@ object SubtitlesPreferencesScreen : Screen {
                 title = { Text(stringResource(R.string.subtitle_sources)) },
                 summary = {
                   val summaryText = if (wyzieSources.isEmpty() || wyzieSources.contains("all")) {
-                    "All"
+                    stringResource(R.string.all)
                   } else {
                     wyzieSources.mapNotNull { WyzieSources.ALL[it] }.joinToString(", ")
                   }
@@ -474,7 +475,7 @@ object SubtitlesPreferencesScreen : Screen {
                       title = { Text(stringResource(R.string.preferred_formats)) },
                       summary = {
                         val summaryText = if (wyzieFormats.isEmpty() || wyzieFormats.contains("all")) {
-                          "All"
+                          stringResource(R.string.all)
                         } else {
                           wyzieFormats.mapNotNull { WyzieFormats.ALL[it] }.joinToString(", ")
                         }
@@ -492,7 +493,7 @@ object SubtitlesPreferencesScreen : Screen {
                       title = { Text(stringResource(R.string.preferred_encodings)) },
                       summary = {
                         val summaryText = if (wyzieEncodings.isEmpty() || wyzieEncodings.contains("all")) {
-                          "All"
+                          stringResource(R.string.all)
                         } else {
                           wyzieEncodings.mapNotNull { WyzieEncodings.ALL[it] }.joinToString(", ")
                         }
@@ -537,7 +538,11 @@ object SubtitlesPreferencesScreen : Screen {
                             }
                           }.onFailure { e ->
                             withContext(Dispatchers.Main) {
-                              android.widget.Toast.makeText(context, "Error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                              android.widget.Toast.makeText(
+                                context,
+                                context.getString(R.string.subtitle_clear_error, e.message.orEmpty()),
+                                android.widget.Toast.LENGTH_SHORT,
+                              ).show()
                             }
                           }
                         }
@@ -647,7 +652,7 @@ fun MultiChoicePreference(
                 onCheckedChange = null
               )
               Spacer(modifier = Modifier.width(8.dp))
-              Text(text = entry.second)
+              Text(text = if (key == "all") stringResource(R.string.all) else entry.second)
             }
           }
         }

@@ -199,7 +199,6 @@ object AppearancePreferencesScreen : Screen {
                                                             preferences.appLocale.set(option.tag)
                                                             LocaleManager.setLanguage(activity ?: return@clickable, option.tag)
                                                             showLanguageDialog = false
-                                                            activity?.recreate()
                                                         }
                                                         .padding(vertical = 12.dp),
                                                     verticalAlignment = Alignment.CenterVertically,

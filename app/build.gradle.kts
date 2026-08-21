@@ -224,6 +224,55 @@ dependencies {
   implementation(libs.reorderable)
 }
 
+/*
+ * Compose string literals are not covered by Android's XML HardcodedText
+ * detector. Keep a small, source-aware guard for the screens where user copy
+ * is maintained. It intentionally checks only user-facing call sites; URLs,
+ * paths, protocol values, animation labels and MPV commands remain valid
+ * literals and are outside this check.
+ */
+val userVisibleStringSources = listOf(
+  "src/main/java/app/marlboroadvance/mpvex/ui/preferences/PlayerPreferencesScreen.kt",
+  "src/main/java/app/marlboroadvance/mpvex/ui/browser/playlist/PlaylistDetailScreen.kt",
+  "src/main/java/app/marlboroadvance/mpvex/ui/browser/selection/SelectionManager.kt",
+  "src/main/java/app/marlboroadvance/mpvex/ui/preferences/SubtitlesPreferencesScreen.kt",
+  "src/main/java/app/marlboroadvance/mpvex/ui/player/controls/components/sheets/FrameNavigationSheet.kt",
+  "src/main/java/app/marlboroadvance/mpvex/ui/player/PlayerViewModel.kt",
+).map(::file)
+
+tasks.register("checkUserVisibleStrings") {
+  group = "verification"
+  description = "Reject obvious hardcoded user-visible Kotlin strings in maintained screens"
+  inputs.files(userVisibleStringSources)
+  doLast {
+    val callPatterns = listOf(
+      Regex("\\bText\\s*\\(\\s*(?:text\\s*=\\s*)?\"[^\"]+\""),
+      Regex("\\bshowToast\\s*\\(\\s*\"[^\"]+\""),
+      Regex("Toast\\.makeText\\s*\\([^\\n]*,\\s*\"[^\"]+\""),
+      Regex("PreferenceSectionHeader\\s*\\(\\s*title\\s*=\\s*\"[^\"]+\""),
+      Regex("newPlainText\\s*\\(\\s*\"[^\"]+\""),
+    )
+    val violations = userVisibleStringSources.flatMap { source ->
+      source.readLines().mapIndexedNotNull { index, line ->
+        val code = line.substringBefore("//")
+        if (callPatterns.any { it.containsMatchIn(code) }) {
+          "${source.relativeTo(projectDir)}:${index + 1}: $line"
+        } else {
+          null
+        }
+      }
+    }
+    check(violations.isEmpty()) {
+      "Hardcoded user-visible strings found; use res/values/strings.xml:\n" +
+        violations.joinToString("\n")
+    }
+  }
+}
+
+tasks.named("check") {
+  dependsOn("checkUserVisibleStrings")
+}
+
 /* ---------------- Git helpers ---------------- */
 
 fun getCommitCount(): String =

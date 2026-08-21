@@ -11,7 +11,7 @@
 
 ## 构建与验证
 
-- `:app:testStandardDebugUnitTest`：10 项测试全部通过
+- `:app:testStandardDebugUnitTest`：21 项测试全部通过（原有 10 项 + 本轮新增 11 项）
 - `:app:assembleStandardDebug` 与 `:app:assembleStandardRelease` 构建通过
 - universal / arm64-v8a / armeabi-v7a / x86_64 / x86 五个 Release APK 均已完成 zipalign、v2/v3 签名、版本号和 ABI 校验
 
@@ -32,8 +32,8 @@
   - 磁盘缩略图按连接分目录：`network_thumbnails/<connId>/<md5>.webp`（160px，WebP q80）
   - 时长/分辨率存 SharedPreferences `network_metadata_cache`
   - 硬解优先，失败回退软解；黑帧检测采样 3x3 网格
-  - `thumbnailSemaphore = Semaphore(1)`（native 串行）、`durationSemaphore = Semaphore(6)`
-- `NetworkCacheWarmer.kt`（新增）：启动预热，严格按列表顺序串行，只处理 `preloadCache=1` 的连接
+  - 缩略图统一进入可取消、去重、按优先级的单消费者队列（native 串行）；时长/分辨率探测受 `durationSemaphore = Semaphore(6)` 限制
+- `NetworkCacheWarmer.kt`（新增）：启动预热；时长/分辨率按 `preloadThreads` 并发，缩略图仍串行，只处理 `preloadCache=1` 的连接
 
 ### 网络浏览增强
 - `HomeNetworkConnectionsSection.kt`（新增）：首页顶部显示网络连接（Display on Home）
@@ -44,13 +44,13 @@
 
 ### 网络连播与播放器集成
 - `playVideo`：整个目录作为 playlist 传入，播放器自动连播
-- `startNextPrefetch`：剩余 20s 预取下一视频 moov 头部到代理 HeaderCache
+- `startNextPrefetch`：剩余 20s 预取下一视频的有界头/尾 Range 到代理缓存
 - 播放列表文件名/元数据反查（`resolveProxyFileName`）+ 缺失项并发探测刷新
 - 元数据探测成功后主动刷新播放列表；失败采用指数退避，避免持续网络重试
 
 ### 本地代理（NetworkStreamingProxy）
-- WebDAV Range 完整性：ranged 请求必须收到远端 206；offset>0 收到 200 拒绝（禁止全量下载）
-- 文件头 LRU 缓存（`HeaderCache`）：内存 2MB/条、8 条、16MB 上限
+- WebDAV Range 完整性：所有 ranged 请求必须收到远端 206 且 Content-Range 对齐（禁止全量下载降级）
+- 任意偏移 Range segment LRU（`RangeSegmentCache`）：2MB/段、16 条、16MB 总上限，identity 含 size/etag/lastModified
 - `getStreamInfo`：支持 `bytes=start-end` / `bytes=start-` / 后缀 `bytes=-N`，越界返回 416
 
 ### 设置与清理
@@ -60,7 +60,7 @@
 ## i18n 国际化与汉化
 
 - **语言切换**：`utils/LocaleManager.kt`（新增）+ 外观设置新增"语言"选项（跟随系统 / English / 简体中文）
-  - 通过 `createConfigurationContext` + `attachBaseContext` 应用到 Application 与全部 4 个 Activity（MainActivity / PlayerActivity / CrashActivity / MediaInfoActivity），选择后自动重建界面
+  - 通过 AndroidX per-app locale 与生成的 `localeConfig` 应用语言，选择后自动重建界面；不覆盖系统 `fontScale`
   - 偏好存默认 SharedPreferences 的 `app_locale` 键（`AppearancePreferences.appLocale`），与 LocaleManager 共用
 - **字符串外部化**：将约 300 条硬编码用户可见字符串迁移到 `values/strings.xml`（覆盖 63 个文件，含无障碍 contentDescription、Toast、错误信息、占位符格式串）
 - **中文翻译**：新增 `values-zh/strings.xml`，覆盖全部可翻译字符串，并完成空值、缺失项和格式占位符一致性校验
@@ -93,9 +93,9 @@
 | `ui/player/controls/components/sheets/PlaylistSheet.kt` | 预览图/时长/分辨率展示 |
 | `ui/preferences/AdvancedPreferencesScreen.kt` | Clear all preview images |
 | `utils/sort/SortUtils.kt` | 网络文件按标题、日期、大小和时长排序 |
-| `utils/LocaleManager.kt` | 语言切换（createConfigurationContext + attachBaseContext 包装） |
-| `App.kt` | attachBaseContext 应用语言 |
-| `MainActivity.kt` / `PlayerActivity.kt` / `CrashActivity.kt` / `MediaInfoActivity.kt` | attachBaseContext 应用语言 |
+| `utils/LocaleManager.kt` | AndroidX per-app locale 语言切换 |
+| `App.kt` | 启动时应用保存的 per-app locale |
+| `MainActivity.kt` / `PlayerActivity.kt` / `CrashActivity.kt` / `MediaInfoActivity.kt` | AppCompat locale 生命周期支持；保留系统字体缩放 |
 | `preferences/AppearancePreferences.kt` | 新增 `appLocale` 偏好 |
 | `preferences/AppearancePreferencesScreen.kt` | 语言选择器 UI |
 | `res/values/strings.xml` | 新增约 197 条资源（网络功能 + 全量外部化字符串） |
@@ -107,12 +107,11 @@
 - 本分支移除了官方版的 Ambient Mode 与 Lua 脚本功能
 - APK 使用本分支的本地发布密钥签名；设备上已安装不同签名的官方版或其他构建时，Android 可能不允许直接覆盖安装
 
-## 已知限制
+## 限制处理结果
 
-1. 缩略图 native 串行（libplayer.so 全局锁），`thumbnailSemaphore` 保持 1 勿调大
-2. 播放列表分辨率/预览图仅当文件被探测过才显示
-3. HeaderCache 仅对 fast-start MP4（moov 在头部）有效
-4. `preloadThreads` 配置保留但预热固定串行
-5. 语言切换通过 Activity `recreate()` 生效；`PlayerActivity` 原有 fontScale=1f 处理已保留
-6. 少数字符串（如剪贴板标签、`android.R.string.*`、纯数字/百分比/倍速格式）未外部化，保持动态或框架默认
-7. WebDAV/SMB/FTP 连播已通过单元测试和本地构建，仍需在真实服务器上进行端到端验证
+1. 缩略图仍受 `libplayer.so` 全局锁约束；统一的可取消、去重、按优先级单消费者队列保证 native 调用串行。
+2. 播放列表会主动探测当前项及相邻项，缓存命中按完整文件版本区分；失败结果不写入永久缩略图缓存，完成后响应式刷新。
+3. 代理使用严格内存上限的任意 Range segment LRU，按实际请求区间缓存并支持包含区间复用；WebDAV 不接受被忽略或错位的 Range 响应，预取头尾均有大小上限。
+4. `preloadThreads` 只控制时长/分辨率探测并发，并限制在实际探测并发上限内；缩略图始终交给上述串行队列。
+5. 语言切换使用 AndroidX per-app locale 与生成的 `localeConfig`；不覆盖系统 `fontScale`，保留无障碍字体设置。
+6. 指定用户界面的可见文案已迁移到资源；项目校验任务会阻止这些界面新增明显的 Kotlin 硬编码文本。技术标签、URL 示例、路径、系统 `android.R.string.*` 和动态数值格式除外。

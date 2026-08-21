@@ -24,6 +24,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -67,7 +68,11 @@ class NetworkBrowserViewModel(
   // user scrolls past. Jobs that already entered the decode stage are kept to
   // avoid killing an in-flight request and re-downloading it moments later.
   private val thumbnailJobs = ConcurrentHashMap<String, Job>()
-  private val runningThumbnails = ConcurrentHashMap.newKeySet<String>()
+  private val runningThumbnails = ConcurrentHashMap<String, Job>()
+  private val thumbnailPriorities = ConcurrentHashMap<String, NetworkMetadataProbe.ThumbnailPriority>()
+  private val thumbnailLock = Any()
+  @Volatile
+  private var loadedConnection: NetworkConnection? = null
 
   // Per-folder sort settings. Each directory keeps its own sort rule,
   // persisted in SharedPreferences keyed by connectionId + folder path.
@@ -130,6 +135,7 @@ class NetworkBrowserViewModel(
       try {
         val connection = repository.getConnectionById(connectionId)
           ?: throw Exception(application.getString(R.string.network_connection_not_found))
+        loadedConnection = connection
 
         repository.listFiles(connection, currentPath)
           .onSuccess { fileList ->
@@ -164,7 +170,7 @@ class NetworkBrowserViewModel(
       return
     }
     currentFiles.forEach { file ->
-      ensureThumbnail(file)
+      ensureThumbnail(file, NetworkMetadataProbe.ThumbnailPriority.PREFETCH)
     }
   }
 
@@ -216,39 +222,74 @@ class NetworkBrowserViewModel(
    * returned immediately. Jobs are tracked so distant prefetch tasks can be
    * cancelled while scrolling fast ([cancelThumbnailsExcept]).
    */
-  fun ensureThumbnail(file: NetworkFile) {
+  fun ensureThumbnail(
+    file: NetworkFile,
+    priority: NetworkMetadataProbe.ThumbnailPriority =
+      NetworkMetadataProbe.ThumbnailPriority.VISIBLE,
+  ) {
     if (file.isDirectory) return
     if (!appearancePreferences.showNetworkThumbnails.get()) return
     if (_thumbnails.value.containsKey(file.path)) return
-    if (thumbnailJobs.containsKey(file.path)) return
 
-    val job =
-      viewModelScope.launch {
-        try {
-          val connection = repository.getConnectionById(connectionId)
-            ?: return@launch
-          runningThumbnails.add(file.path)
-          try {
-            // probeThumbnail serves memory + disk cache immediately, so cached
-            // files are near-instant regardless of the fast-path check.
-            val bitmap = NetworkMetadataProbe.probeThumbnail(connection, file)
-            if (bitmap != null) {
-              _thumbnails.value = _thumbnails.value + (file.path to bitmap)
-            }
-          } finally {
-            runningThumbnails.remove(file.path)
-          }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-          throw e
-        } catch (e: Exception) {
-          Log.w(TAG, "Error probing thumbnail for ${file.name}", e)
-        } finally {
-          // Safe: jobs are de-duplicated per path, so the entry we inserted is
-          // always the one that should be removed.
-          thumbnailJobs.remove(file.path)
+    synchronized(thumbnailLock) {
+      val existing = thumbnailJobs[file.path]
+      if (existing != null && !existing.isCompleted) {
+        val effectivePriority =
+          thumbnailPriorities.compute(file.path) { _, previous ->
+            if (previous == null || priority.ordinal < previous.ordinal) priority else previous
+          } ?: priority
+        // The job itself is shared. Re-submit is deliberately avoided; this
+        // promotion reaches the central dispatcher and can reorder a queued
+        // PREFETCH request as CURRENT/VISIBLE without another native decode.
+        loadedConnection?.let { connection ->
+          NetworkMetadataProbe.promoteThumbnail(connection, file, effectivePriority)
         }
+        return
       }
-    thumbnailJobs[file.path] = job
+      if (existing != null) {
+        thumbnailJobs.remove(file.path, existing)
+        thumbnailPriorities.remove(file.path)
+      }
+
+      thumbnailPriorities[file.path] = priority
+      val job =
+        viewModelScope.launch(start = CoroutineStart.LAZY) {
+          try {
+            val connection = repository.getConnectionById(connectionId)
+              ?: return@launch
+            kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]?.let { runningJob ->
+              runningThumbnails[file.path] = runningJob
+            }
+            try {
+              // Read the latest priority immediately before submitting. A
+              // visible card can promote a queued prefetch while this job is
+              // waiting for the repository lookup.
+              val effectivePriority = synchronized(thumbnailLock) {
+                thumbnailPriorities[file.path] ?: priority
+              }
+              val bitmap = NetworkMetadataProbe.probeThumbnail(connection, file, effectivePriority)
+              if (bitmap != null) {
+                _thumbnails.value = _thumbnails.value + (file.path to bitmap)
+              }
+            } finally {
+              runningThumbnails.remove(file.path, kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job])
+            }
+          } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+          } catch (e: Exception) {
+            Log.w(TAG, "Error probing thumbnail for ${file.name}", e)
+          } finally {
+            // Remove only this coroutine's entry. A cancelled request can
+            // finish after a new request for the same path is installed.
+            val self = kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]
+            if (self != null && thumbnailJobs.remove(file.path, self)) {
+              thumbnailPriorities.remove(file.path)
+            }
+          }
+        }
+      thumbnailJobs[file.path] = job
+      job.start()
+    }
   }
 
   /**
@@ -258,9 +299,22 @@ class NetworkBrowserViewModel(
    */
   fun cancelThumbnailsExcept(keepPaths: Set<String>) {
     thumbnailJobs.keys.forEach { path ->
-      if (path !in keepPaths && path !in runningThumbnails) {
-        thumbnailJobs.remove(path)?.cancel()
+      if (path !in keepPaths && !runningThumbnails.containsKey(path)) {
+        synchronized(thumbnailLock) {
+          val job = thumbnailJobs.remove(path)
+          if (job != null) {
+            thumbnailPriorities.remove(path)
+            job.cancel()
+          }
+        }
       }
+    }
+    loadedConnection?.let { connection ->
+      NetworkMetadataProbe.cancelBackgroundThumbnailsExcept(
+        _files.value
+          .filter { !it.isDirectory && it.path in keepPaths }
+          .map { connection to it },
+      )
     }
   }
 
@@ -406,9 +460,7 @@ class NetworkBrowserViewModel(
                 proxy.registerStream(
                   streamId = streamId,
                   connection = connection,
-                  filePath = queued.path,
-                  fileSize = queued.size,
-                  mimeType = queued.mimeType ?: "video/mp4",
+                  file = queued,
                 )
               android.net.Uri.parse(proxyUrl)
             } else {

@@ -12,6 +12,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import app.marlboroadvance.mpvex.domain.media.model.Video
+import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.ui.player.PlayerActivity
 import app.marlboroadvance.mpvex.utils.media.MediaUtils
 import kotlinx.coroutines.CoroutineScope
@@ -91,12 +92,16 @@ class SelectionManager<T, ID>(
       runCatching {
         val (deleted, failed) = onDeleteItems(selected, deleteFiles)
         if (deleted > 0) {
-          Toast.makeText(context, "Deleted successfully", Toast.LENGTH_SHORT).show()
+          Toast.makeText(context, R.string.selection_deleted_success, Toast.LENGTH_SHORT).show()
         } else if (failed > 0) {
-          Toast.makeText(context, "Failed to delete", Toast.LENGTH_SHORT).show()
+          Toast.makeText(context, R.string.selection_delete_failed, Toast.LENGTH_SHORT).show()
         }
       }.onFailure {
-        Toast.makeText(context, "Failed to delete: ${it.message}", Toast.LENGTH_SHORT).show()
+        Toast.makeText(
+          context,
+          context.getString(R.string.selection_delete_failed_with_reason, it.message.orEmpty()),
+          Toast.LENGTH_SHORT,
+        ).show()
       }
       clear()
       onOperationComplete()
@@ -115,12 +120,20 @@ class SelectionManager<T, ID>(
       runCatching {
         val result = onRenameItem(item, newName)
         result.onSuccess {
-          Toast.makeText(context, "Renamed successfully", Toast.LENGTH_SHORT).show()
+          Toast.makeText(context, R.string.selection_renamed_success, Toast.LENGTH_SHORT).show()
         }.onFailure { error ->
-          Toast.makeText(context, "Failed to rename: ${error.message}", Toast.LENGTH_SHORT).show()
+          Toast.makeText(
+            context,
+            context.getString(R.string.selection_rename_failed_with_reason, error.message.orEmpty()),
+            Toast.LENGTH_SHORT,
+          ).show()
         }
       }.onFailure {
-        Toast.makeText(context, "Failed to rename: ${it.message}", Toast.LENGTH_SHORT).show()
+        Toast.makeText(
+          context,
+          context.getString(R.string.selection_rename_failed_with_reason, it.message.orEmpty()),
+          Toast.LENGTH_SHORT,
+        ).show()
       }
       clear()
       onOperationComplete()

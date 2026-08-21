@@ -37,6 +37,7 @@ import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.presentation.components.ExpandableCard
 import app.marlboroadvance.mpvex.presentation.components.OutlinedNumericChooser
+import app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkPreloadPolicy
 
 /**
  * Pre-warm setting fields editable per connection.
@@ -260,9 +261,9 @@ fun NetworkConnectionCard(
             )
             OutlinedNumericChooser(
               label = { Text(stringResource(R.string.network_threads)) },
-              value = connection.preloadThreads,
+                  value = NetworkPreloadPolicy.clampThreads(connection.preloadThreads),
               onChange = { onPreloadConfigChange(connection, PreloadSetting.Threads, it) },
-              max = 20,
+              max = 6,
               step = 1,
               min = 1,
             )

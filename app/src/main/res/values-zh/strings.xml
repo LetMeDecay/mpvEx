@@ -81,6 +81,8 @@
   <string name="pref_autoplay_summary">显示文件夹内所有视频的上一个/下一个按钮</string>
   <string name="pref_autoplay_next_video_title">自动播放下一个视频</string>
   <string name="pref_autoplay_next_video_summary">当前视频结束后自动播放下一个</string>
+  <string name="pref_autoplay_next_video_disabled_summary">当前视频结束后停留在当前视频</string>
+  <string name="pref_playlist_mode_disabled_summary">单独播放视频（选择多个视频以创建播放列表）</string>
   <string name="pref_auto_pip_title">自动画中画</string>
   <string name="pref_auto_pip_summary">按 Home 或返回键时自动进入画中画模式</string>
   <string name="pref_dynamic_speed_overlay_title">动态速度叠加显示</string>
@@ -127,6 +129,7 @@
   <string name="pref_player_double_tap_seek_duration">双击快进时长</string>
   <string name="pref_player_custom_skip_duration_title">自定义跳转时长</string>
   <string name="pref_player_custom_skip_duration_summary">自定义跳转按钮向前跳转的时长</string>
+  <string name="pref_player_custom_skip_duration_value">%1$s（%2$ds）</string>
   <string name="pref_player_seeking_title">快进快退</string>
   <string name="pref_player_close_after_eof">播放结束后关闭</string>
   <string name="pref_player_remember_brightness">记住屏幕亮度</string>
@@ -138,6 +141,10 @@
   <string name="pref_player_gestures_horizontal_swipe_to_seek_summary">在屏幕上左右滑动可向前或向后快进</string>
   <string name="pref_player_gestures_horizontal_swipe_sensitivity">水平滑动灵敏度</string>
   <string name="pref_player_gestures_horizontal_swipe_sensitivity_summary">调整每次滑动覆盖的进度距离</string>
+  <string name="pref_player_gestures_horizontal_swipe_sensitivity_value">当前：%1$d/100（%2$s）</string>
+  <string name="pref_sensitivity_low">低</string>
+  <string name="pref_sensitivity_medium">中</string>
+  <string name="pref_sensitivity_high">高</string>
   <string name="pref_player_gestures_hold_for_multiple_speed">长按倍数速度</string>
   <string name="pref_player_controls">控制</string>
   <string name="pref_player_controls_allow_gestures_in_panels">允许在面板中使用手势</string>
@@ -198,10 +205,13 @@
   <string name="pref_subtitles_search_online">在线字幕搜索…</string>
   <string name="pref_subtitles_subdl_languages">字幕语言</string>
   <string name="all_languages">全部（选择性过滤）</string>
+  <string name="all">全部</string>
+  <string name="default_font">默认</string>
   <string name="pref_subtitles_clear_downloads">清除字幕下载</string>
   <string name="pref_subtitles_clear_downloads_summary">删除当前保存位置中的所有文件</string>
   <string name="pref_subtitles_clear_downloads_confirmation">确定要删除所有已下载的字幕吗？此操作无法撤销。</string>
   <string name="toast_subtitles_cleared">字幕下载已清除</string>
+  <string name="subtitle_clear_error">错误：%1$s</string>
   <string name="pref_audio">音频</string>
   <string name="pref_audio_summary">首选语言、声道、音调校正</string>
   <string name="pref_audio_pitch_correction_title">启用音调校正</string>
@@ -358,6 +368,14 @@
   <string name="show_splash_ovals_on_double_tap_to_seek">双击快进时显示涟漪</string>
   <string name="show_time_on_double_tap_to_seek">显示快进时间</string>
   <string name="player_sheets_frame_navigation_title">逐帧导航</string>
+  <string name="player_horizontal_flip_on">水平翻转已开启</string>
+  <string name="player_horizontal_flip_off">水平翻转已关闭</string>
+  <string name="player_vertical_flip_on">垂直翻转已开启</string>
+  <string name="player_vertical_flip_off">垂直翻转已关闭</string>
+  <string name="snapshot_create_failed">创建截图失败</string>
+  <string name="snapshot_media_store_entry_failed">创建 MediaStore 条目失败</string>
+  <string name="snapshot_directory_create_failed">创建 mpvSnaps 目录失败</string>
+  <string name="snapshot_save_failed">保存截图失败：%1$s</string>
   <string name="player_sheets_frame_navigation_include_subtitles">快照包含字幕</string>
   <string name="player_sheets_zoom_slider_label">视频缩放</string>
   <plurals name="seconds">
@@ -436,6 +454,11 @@
   <string name="invalid_subtitle_format">无效的字幕文件格式</string>
   <string name="subtitle_added">已添加 %s</string>
   <string name="failed_load_subtitle">加载字幕失败</string>
+  <string name="subtitle_deleted">字幕已删除</string>
+  <string name="failed_load_series_details">加载剧集详情失败：%1$s</string>
+  <string name="failed_load_episodes">加载剧集失败：%1$s</string>
+  <string name="subtitle_search_failed">搜索失败：%1$s</string>
+  <string name="subtitle_download_failed">下载失败：%1$s</string>
   <string name="remove_from_playlist">从播放列表移除 %1$d 个 %2$s？</string>
   <string name="remove_playlist_items_confirm">选中的 %2$s 将从播放列表移除。原始 %3$s 不会被删除。</string>
   <string name="search_videos">搜索视频…</string>
@@ -458,6 +481,8 @@
   <string name="check_for_updates_now">立即检查更新</string>
   <string name="loading_detailed_information">正在加载详细信息…</string>
   <string name="stream_url">流媒体地址</string>
+  <string name="video_singular">视频</string>
+  <string name="video_plural">视频</string>
   <string name="export_complete">导出完成</string>
   <string name="import_complete">导入完成</string>
   <string name="auto_picture_in_picture">自动画中画</string>
@@ -479,6 +504,7 @@
   <string name="home">首页</string>
   <string name="recents">最近</string>
   <string name="playlists">播放列表</string>
+  <string name="playlist">播放列表</string>
   <string name="network">网络</string>
   <string name="seconds">秒</string>
   <string name="milliseconds">毫秒</string>
@@ -625,6 +651,11 @@
   <string name="clear_loop">清除循环</string>
   <string name="config_saved">%1$s 已保存</string>
   <string name="copied_to_clipboard">已复制到剪贴板</string>
+  <string name="selection_deleted_success">删除成功</string>
+  <string name="selection_delete_failed">删除失败</string>
+  <string name="selection_delete_failed_with_reason">删除失败：%1$s</string>
+  <string name="selection_renamed_success">重命名成功</string>
+  <string name="selection_rename_failed_with_reason">重命名失败：%1$s</string>
   <string name="create_first_playlist">请在上方创建您的第一个播放列表</string>
   <string name="create_folder">创建文件夹</string>
   <string name="create_new_playlist">创建新播放列表</string>
@@ -741,6 +772,8 @@
   <string name="portrait_controls">竖屏控制</string>
   <string name="pref_decoder_vulkan_title_experimental">使用 Vulkan（实验性）</string>
   <string name="pref_keep_screen_on_title">暂停时保持屏幕亮起</string>
+  <string name="pref_keep_screen_on_enabled_summary">视频暂停时保持屏幕亮起</string>
+  <string name="pref_keep_screen_on_disabled_summary">视频暂停时允许屏幕关闭</string>
   <string name="pref_layout_edit_title">编辑 %1$s</string>
   <string name="pref_section_advanced_about">高级与关于</string>
   <string name="pref_section_file_management">文件管理</string>

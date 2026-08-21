@@ -624,7 +624,11 @@ private suspend fun takeSnapshot(
       // Check if file was created
       if (!tempFile.exists() || tempFile.length() == 0L) {
         withContext(Dispatchers.Main) {
-          Toast.makeText(context, "Failed to create screenshot", Toast.LENGTH_SHORT).show()
+          Toast.makeText(
+            context,
+            context.getString(R.string.snapshot_create_failed),
+            Toast.LENGTH_SHORT,
+          ).show()
         }
         return@withContext
       }
@@ -676,7 +680,7 @@ private suspend fun takeSnapshot(
               ).show()
           }
         } else {
-          throw Exception("Failed to create MediaStore entry")
+          throw Exception(context.getString(R.string.snapshot_media_store_entry_failed))
         }
       } else {
         // Android 9 and below - Use legacy external storage
@@ -690,7 +694,7 @@ private suspend fun takeSnapshot(
         if (!snapshotsDir.exists()) {
           val created = snapshotsDir.mkdirs()
           if (!created && !snapshotsDir.exists()) {
-            throw Exception("Failed to create mpvSnaps directory")
+              throw Exception(context.getString(R.string.snapshot_directory_create_failed))
           }
         }
 
@@ -717,7 +721,11 @@ private suspend fun takeSnapshot(
       }
     } catch (e: Exception) {
       withContext(Dispatchers.Main) {
-        Toast.makeText(context, "Failed to save snapshot: ${e.message}", Toast.LENGTH_LONG).show()
+        Toast.makeText(
+          context,
+          context.getString(R.string.snapshot_save_failed, e.message.orEmpty()),
+          Toast.LENGTH_LONG,
+        ).show()
       }
     }
   }

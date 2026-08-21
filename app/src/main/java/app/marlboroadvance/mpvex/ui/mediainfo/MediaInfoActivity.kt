@@ -71,13 +71,9 @@ import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
 import java.io.File
 
-class MediaInfoActivity : ComponentActivity() {
+class MediaInfoActivity : androidx.appcompat.app.AppCompatActivity() {
   private val appearancePreferences by inject<AppearancePreferences>()
   private val TAG = "MediaInfoActivity"
-
-  override fun attachBaseContext(newBase: android.content.Context) {
-    super.attachBaseContext(app.marlboroadvance.mpvex.utils.LocaleManager.wrap(newBase))
-  }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)

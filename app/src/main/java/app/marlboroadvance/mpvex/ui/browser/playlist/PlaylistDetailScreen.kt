@@ -235,7 +235,7 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
           }
         } else {
           BrowserTopBar(
-            title = playlist?.name ?: "Playlist",
+            title = playlist?.name ?: context.getString(R.string.playlist),
             isInSelectionMode = selectionManager.isInSelectionMode,
             selectedCount = selectionManager.selectedCount,
             totalCount = videos.size,
@@ -459,10 +459,18 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
               val result = viewModel.refreshM3UPlaylist()
               result
                 .onSuccess {
-                  Toast.makeText(context, "Playlist refreshed successfully", Toast.LENGTH_SHORT).show()
+                  Toast.makeText(
+                    context,
+                    context.getString(R.string.playlist_refresh_success),
+                    Toast.LENGTH_SHORT,
+                  ).show()
                 }
                 .onFailure { error ->
-                  Toast.makeText(context, "Failed to refresh: ${error.message}", Toast.LENGTH_LONG).show()
+                  Toast.makeText(
+                    context,
+                    context.getString(R.string.playlist_refresh_error, error.message.orEmpty()),
+                    Toast.LENGTH_LONG,
+                  ).show()
                 }
             } else {
               viewModel.refreshNow()
@@ -531,9 +539,16 @@ data class PlaylistDetailScreen(val playlistId: Int) : Screen {
           onDismiss = { showUrlDialog = false },
           onCopy = {
             val clipboardManager = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            val clip = android.content.ClipData.newPlainText("Stream URL", urlDialogContent)
+            val clip = android.content.ClipData.newPlainText(
+              context.getString(R.string.stream_url),
+              urlDialogContent,
+            )
             clipboardManager.setPrimaryClip(clip)
-            android.widget.Toast.makeText(context, "URL copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(
+              context,
+              context.getString(R.string.copied_to_clipboard),
+              android.widget.Toast.LENGTH_SHORT,
+            ).show()
           }
         )
       }
@@ -754,7 +769,9 @@ private fun RemoveFromPlaylistDialog(
 ) {
   if (!isOpen) return
 
-  val itemText = if (itemCount == 1) "video" else "videos"
+  val itemText = stringResource(
+    if (itemCount == 1) R.string.video_singular else R.string.video_plural,
+  )
 
   androidx.compose.material3.AlertDialog(
     onDismissRequest = onDismiss,

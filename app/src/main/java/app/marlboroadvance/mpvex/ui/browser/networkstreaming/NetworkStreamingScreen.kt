@@ -267,7 +267,8 @@ object NetworkStreamingScreen : Screen {
                       app.marlboroadvance.mpvex.ui.browser.cards.PreloadSetting.Depth -> conn.copy(preloadDepth = value)
                       app.marlboroadvance.mpvex.ui.browser.cards.PreloadSetting.PerDir -> conn.copy(preloadPerDir = value)
                       app.marlboroadvance.mpvex.ui.browser.cards.PreloadSetting.Total -> conn.copy(preloadTotal = value)
-                      app.marlboroadvance.mpvex.ui.browser.cards.PreloadSetting.Threads -> conn.copy(preloadThreads = value)
+                      app.marlboroadvance.mpvex.ui.browser.cards.PreloadSetting.Threads ->
+                      conn.copy(preloadThreads = NetworkPreloadPolicy.clampThreads(value))
                     }
                   viewModel.updateConnection(updated)
                 },

@@ -435,16 +435,16 @@ class PlayerViewModel(
         val path =
           uri.resolveUri(host.context)
             ?: return@launch withContext(Dispatchers.Main) {
-              showToast("Failed to load audio file: Invalid URI")
+              showToast(host.context.getString(R.string.failed_load_audio_invalid_uri))
             }
 
         MPVLib.command("audio-add", path, "cached")
         withContext(Dispatchers.Main) {
-          showToast("Audio track added")
+          showToast(host.context.getString(R.string.audio_track_added))
         }
       }.onFailure { e ->
         withContext(Dispatchers.Main) {
-          showToast("Failed to load audio: ${e.message}")
+          showToast(host.context.getString(R.string.failed_load_audio, e.message.orEmpty()))
         }
         android.util.Log.e("PlayerViewModel", "Error adding audio", e)
       }
@@ -464,7 +464,7 @@ class PlayerViewModel(
 
         if (!isValidSubtitleFile(fileName)) {
           return@launch withContext(Dispatchers.Main) {
-            showToast("Invalid subtitle file format")
+            showToast(host.context.getString(R.string.invalid_subtitle_format))
           }
         }
 
@@ -498,13 +498,13 @@ class PlayerViewModel(
         val displayName = fileName.take(30).let { if (fileName.length > 30) "$it..." else it }
         if (!silent) {
           withContext(Dispatchers.Main) {
-            showToast("$displayName added")
+            showToast(host.context.getString(R.string.subtitle_added, displayName))
           }
         }
       }.onFailure {
         if (!silent) {
           withContext(Dispatchers.Main) {
-            showToast("Failed to load subtitle")
+            showToast(host.context.getString(R.string.failed_load_subtitle))
           }
         }
       }
@@ -633,7 +633,7 @@ class PlayerViewModel(
           _externalSubtitles.remove(originalUriString)
           mpvPathToUriMap.remove(mpvPath)
           withContext(Dispatchers.Main) {
-            showToast("Subtitle deleted")
+            showToast(host.context.getString(R.string.subtitle_deleted))
           }
         }
       }
@@ -691,7 +691,7 @@ class PlayerViewModel(
           _seasonEpisodes.value = emptyList()
         }
         .onFailure {
-          showToast("Failed to load series details: ${it.message}")
+          showToast(host.context.getString(R.string.failed_load_series_details, it.message.orEmpty()))
         }
       _isFetchingTvDetails.value = false
     }
@@ -710,7 +710,7 @@ class PlayerViewModel(
           _selectedEpisode.value = null
         }
         .onFailure {
-          showToast("Failed to load episodes: ${it.message}")
+          showToast(host.context.getString(R.string.failed_load_episodes, it.message.orEmpty()))
         }
       _isFetchingEpisodes.value = false
     }
@@ -739,7 +739,7 @@ class PlayerViewModel(
                  _wyzieSearchResults.value = results
              }
              .onFailure {
-                 showToast("Search failed: ${it.message}")
+                 showToast(host.context.getString(R.string.subtitle_search_failed, it.message.orEmpty()))
              }
          _isSearchingSub.value = false
      }
@@ -753,7 +753,7 @@ class PlayerViewModel(
                   addSubtitle(uri)
               }
               .onFailure {
-                  showToast("Download failed: ${it.message}")
+                  showToast(host.context.getString(R.string.subtitle_download_failed, it.message.orEmpty()))
               }
           _isDownloadingSub.value = false
       }
@@ -1328,7 +1328,11 @@ class PlayerViewModel(
         // Check if file was created
         if (!tempFile.exists() || tempFile.length() == 0L) {
           withContext(Dispatchers.Main) {
-            Toast.makeText(context, "Failed to create screenshot", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+              context,
+              context.getString(R.string.snapshot_create_failed),
+              Toast.LENGTH_SHORT,
+            ).show()
           }
           return@launch
         }
@@ -1380,7 +1384,7 @@ class PlayerViewModel(
                 ).show()
             }
           } else {
-            throw Exception("Failed to create MediaStore entry")
+            throw Exception(context.getString(R.string.snapshot_media_store_entry_failed))
           }
         } else {
           // Android 9 and below - Use legacy external storage
@@ -1394,7 +1398,7 @@ class PlayerViewModel(
           if (!snapshotsDir.exists()) {
             val created = snapshotsDir.mkdirs()
             if (!created && !snapshotsDir.exists()) {
-              throw Exception("Failed to create mpvSnaps directory")
+                throw Exception(context.getString(R.string.snapshot_directory_create_failed))
             }
           }
 
@@ -1421,7 +1425,11 @@ class PlayerViewModel(
         }
       } catch (e: Exception) {
         withContext(Dispatchers.Main) {
-          Toast.makeText(context, "Failed to save snapshot: ${e.message}", Toast.LENGTH_LONG).show()
+          Toast.makeText(
+            context,
+            context.getString(R.string.snapshot_save_failed, e.message.orEmpty()),
+            Toast.LENGTH_LONG,
+          ).show()
         }
       } finally {
         _isSnapshotLoading.value = false
@@ -1490,13 +1498,13 @@ class PlayerViewModel(
           if (durationStr.isBlank()) {
             val durationMs =
               app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
-                .getCachedDuration(info.connection.id, info.filePath)
+                .getCachedDuration(info.connection, info.file)
             if (durationMs > 0) durationStr = formatDuration(durationMs)
           }
           if (resolutionStr.isBlank()) {
             val res =
               app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
-                .getCachedResolution(info.connection.id, info.filePath)
+                .getCachedResolution(info.connection, info.file)
             if (res != null) resolutionStr = "${res.first}×${res.second}"
           }
           if (durationStr.isNotBlank() || resolutionStr.isNotBlank()) {
@@ -1766,8 +1774,9 @@ class PlayerViewModel(
               .getStreamInfo(streamId) ?: return@mapNotNull null
           val hasDuration =
             app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
-              .getCachedDuration(info.connection.id, info.filePath) > 0L
-          val key = "${info.connection.id}::${info.filePath}"
+              .getCachedDuration(info.connection, info.file) > 0L
+          val key = app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
+            .cacheIdentity(info.connection, info.file)
           val retryAt = networkMetadataRetryAt[key] ?: 0L
           if (hasDuration || retryAt > now) null else key to info
         }.distinctBy { it.first }
@@ -1779,17 +1788,9 @@ class PlayerViewModel(
       coroutineScope {
         missing.map { (key, info) ->
           async {
-            val file =
-              app.marlboroadvance.mpvex.domain.network.NetworkFile(
-                name = info.filePath.substringAfterLast('/').ifBlank { info.filePath },
-                path = info.filePath,
-                size = info.fileSize,
-                isDirectory = false,
-                mimeType = info.mimeType,
-              )
             val duration = try {
               app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
-                .probeDuration(info.connection, file)
+                .probeDuration(info.connection, info.file)
             } catch (e: CancellationException) {
               throw e
             } catch (e: Exception) {
@@ -1990,7 +1991,11 @@ class PlayerViewModel(
     } else {
       MPVLib.command("vf", "remove", "@mpvex_hflip")
     }
-    playerUpdate.value = PlayerUpdates.ShowText(if (newMirrorState) "H-Flip On" else "H-Flip Off")
+    playerUpdate.value = PlayerUpdates.ShowText(
+      host.context.getString(
+        if (newMirrorState) R.string.player_horizontal_flip_on else R.string.player_horizontal_flip_off,
+      ),
+    )
   }
 
   fun toggleVerticalFlip() {
@@ -2004,7 +2009,11 @@ class PlayerViewModel(
       MPVLib.command("vf", "remove", "@mpvex_vflip")
     }
 
-    playerUpdate.value = PlayerUpdates.ShowText(if (newState) "V-Flip On" else "V-Flip Off")
+    playerUpdate.value = PlayerUpdates.ShowText(
+      host.context.getString(
+        if (newState) R.string.player_vertical_flip_on else R.string.player_vertical_flip_off,
+      ),
+    )
   }
 
   // ==================== Utility ====================

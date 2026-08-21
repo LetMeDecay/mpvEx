@@ -206,7 +206,16 @@ data class NetworkBrowserScreen(
           }
         },
         onVideoVisible = { video ->
-          viewModel.ensureThumbnail(video)
+          viewModel.ensureThumbnail(
+            video,
+            NetworkMetadataProbe.ThumbnailPriority.VISIBLE,
+          )
+        },
+        onVideoPrefetch = { video ->
+          viewModel.ensureThumbnail(
+            video,
+            NetworkMetadataProbe.ThumbnailPriority.PREFETCH,
+          )
         },
         onCancelPrefetch = { keepPaths ->
           viewModel.cancelThumbnailsExcept(keepPaths)
@@ -302,6 +311,7 @@ private fun NetworkBrowserContent(
   onFolderClick: (NetworkFile) -> Unit,
   onVideoClick: (NetworkFile) -> Unit,
   onVideoVisible: (NetworkFile) -> Unit,
+  onVideoPrefetch: (NetworkFile) -> Unit,
   onCancelPrefetch: (Set<String>) -> Unit,
   onItemLongClick: (NetworkFile) -> Unit,
   modifier: Modifier = Modifier,
@@ -475,7 +485,7 @@ private fun NetworkBrowserContent(
                 LaunchedEffect(video.path) {
                   onVideoVisible(video)
                   for (offset in 1..THUMBNAIL_PREFETCH_AHEAD) {
-                    videos.getOrNull(index + offset)?.let(onVideoVisible)
+                    videos.getOrNull(index + offset)?.let(onVideoPrefetch)
                   }
                 }
                 // Only show card if connection is loaded

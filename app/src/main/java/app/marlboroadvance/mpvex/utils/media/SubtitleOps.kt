@@ -150,9 +150,10 @@ object SubtitleOps : KoinComponent {
           val proxyUrl = proxy.registerStream(
             streamId = streamId,
             connection = connection,
-            filePath = subtitle.path,
-            fileSize = subtitle.size,
-            mimeType = "text/plain",
+            // Preserve the complete remote identity (size, modified time and
+            // ETag) for range-cache isolation. Only the MIME type differs from
+            // the directory listing because this stream is a subtitle.
+            file = subtitle.copy(mimeType = "text/plain"),
           )
 
           // Get current subtitle track count before adding

@@ -82,6 +82,8 @@
   <string name="pref_autoplay_summary">Show next/previous buttons for all videos in folder</string>
   <string name="pref_autoplay_next_video_title">Autoplay next video</string>
   <string name="pref_autoplay_next_video_summary">Automatically play next video when current ends</string>
+  <string name="pref_autoplay_next_video_disabled_summary">Stay on current video when it ends</string>
+  <string name="pref_playlist_mode_disabled_summary">Play videos individually (select multiple for playlist)</string>
   <string name="pref_auto_pip_title">Auto Picture-in-Picture</string>
   <string name="pref_auto_pip_summary">Automatically enter PIP mode when pressing home or back</string>
   <string name="pref_dynamic_speed_overlay_title">Dynamic Speed Overlay</string>
@@ -128,6 +130,7 @@
   <string name="pref_player_double_tap_seek_duration">Double tap seek duration</string>
   <string name="pref_player_custom_skip_duration_title">Custom skip duration</string>
   <string name="pref_player_custom_skip_duration_summary">Duration to skip forward on custom skip button</string>
+  <string name="pref_player_custom_skip_duration_value">%1$s (%2$ds)</string>
   <string name="pref_player_seeking_title">Seeking</string>
   <string name="pref_player_close_after_eof">Close after the end of playback</string>
   <string name="pref_player_remember_brightness">Remember display brightness</string>
@@ -139,6 +142,10 @@
   <string name="pref_player_gestures_horizontal_swipe_to_seek_summary">Swipe left or right on screen to seek forward or backward</string>
   <string name="pref_player_gestures_horizontal_swipe_sensitivity">Horizontal swipe sensitivity</string>
   <string name="pref_player_gestures_horizontal_swipe_sensitivity_summary">Adjust how much distance is covered per swipe</string>
+  <string name="pref_player_gestures_horizontal_swipe_sensitivity_value">Current: %1$d/100 (%2$s)</string>
+  <string name="pref_sensitivity_low">Low</string>
+  <string name="pref_sensitivity_medium">Medium</string>
+  <string name="pref_sensitivity_high">High</string>
   <string name="pref_player_gestures_hold_for_multiple_speed">Hold for multi - x speed</string>
   <string name="pref_player_controls">Controls</string>
   <string name="pref_player_controls_allow_gestures_in_panels">Allow gestures in panels</string>
@@ -199,10 +206,13 @@
   <string name="pref_subtitles_search_online">Online Subtitle Search…</string>
   <string name="pref_subtitles_subdl_languages">Subtitle Languages</string>
   <string name="all_languages">All (Selective Filtering)</string>
+  <string name="all">All</string>
+  <string name="default_font">Default</string>
   <string name="pref_subtitles_clear_downloads">Clear Subtitle Downloads</string>
   <string name="pref_subtitles_clear_downloads_summary">Delete all files in the current save location</string>
   <string name="pref_subtitles_clear_downloads_confirmation">Are you sure you want to delete all downloaded subtitles? This action cannot be undone.</string>
   <string name="toast_subtitles_cleared">Subtitle downloads cleared</string>
+  <string name="subtitle_clear_error">Error: %1$s</string>
   <string name="pref_audio">Audio</string>
   <string name="pref_audio_summary">Preferred languages, audio channels, pitch correction</string>
   <string name="pref_audio_pitch_correction_title">Enable audio pitch correction</string>
@@ -367,7 +377,15 @@
   <string name="show_splash_ovals_on_double_tap_to_seek">Show ripple when double tap seeking</string>
   <string name="show_time_on_double_tap_to_seek">Show seek time</string>
   <string name="player_sheets_frame_navigation_title">Frame Navigation</string>
+  <string name="player_horizontal_flip_on">H-Flip On</string>
+  <string name="player_horizontal_flip_off">H-Flip Off</string>
+  <string name="player_vertical_flip_on">V-Flip On</string>
+  <string name="player_vertical_flip_off">V-Flip Off</string>
   <string name="player_sheets_frame_navigation_snapshot_saved" translatable="false">Saved to Pictures/mpvSnaps</string>
+  <string name="snapshot_create_failed">Failed to create screenshot</string>
+  <string name="snapshot_media_store_entry_failed">Failed to create MediaStore entry</string>
+  <string name="snapshot_directory_create_failed">Failed to create mpvSnaps directory</string>
+  <string name="snapshot_save_failed">Failed to save snapshot: %1$s</string>
   <string name="player_sheets_frame_navigation_include_subtitles">Include subtitles in snapshot</string>
   <string name="player_sheets_zoom_slider_label">Video Zoom</string>
   <plurals name="seconds">
@@ -446,6 +464,11 @@
   <string name="invalid_subtitle_format">Invalid subtitle file format</string>
   <string name="subtitle_added">%s added</string>
   <string name="failed_load_subtitle">Failed to load subtitle</string>
+  <string name="subtitle_deleted">Subtitle deleted</string>
+  <string name="failed_load_series_details">Failed to load series details: %1$s</string>
+  <string name="failed_load_episodes">Failed to load episodes: %1$s</string>
+  <string name="subtitle_search_failed">Search failed: %1$s</string>
+  <string name="subtitle_download_failed">Download failed: %1$s</string>
   <string name="remove_from_playlist">Remove %1$d %2$s from playlist?</string>
   <string name="remove_playlist_items_confirm">The selected %2$s will be removed from this playlist. Original %3$s will not be deleted.</string>
   <string name="search_videos">Search videos…</string>
@@ -468,6 +491,8 @@
   <string name="check_for_updates_now">Check for updates now</string>
   <string name="loading_detailed_information">Loading detailed information…</string>
   <string name="stream_url">Stream URL</string>
+  <string name="video_singular">video</string>
+  <string name="video_plural">videos</string>
   <string name="export_complete">Export complete</string>
   <string name="import_complete">Import complete</string>
   <string name="auto_picture_in_picture">Auto picture-in-picture</string>
@@ -489,6 +514,7 @@
   <string name="home">Home</string>
   <string name="recents">Recents</string>
   <string name="playlists">Playlists</string>
+  <string name="playlist">Playlist</string>
   <string name="network">Network</string>
   <string name="seconds">Seconds</string>
   <string name="milliseconds">Milliseconds</string>
@@ -635,6 +661,11 @@
   <string name="clear_loop">Clear Loop</string>
   <string name="config_saved">%1$s saved</string>
   <string name="copied_to_clipboard">Copied to clipboard</string>
+  <string name="selection_deleted_success">Deleted successfully</string>
+  <string name="selection_delete_failed">Failed to delete</string>
+  <string name="selection_delete_failed_with_reason">Failed to delete: %1$s</string>
+  <string name="selection_renamed_success">Renamed successfully</string>
+  <string name="selection_rename_failed_with_reason">Failed to rename: %1$s</string>
   <string name="create_first_playlist">Create your first playlist above</string>
   <string name="create_folder">Create folder</string>
   <string name="create_new_playlist">Create New Playlist</string>
@@ -751,6 +782,8 @@
   <string name="portrait_controls">Portrait Controls</string>
   <string name="pref_decoder_vulkan_title_experimental">Use Vulkan (Experimental)</string>
   <string name="pref_keep_screen_on_title">Keep screen on when paused</string>
+  <string name="pref_keep_screen_on_enabled_summary">Screen stays awake while video is paused</string>
+  <string name="pref_keep_screen_on_disabled_summary">Screen can turn off while video is paused</string>
   <string name="pref_layout_edit_title">Edit %1$s</string>
   <string name="pref_section_advanced_about">Advanced &amp;amp; About</string>
   <string name="pref_section_file_management">File Management</string>

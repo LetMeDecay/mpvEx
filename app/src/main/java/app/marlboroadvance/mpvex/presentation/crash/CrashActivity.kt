@@ -74,14 +74,10 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 
-class CrashActivity : ComponentActivity() {
+class CrashActivity : androidx.appcompat.app.AppCompatActivity() {
   private val clipboardManager by lazy { getSystemService(CLIPBOARD_SERVICE) as ClipboardManager }
   private var logcat: String = ""
   private val appearancePreferences: AppearancePreferences by inject()
-
-  override fun attachBaseContext(newBase: android.content.Context) {
-    super.attachBaseContext(app.marlboroadvance.mpvex.utils.LocaleManager.wrap(newBase))
-  }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
