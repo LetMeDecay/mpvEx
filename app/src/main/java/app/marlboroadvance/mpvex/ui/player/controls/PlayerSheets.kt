@@ -327,15 +327,11 @@ fun PlayerSheets(
 
 
     Sheets.Playlist -> {
-      // Refresh playlist items when sheet is shown, and keep polling while the
-      // sheet is open so durations/resolutions that finish probing in the
-      // background appear live instead of requiring close+reopen.
+      // A background probe refreshes this state when it completes. Avoid a
+      // polling loop here: failed network probes would otherwise be retried on
+      // every tick while the sheet is visible.
       LaunchedEffect(Unit) {
         viewModel.refreshPlaylistItems()
-        while (true) {
-          kotlinx.coroutines.delay(500)
-          viewModel.refreshPlaylistItems()
-        }
       }
 
       // Observe playlist updates

@@ -29,6 +29,7 @@ import `is`.xyz.mpv.MPVLib
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -54,6 +55,8 @@ import kotlinx.serialization.json.Json
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import androidx.documentfile.provider.DocumentFile
 import app.marlboroadvance.mpvex.preferences.AdvancedPreferences
 import kotlin.properties.ReadOnlyProperty
@@ -98,6 +101,12 @@ class PlayerViewModel(
   // Playlist items for the playlist sheet
   private val _playlistItems = kotlinx.coroutines.flow.MutableStateFlow<List<app.marlboroadvance.mpvex.ui.player.controls.components.sheets.PlaylistItem>>(emptyList())
   val playlistItems: kotlinx.coroutines.flow.StateFlow<List<app.marlboroadvance.mpvex.ui.player.controls.components.sheets.PlaylistItem>> = _playlistItems.asStateFlow()
+
+  // Network metadata probes are intentionally negative-cached with backoff.
+  // A server that cannot expose a container duration should not be hit again
+  // every time the playlist sheet recomposes or is refreshed.
+  private val networkMetadataRetryAt = ConcurrentHashMap<String, Long>()
+  private val networkMetadataFailures = ConcurrentHashMap<String, Int>()
 
   // Wyzie Search Results
   private val _wyzieSearchResults = MutableStateFlow<List<WyzieSubtitle>>(emptyList())
@@ -1713,7 +1722,7 @@ class PlayerViewModel(
    * Refreshes the playlist items to update the currently playing indicator.
    * Called when a new video starts playing to update the playlist UI.
    */
-  fun refreshPlaylistItems() {
+  fun refreshPlaylistItems(probeNetworkMetadata: Boolean = true) {
     viewModelScope.launch(Dispatchers.IO) {
       val updatedItems = getPlaylistData()
       if (updatedItems != null) {
@@ -1727,26 +1736,27 @@ class PlayerViewModel(
         // Load metadata asynchronously in the background
         loadPlaylistMetadataAsync(updatedItems)
       }
-      // Probe network items whose duration/resolution are not cached yet, then
-      // refresh so the values appear live instead of on the next list opening.
-      probeMissingNetworkMetadata()
+      // Only an explicit refresh starts probes. Completion refreshes the list
+      // with this flag disabled, preventing recursive probing.
+      if (probeNetworkMetadata) {
+        probeMissingNetworkMetadata()
+      }
     }
   }
 
-  @Volatile
-  private var probingNetworkMetadata = false
+  private val probingNetworkMetadata = AtomicBoolean(false)
 
   /**
    * For local-proxy (network) playlist items without cached duration, probe the
    * metadata in the background and refresh the list once cached.
    */
   private suspend fun probeMissingNetworkMetadata() {
-    if (probingNetworkMetadata) return
     val activity = host as? PlayerActivity ?: return
     if (activity.playlist.isEmpty()) return
+    if (!probingNetworkMetadata.compareAndSet(false, true)) return
 
-    probingNetworkMetadata = true
     try {
+      val now = System.currentTimeMillis()
       val missing =
         activity.playlist.mapNotNull { uri ->
           if (uri.host != "127.0.0.1" && uri.host != "localhost") return@mapNotNull null
@@ -1757,15 +1767,17 @@ class PlayerViewModel(
           val hasDuration =
             app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
               .getCachedDuration(info.connection.id, info.filePath) > 0L
-          if (hasDuration) null else info
-        }
+          val key = "${info.connection.id}::${info.filePath}"
+          val retryAt = networkMetadataRetryAt[key] ?: 0L
+          if (hasDuration || retryAt > now) null else key to info
+        }.distinctBy { it.first }
       if (missing.isEmpty()) return
 
       // Probe concurrently - NetworkMetadataProbe caps the real concurrency
       // (durationSemaphore = 6), so batching here only speeds up completion
       // without risking the network/CPU.
       coroutineScope {
-        missing.map { info ->
+        missing.map { (key, info) ->
           async {
             val file =
               app.marlboroadvance.mpvex.domain.network.NetworkFile(
@@ -1775,17 +1787,33 @@ class PlayerViewModel(
                 isDirectory = false,
                 mimeType = info.mimeType,
               )
-            runCatching {
+            val duration = try {
               app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
                 .probeDuration(info.connection, file)
+            } catch (e: CancellationException) {
+              throw e
+            } catch (e: Exception) {
+              0L
             }
+            key to duration
           }
-        }.awaitAll()
+        }.awaitAll().forEach { (key, duration) ->
+          if (duration > 0L) {
+            networkMetadataFailures.remove(key)
+            networkMetadataRetryAt.remove(key)
+          } else {
+            val failures = (networkMetadataFailures[key] ?: 0) + 1
+            networkMetadataFailures[key] = failures
+            val backoff = app.marlboroadvance.mpvex.ui.browser.networkstreaming
+              .NetworkMetadataRetryPolicy.delayForFailure(failures)
+            networkMetadataRetryAt[key] = System.currentTimeMillis() + backoff
+          }
+        }
       }
       // Duration (and resolution) are now cached - refresh so the list shows them
-      refreshPlaylistItems()
+      refreshPlaylistItems(probeNetworkMetadata = false)
     } finally {
-      probingNetworkMetadata = false
+      probingNetworkMetadata.set(false)
     }
   }
 
@@ -1815,6 +1843,12 @@ class PlayerViewModel(
 
           // Skip if already in cache (LruCache is thread-safe)
           if (metadataCache.get(cacheKey) == null) {
+            // Network proxy items are handled by probeMissingNetworkMetadata,
+            // which has persistent caching and failure backoff. Do not launch a
+            // second MediaMetadataRetriever request for the same item here.
+            if (item.uri.host == "127.0.0.1" || item.uri.host == "localhost") {
+              return@forEach
+            }
             // Extract metadata
             val (durationStr, resolutionStr) = getVideoMetadata(item.uri)
 

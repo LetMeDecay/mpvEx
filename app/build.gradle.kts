@@ -18,7 +18,7 @@ android {
     minSdk = 26
     targetSdk = 36
     versionCode = 129
-    versionName = "1.2.9-rev0814"
+    versionName = "1.2.9-rev0821"
 
     vectorDrawables {
       useSupportLibrary = true
@@ -170,6 +170,8 @@ room {
 }
 
 dependencies {
+  testImplementation("junit:junit:4.13.2")
+
   implementation(libs.androidx.activity.compose)
   implementation(platform(libs.androidx.compose.bom))
   implementation(libs.androidx.ui)

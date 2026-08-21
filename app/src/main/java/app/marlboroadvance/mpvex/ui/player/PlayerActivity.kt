@@ -47,6 +47,10 @@ import app.marlboroadvance.mpvex.ui.player.controls.PlayerControls
 import app.marlboroadvance.mpvex.ui.theme.MpvexTheme
 import app.marlboroadvance.mpvex.utils.history.RecentlyPlayedOps
 import app.marlboroadvance.mpvex.utils.media.HttpUtils
+import app.marlboroadvance.mpvex.utils.media.NetworkMediaIdentity
+import app.marlboroadvance.mpvex.utils.media.InFlightPrefetchTracker
+import app.marlboroadvance.mpvex.utils.media.PlaybackPositionPolicy
+import app.marlboroadvance.mpvex.utils.media.PlaylistPrefetchOrder
 import app.marlboroadvance.mpvex.utils.media.SubtitleOps
 import app.marlboroadvance.mpvex.utils.storage.FileTypeUtils
 import app.marlboroadvance.mpvex.utils.storage.FileFilterUtils
@@ -55,7 +59,9 @@ import `is`.xyz.mpv.MPVLib
 import `is`.xyz.mpv.MPVNode
 import `is`.xyz.mpv.Utils
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -169,7 +175,7 @@ class PlayerActivity :
    * Unique identifier for the current media, used for saving/loading playback state.
    * For network streams, this includes a hash of the URI to ensure uniqueness.
    */
-  private var mediaIdentifier = ""
+  @Volatile private var mediaIdentifier = ""
 
   /**
    * Playlist of URIs for sequential playback
@@ -226,6 +232,12 @@ class PlayerActivity :
   private var noisyReceiverRegistered = false
   private var mpvInitialized = false // Track MPV initialization state
   private var savePlaybackStateJob: kotlinx.coroutines.Job? = null // Track ongoing save job
+  @Volatile private var playbackStateLoadGeneration = 0L
+  private var initialIntentExtrasApplied = false
+  private var nextPrefetchJob: Job? = null // Only one next-item prefetch watcher may be active
+  // Only tracks requests currently in flight. HeaderCache has a bounded LRU,
+  // so a successful prefetch must not suppress a later request forever.
+  private val inFlightPrefetchKeys = InFlightPrefetchTracker()
   private var wasPlayingBeforePause = false // Track if video was playing before pause
 
   // ==================== Background Playback ====================
@@ -377,6 +389,9 @@ class PlayerActivity :
             if (viewModel.shuffleEnabled.value) {
               onShuffleToggled(true)
             }
+            // If FILE_LOADED raced the database load, start the initial
+            // watcher now that the playlist is finally available.
+            if (isReady) startNextPrefetch()
           }
         } catch (e: Exception) {
           Log.e(TAG, "Failed to load playlist from database", e)
@@ -565,6 +580,8 @@ class PlayerActivity :
     runCatching {
       // OPTIMIZATION: Prevent any further UI updates or callbacks
       isReady = false
+      nextPrefetchJob?.cancel()
+      nextPrefetchJob = null
 
       // Only stop the service if we're not doing manual background playback
       if ((isUserFinishing || isFinishing) && !isManualBackgroundPlayback) {
@@ -1080,13 +1097,18 @@ class PlayerActivity :
   private fun setIntentExtras(extras: Bundle?) {
     if (extras == null) return
 
-    extras.getInt("position", POSITION_NOT_SET).takeIf { it != POSITION_NOT_SET }?.let {
-      MPVLib.setPropertyInt("time-pos", it / MILLISECONDS_TO_SECONDS)
+    getIntentPositionSeconds(extras)?.let {
+      MPVLib.setPropertyInt("time-pos", it)
     }
 
     addSubtitlesFromExtras(extras)
     setHttpHeadersFromExtras(extras)
   }
+
+  private fun getIntentPositionSeconds(extras: Bundle?): Int? =
+    extras?.getInt("position", POSITION_NOT_SET)
+      ?.takeIf { it != POSITION_NOT_SET }
+      ?.div(MILLISECONDS_TO_SECONDS)
 
   /**
    * Adds subtitle tracks from intent extras.
@@ -1652,19 +1674,30 @@ class PlayerActivity :
    * applies user preferences, and sets up metadata and media session.
    */
   private fun handleFileLoaded() {
-    // Extract fileName from intent only if not already set
-    // This preserves fileName set in onNewIntent or onCreate
-    if (fileName.isBlank()) {
-      fileName = getFileName(intent)
-      // Ensure fileName is not blank - use a fallback if necessary
+    // A playlist item is the source of truth after the initial launch. Do not
+    // reuse the launch intent's network_file_path for later WebDAV/SMB/FTP
+    // items, and recompute the stable identifier from the current proxy entry.
+    val currentPlaylistUri = playlist.getOrNull(playlistIndex)
+    if (currentPlaylistUri != null) {
+      fileName = getFileNameFromUri(currentPlaylistUri)
+      mediaIdentifier = getMediaIdentifierFromUri(currentPlaylistUri, fileName)
+    } else {
+      // Extract fileName from the intent only for non-playlist playback.
       if (fileName.isBlank()) {
-        fileName = intent.data?.lastPathSegment ?: "Unknown Video"
+        fileName = getFileName(intent)
+        if (fileName.isBlank()) {
+          fileName = intent.data?.lastPathSegment ?: "Unknown Video"
+        }
       }
-      mediaIdentifier = getMediaIdentifier(intent, fileName)
-    } else if (mediaIdentifier.isBlank()) {
-      // If fileName was already set, but mediaIdentifier is missing, set it for safety
-      mediaIdentifier = getMediaIdentifier(intent, fileName)
+      if (mediaIdentifier.isBlank()) {
+        mediaIdentifier = getMediaIdentifier(intent, fileName)
+      }
     }
+
+    val loadedMediaIdentifier = mediaIdentifier
+    val loadGeneration = ++playbackStateLoadGeneration
+    val isInitialFileLoad = !initialIntentExtrasApplied
+    val intentPosition = if (isInitialFileLoad) getIntentPositionSeconds(intent.extras) else null
 
     // Start media notification service (like YouTube - always show notification)
     startBackgroundPlayback()
@@ -1672,18 +1705,51 @@ class PlayerActivity :
     // Reset AB loop values when video changes
     viewModel.clearABLoop()
 
-    setIntentExtras(intent.extras)
+    // Position/subtitle extras belong to the initial launch only. Reapplying a
+    // stale position on every FILE_LOADED event makes a playlist item inherit
+    // the launch item's position.
+    if (!initialIntentExtrasApplied) {
+      setIntentExtras(intent.extras)
+      initialIntentExtrasApplied = true
+    }
+
+    // Clear MPV's previous position before an asynchronous state lookup. Keep
+    // an explicitly supplied initial launch position visible until the lookup
+    // confirms whether a saved state should override it.
+    PlaybackPositionPolicy.positionBeforeStateLookup(
+      isInitialLoad = isInitialFileLoad,
+      intentPosition = intentPosition,
+    )?.let { MPVLib.setPropertyInt("time-pos", it) }
+    val positionWithoutSavedState = PlaybackPositionPolicy.positionWithoutSavedState(
+      isInitialLoad = isInitialFileLoad,
+      intentPosition = intentPosition,
+    )
 
     lifecycleScope.launch(Dispatchers.IO) {
       // Load playback state (will skip track restoration if preferred language configured)
-      val hasState = loadVideoPlaybackState(fileName)
+      val state = loadVideoPlaybackState(loadedMediaIdentifier)
+      if (!isCurrentPlaybackStateLoad(loadGeneration, loadedMediaIdentifier)) return@launch
+      val hasState = state != null
+
+      // Apply state only if this FILE_LOADED event is still current. The
+      // database lookup is asynchronous and can otherwise restore an older
+      // item's state after the user has already switched files.
+      withContext(Dispatchers.Main) {
+        if (isCurrentPlaybackStateLoad(loadGeneration, loadedMediaIdentifier)) {
+          applyPlaybackState(state, positionWithoutSavedState)
+          applyDefaultSettings(state)
+        }
+      }
+      if (!isCurrentPlaybackStateLoad(loadGeneration, loadedMediaIdentifier)) return@launch
 
       // Apply track selection logic (defaults only apply when no saved state)
       trackSelector.onFileLoaded(hasState)
+      if (!isCurrentPlaybackStateLoad(loadGeneration, loadedMediaIdentifier)) return@launch
 
       // Apply default zoom only if there's no saved state
       if (!hasState) {
         withContext(Dispatchers.Main) {
+          if (!isCurrentPlaybackStateLoad(loadGeneration, loadedMediaIdentifier)) return@withContext
           val zoomPreference = playerPreferences.defaultVideoZoom.get()
           MPVLib.setPropertyDouble("video-zoom", zoomPreference.toDouble())
           viewModel.setVideoZoom(zoomPreference)
@@ -1692,6 +1758,7 @@ class PlayerActivity :
 
       // Apply saved aspect ratio setting
       withContext(Dispatchers.Main) {
+        if (!isCurrentPlaybackStateLoad(loadGeneration, loadedMediaIdentifier)) return@withContext
         val savedAspect = playerPreferences.defaultVideoAspect.get()
         val savedCustomRatio = playerPreferences.defaultCustomAspectRatio.get()
         
@@ -1704,6 +1771,10 @@ class PlayerActivity :
         }
       }
     }
+
+    // This is the reliable lifecycle point for both the initial player.playFile
+    // call and later playlist loadfile calls.
+    startNextPrefetch()
 
     // Save to recently played when video actually loads and plays
     lifecycleScope.launch(Dispatchers.IO) {
@@ -1752,9 +1823,16 @@ class PlayerActivity :
 
     if (subtitlesPreferences.autoloadMatchingSubtitles.get()) {
       lifecycleScope.launch {
-        // For network files played via proxy (SMB/WebDAV/FTP), use the original network file path
-        val networkFilePath = intent.getStringExtra("network_file_path")
-        val networkConnectionId = intent.getLongExtra("network_connection_id", -1L)
+        // Resolve the URI that MPV is currently loading. For playlist playback
+        // this is different from the original launch URI after the first item.
+        // Proxy URLs are ephemeral, so use their registry entry for the actual
+        // remote path and connection id.
+        val currentUri = playlist.getOrNull(playlistIndex) ?: extractUriFromIntent(intent)
+        val currentStreamInfo = currentUri?.let(::resolveProxyStreamInfo)
+        val networkFilePath = currentStreamInfo?.filePath
+          ?: intent.getStringExtra("network_file_path")
+        val networkConnectionId = currentStreamInfo?.connection?.id
+          ?: intent.getLongExtra("network_connection_id", -1L)
 
         if (networkFilePath != null && networkConnectionId != -1L) {
           // Pass network file path and connection ID for subtitle discovery
@@ -1974,7 +2052,8 @@ class PlayerActivity :
    * @param mediaTitle The title of the media being played
    */
   private fun saveVideoPlaybackState(mediaTitle: String) {
-    if (mediaIdentifier.isBlank()) return
+    val identifier = mediaIdentifier
+    if (identifier.isBlank()) return
 
     // Cancel any previous pending save operation
     savePlaybackStateJob?.cancel()
@@ -1982,8 +2061,8 @@ class PlayerActivity :
     // Launch new save job and track it
     savePlaybackStateJob = lifecycleScope.launch(Dispatchers.IO) {
       runCatching {
-        val oldState = playbackStateRepository.getVideoDataByTitle(mediaIdentifier)
-        Log.d(TAG, "Saving playback state for: $mediaTitle (identifier: $mediaIdentifier)")
+        val oldState = playbackStateRepository.getVideoDataByTitle(identifier)
+        Log.d(TAG, "Saving playback state for: $mediaTitle (identifier: $identifier)")
 
         val lastPosition = calculateSavePosition(oldState)
         val duration = viewModel.duration ?: 0
@@ -1991,7 +2070,7 @@ class PlayerActivity :
 
         playbackStateRepository.upsert(
           PlaybackStateEntity(
-            mediaTitle = mediaIdentifier,
+            mediaTitle = identifier,
             lastPosition = lastPosition,
             playbackSpeed = MPVLib.getPropertyDouble("speed") ?: DEFAULT_PLAYBACK_SPEED,
             videoZoom = MPVLib.getPropertyDouble("video-zoom")?.toFloat() ?: 0f,
@@ -2054,23 +2133,26 @@ class PlayerActivity :
   /**
    * Loads and applies saved playback state from the database.
    *
-   * @param mediaTitle The title of the media being played
-   * @return true if saved state was found and applied, false otherwise
+   * @param identifier Stable identifier of the media being played
+   * @return saved state, or null when no state exists or the lookup fails
    */
-  private suspend fun loadVideoPlaybackState(mediaTitle: String): Boolean {
-    if (mediaIdentifier.isBlank()) return false
+  private suspend fun loadVideoPlaybackState(identifier: String): PlaybackStateEntity? {
+    if (identifier.isBlank()) return null
 
-    return runCatching {
-      val state = playbackStateRepository.getVideoDataByTitle(mediaIdentifier)
-
-      applyPlaybackState(state)
-      applyDefaultSettings(state)
-
-      state != null
-    }.onFailure { e ->
+    return try {
+      playbackStateRepository.getVideoDataByTitle(identifier)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
       Log.e(TAG, "Error loading playback state", e)
-    }.getOrDefault(false)
+      null
+    }
   }
+
+  private fun isCurrentPlaybackStateLoad(
+    generation: Long,
+    identifier: String,
+  ): Boolean = playbackStateLoadGeneration == generation && mediaIdentifier == identifier
 
   /**
    * Applies saved playback state to MPV.
@@ -2080,8 +2162,17 @@ class PlayerActivity :
    *
    * @param state The saved playback state entity
    */
-  private fun applyPlaybackState(state: PlaybackStateEntity?) {
-    if (state == null) return
+  private fun applyPlaybackState(
+    state: PlaybackStateEntity?,
+    positionWithoutSavedState: Int = 0,
+  ) {
+    if (state == null) {
+      // MPV can retain time-pos while an asynchronous loadfile is settling.
+      // The policy supplies zero for playlist items, or an explicit initial
+      // launch position when one was provided.
+      MPVLib.setPropertyInt("time-pos", positionWithoutSavedState)
+      return
+    }
 
     val subDelay = state.subDelay / DELAY_DIVISOR
     val audioDelay = state.audioDelay / DELAY_DIVISOR
@@ -2122,9 +2213,11 @@ class PlayerActivity :
     MPVLib.setPropertyDouble("video-zoom", state.videoZoom.toDouble())
     viewModel.setVideoZoom(state.videoZoom)
 
-    if (playerPreferences.savePositionOnQuit.get() && state.lastPosition != 0) {
-      MPVLib.setPropertyInt("time-pos", state.lastPosition)
-    }
+    val savedPosition = PlaybackPositionPolicy.positionToRestore(
+      savePositionOnQuit = playerPreferences.savePositionOnQuit.get(),
+      savedPosition = state.lastPosition,
+    )
+    savedPosition?.let { MPVLib.setPropertyInt("time-pos", it) }
   }
 
   /**
@@ -2273,6 +2366,8 @@ class PlayerActivity :
 
     // Update the intent first so getFileName uses the new intent data
     setIntent(intent)
+    initialIntentExtrasApplied = false
+    playbackStateLoadGeneration++
 
     // Check if this intent has playlist information
     val hasPlaylistExtras = intent.hasExtra("playlist_id") ||
@@ -2989,6 +3084,11 @@ class PlayerActivity :
       return
     }
 
+    // Stop watching the old item immediately. The new watcher is started from
+    // the FILE_LOADED event once MPV has switched to the new item.
+    cancelNextPrefetch()
+    playbackStateLoadGeneration++
+
     // Save current video's playback state before switching
     if (fileName.isNotBlank()) {
       saveVideoPlaybackState(fileName)
@@ -3066,8 +3166,6 @@ class PlayerActivity :
       viewModel.refreshPlaylistItems()
     }
 
-    // Pre-warm the next network item so switching is seamless
-    startNextPrefetch()
   }
 
   /**
@@ -3076,17 +3174,26 @@ class PlayerActivity :
    * the track switch doesn't stall on downloading the container header.
    */
   private fun startNextPrefetch() {
+    // A file load starts a new watcher. Cancelling here also covers duplicate
+    // FILE_LOADED callbacks and playlist changes while the old item is still
+    // waiting for its duration.
+    cancelNextPrefetch()
+
     if (playlist.size <= 1) return
     val isNetworkPlayback = playlist.any { it.host == "127.0.0.1" || it.host == "localhost" }
     if (!isNetworkPlayback) return
 
-    lifecycleScope.launch(Dispatchers.IO) {
+    val watchedIndex = playlistIndex
+    nextPrefetchJob = lifecycleScope.launch(Dispatchers.IO) {
       while (isActive) {
+        // Do not let a watcher for the previous item prefetch after a manual
+        // jump or an automatic track switch.
+        if (playlistIndex != watchedIndex) return@launch
         val duration = MPVLib.getPropertyDouble("duration") ?: 0.0
         val pos = MPVLib.getPropertyDouble("time-pos") ?: 0.0
         if (duration > 0) {
           if (duration - pos <= NEXT_PREFETCH_SECONDS) {
-            prefetchNextPlaylistItem()
+            prefetchNextPlaylistItem(watchedIndex)
             return@launch
           }
         } else {
@@ -3102,17 +3209,10 @@ class PlayerActivity :
   /**
    * Pre-fetch the file header (first ~2MB) of the next playlist item through
    * the proxy, so mpv opens it instantly at switch time. Handles repeat-all
-   * wrap-around; shuffle leaves the next item unpredictable and is skipped.
+   * wrap-around and follows the current shuffled order when one is active.
    */
-  private fun prefetchNextPlaylistItem() {
-    var next = playlistIndex + 1
-    if (next >= playlist.size) {
-      if (playlist.size > 1 && viewModel.repeatMode.value == app.marlboroadvance.mpvex.ui.player.RepeatMode.ALL) {
-        next = 0
-      } else {
-        return
-      }
-    }
+  private suspend fun prefetchNextPlaylistItem(currentIndex: Int) {
+    val next = nextPlaylistIndexForPrefetch(currentIndex) ?: return
 
     val uri = playlist.getOrNull(next) ?: return
     val host = uri.host
@@ -3122,20 +3222,57 @@ class PlayerActivity :
     val info = app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy.getInstance().getStreamInfo(streamId)
       ?: return
 
-    lifecycleScope.launch(Dispatchers.IO) {
-      val file =
-        app.marlboroadvance.mpvex.domain.network.NetworkFile(
-          name = info.filePath.substringAfterLast('/').ifBlank { info.filePath },
-          path = info.filePath,
-          size = info.fileSize,
-          isDirectory = false,
-          mimeType = info.mimeType,
-        )
-      runCatching {
-        app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe.prefetchHeader(info.connection, file)
+    val streamKey = NetworkMediaIdentity.forFile(info.connection.id, info.filePath)
+    // add() is atomic, so a cancelled watcher that is still finishing an
+    // in-flight request cannot start a duplicate request for the same file.
+    if (!inFlightPrefetchKeys.tryStart(streamKey)) return
+
+    val file =
+      app.marlboroadvance.mpvex.domain.network.NetworkFile(
+        name = info.filePath.substringAfterLast('/').ifBlank { info.filePath },
+        path = info.filePath,
+        size = info.fileSize,
+        isDirectory = false,
+        mimeType = info.mimeType,
+      )
+    try {
+      val prefetched = app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
+        .prefetchHeader(info.connection, file)
+      if (prefetched) {
         Log.d(TAG, "Prefetched next item header: ${info.filePath}")
+      } else {
+        Log.w(TAG, "Prefetch returned an unsuccessful response: ${info.filePath}")
       }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to prefetch next item header: ${info.filePath}", e)
+    } finally {
+      // The header LRU may evict this item later; only suppress overlap, not
+      // future prefetches after eviction.
+      inFlightPrefetchKeys.complete(streamKey)
     }
+  }
+
+  private fun cancelNextPrefetch() {
+    nextPrefetchJob?.cancel()
+    nextPrefetchJob = null
+  }
+
+  /**
+   * Resolve the actual next item in playback order. In shuffle mode the
+   * shuffled index list is the source of truth; playlistIndex + 1 is not.
+   * At the end of a shuffled repeat cycle we skip prefetch because the next
+   * cycle is regenerated randomly and is not known yet.
+   */
+  private fun nextPlaylistIndexForPrefetch(currentIndex: Int): Int? {
+    return PlaylistPrefetchOrder.nextIndex(
+      currentIndex = currentIndex,
+      playlistSize = playlist.size,
+      shuffleEnabled = viewModel.shuffleEnabled.value,
+      shuffledIndices = shuffledIndices,
+      repeatAll = viewModel.repeatMode.value == app.marlboroadvance.mpvex.ui.player.RepeatMode.ALL,
+    )
   }
 
   /**
@@ -3150,16 +3287,28 @@ class PlayerActivity :
   }
 
   /**
+   * Return the proxy's source metadata for a local proxy URI, if available.
+   * The path segment is only an ephemeral registry key and is never a media
+   * identifier or subtitle lookup path by itself.
+   */
+  private fun resolveProxyStreamInfo(
+    uri: Uri,
+  ): app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy.StreamInfo? {
+    val host = uri.host ?: return null
+    if (host != "127.0.0.1" && host != "localhost") return null
+    val streamId = uri.path?.removePrefix("/")?.substringBefore("/") ?: return null
+    if (streamId.isBlank()) return null
+    return app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
+      .getInstance()
+      .getStreamInfo(streamId)
+  }
+
+  /**
    * For local proxy URLs (http://127.0.0.1:port/<streamId>) the path segment is
    * a generated stream id, so the real file name is looked up from the proxy.
    */
   private fun resolveProxyFileName(uri: Uri): String? {
-    val host = uri.host ?: return null
-    if (host != "127.0.0.1" && host != "localhost") return null
-    val streamId = uri.path?.removePrefix("/")?.substringBefore("/") ?: return null
-    val info =
-      app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy.getInstance()
-        .getStreamInfo(streamId) ?: return null
+    val info = resolveProxyStreamInfo(uri) ?: return null
     val name = info.filePath.substringAfterLast('/').ifBlank { info.filePath }
     return try {
       java.net.URLDecoder.decode(name, "UTF-8")
@@ -3307,6 +3456,16 @@ class PlayerActivity :
    * For other network URIs (http/https/rtmp/etc.), uses a hash of the URI string to distinguish different streams.
    */
   private fun getMediaIdentifier(intent: Intent, fileName: String): String {
+    // Prefer the proxy registry over intent extras. The extras describe only
+    // the item that launched the activity, while a playlist may now be on a
+    // different proxy stream.
+    val uri = extractUriFromIntent(intent)
+    uri?.let { currentUri ->
+      resolveProxyStreamInfo(currentUri)?.let { info ->
+        return NetworkMediaIdentity.forFile(info.connection.id, info.filePath)
+      }
+    }
+
     // Check if this is a network file played via proxy (SMB/WebDAV/FTP)
     // Use the stable network file path instead of the temporary proxy URL
     val networkFilePath = intent.getStringExtra("network_file_path")
@@ -3314,7 +3473,7 @@ class PlayerActivity :
 
     if (networkFilePath != null && networkConnectionId != -1L) {
       // For network files via proxy: use connection ID + file path for stable identifier
-      val identifier = "network_${networkConnectionId}_${networkFilePath.hashCode()}"
+      val identifier = NetworkMediaIdentity.forFile(networkConnectionId, networkFilePath)
       Log.d(
         TAG,
         "Using network file identifier: $identifier (connection: $networkConnectionId, path: $networkFilePath)",
@@ -3322,7 +3481,6 @@ class PlayerActivity :
       return identifier
     }
 
-    val uri = extractUriFromIntent(intent)
     return if (uri != null && (uri.scheme?.startsWith("http") == true || uri.scheme == "rtmp" || uri.scheme == "ftp" || uri.scheme == "rtsp" || uri.scheme == "mms")) {
       // For remote protocols: hash the URI so position is per-episode or per-stream.
       "${fileName}_${uri.toString().hashCode()}"
@@ -3339,6 +3497,12 @@ class PlayerActivity :
    * For network URIs (http/https/rtmp/etc.), uses a hash of the URI string to distinguish different streams.
    */
   private fun getMediaIdentifierFromUri(uri: Uri, fileName: String): String {
+    resolveProxyStreamInfo(uri)?.let { info ->
+      val identifier = NetworkMediaIdentity.forFile(info.connection.id, info.filePath)
+      Log.d(TAG, "Using proxy network file identifier: $identifier (connection: ${info.connection.id}, path: ${info.filePath})")
+      return identifier
+    }
+
     return if (uri.scheme?.startsWith("http") == true || uri.scheme == "rtmp" || uri.scheme == "ftp" || uri.scheme == "rtsp" || uri.scheme == "mms") {
       "${fileName}_${uri.toString().hashCode()}"
     } else {

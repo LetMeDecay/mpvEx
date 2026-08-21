@@ -131,18 +131,20 @@ object SortUtils {
         NetworkSortType.Size -> videos.sortedWith(
           compareBy<NetworkFile> { it.size }.then(byName),
         )
-        // Sort by duration, keep files with unknown duration (0) at the end,
-        // and use the name as a stable tie-breaker.
-        NetworkSortType.Duration -> videos.sortedWith(
-          compareBy<NetworkFile> { it.duration <= 0L }
-            .thenBy { it.duration }
-            .then(byName),
-        )
+        // Unknown durations must stay at the end in both directions. Reversing
+        // one combined list would move them to the front for descending order.
+        NetworkSortType.Duration -> {
+          val known = videos
+            .filter { it.duration > 0L }
+            .sortedWith(compareBy<NetworkFile> { it.duration }.then(byName))
+          val unknown = videos.filter { it.duration <= 0L }.sortedWith(byName)
+          if (sortOrder.isAscending) known + unknown else known.asReversed() + unknown.asReversed()
+        }
       }
 
     // Apply sort order
     val orderedFolders = if (sortOrder.isAscending) sortedFolders else sortedFolders.reversed()
-    val orderedVideos = if (sortOrder.isAscending) sortedVideos else sortedVideos.reversed()
+    val orderedVideos = if (sortType == NetworkSortType.Duration) sortedVideos else if (sortOrder.isAscending) sortedVideos else sortedVideos.reversed()
 
     // Return folders first, then videos
     return orderedFolders + orderedVideos

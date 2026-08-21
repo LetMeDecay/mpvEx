@@ -11,6 +11,7 @@ import app.marlboroadvance.mpvex.domain.network.NetworkFile
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
 import `is`.xyz.mpv.FastThumbnails
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -360,8 +361,8 @@ object NetworkMetadataProbe {
   suspend fun prefetchHeader(
     connection: NetworkConnection,
     file: NetworkFile,
-  ) {
-    if (file.isDirectory) return
+  ): Boolean {
+    if (file.isDirectory) return false
     val proxy = NetworkStreamingProxy.getInstance()
     val streamId = "prefetch_${connection.id}_${System.nanoTime()}"
     val url =
@@ -372,19 +373,24 @@ object NetworkMetadataProbe {
         fileSize = file.size,
         mimeType = file.mimeType ?: "video/mp4",
       )
-    try {
+    return try {
       val request =
         okhttp3.Request.Builder()
           .url(url)
           .header("Range", "bytes=0-${2 * 1024 * 1024 - 1}")
           .build()
-      runCatching {
+      try {
         okhttp3.OkHttpClient.Builder()
           .callTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
           .build()
           .newCall(request)
           .execute()
-          .use { resp -> resp.body?.close() }
+          .use { resp -> resp.isSuccessful }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        Log.w(TAG, "Header prefetch failed for ${file.path}", e)
+        false
       }
     } finally {
       proxy.unregisterStream(streamId)
