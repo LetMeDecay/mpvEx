@@ -4,7 +4,6 @@ import android.net.Uri
 import android.util.Log
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
-import app.marlboroadvance.mpvex.utils.media.WebDavDateProperties
 import com.thegrizzlylabs.sardineandroid.Sardine
 import com.thegrizzlylabs.sardineandroid.impl.OkHttpSardine
 import com.thegrizzlylabs.sardineandroid.DavResource
@@ -85,7 +84,6 @@ class WebDavClient(private val connection: NetworkConnection) : NetworkClient {
             .drop(1) // Skip the directory itself
             .map { resource: DavResource ->
               val resourceName = resource.name ?: ""
-              val customProperties = resource.customPropsNS
               
               // Build child path by appending filename to current path
               val filePath = if (path.isEmpty() || path == "/") {
@@ -100,9 +98,6 @@ class WebDavClient(private val connection: NetworkConnection) : NetworkClient {
                 isDirectory = resource.isDirectory,
                 size = resource.contentLength ?: 0,
                 lastModified = resource.modified?.time ?: 0,
-                creationDate = resource.creation?.time
-                  ?: WebDavDateProperties.fileCreationDate(customProperties),
-                itemDate = WebDavDateProperties.videoCreationDate(customProperties),
                 mimeType = if (!resource.isDirectory) getMimeType(resourceName) else null,
                 etag = resource.etag?.takeIf { it.isNotEmpty() },
               )

@@ -17,10 +17,8 @@
 - 本地代理 URL 增加编码后的真实文件名作为稳定回退，播放列表首次打开即可显示文件名，不再依赖临时数字 stream id。
 - 网络视频日期格式由 `MMM dd` 改为与本地视频一致的 `MMM dd, yyyy`。
 - 网络排序保持原有标题/日期/大小/时长逻辑，其中 `Date` 继续按文件修改日期排序。
-- “字段”区域增加文件创建日期、文件修改日期和视频创建日期三个显示开关：WebDAV/SMB 提供文件创建日期，视频创建日期随时长/分辨率探测一并读取和缓存。
-- 修复文件创建日期、视频创建日期和视频缩略图开关：WebDAV 创建日期兼容自定义 PROPFIND 属性，旧日期缓存会重新探测；关闭缩略图后立即隐藏缓存图片，重新开启时恢复探测。
-- WebDAV 的 `itemdate` 现直接映射为视频创建日期；文件创建日期兼容 `creationdate`、`creationtime`、`Win32CreationTime`、`birthtime` 和 `crtime`，日期值兼容 ISO、RFC 1123 及 Unix 秒/毫秒时间戳。
-- 三类日期卡片只显示 `MMM dd, yyyy`，不再显示“创建/修改”等前缀。
+- “字段”区域保留可靠的文件修改日期开关；由于 WebDAV 服务端和视频容器无法稳定提供创建日期，已移除文件创建日期与视频创建日期字段及其探测、缓存和兼容代码。
+- 文件修改日期卡片只显示 `MMM dd, yyyy`，不显示“修改”等前缀；关闭缩略图后立即隐藏缓存图片，重新开启时恢复探测。
 
 ## 版本
 
@@ -29,7 +27,7 @@
 
 ## 构建与验证
 
-- `:app:testStandardDebugUnitTest`：30 项测试全部通过
+- `:app:testStandardDebugUnitTest`：22 项测试全部通过
 - `:app:assembleStandardDebug` 与 `:app:assembleStandardRelease` 构建通过
 - universal / arm64-v8a / armeabi-v7a / x86_64 / x86 五个 Release APK 均已完成 zipalign、v2/v3 签名、版本号和 ABI 校验
 - 当前五个已签名 APK 及对应 `.idsig` 位于工作区最外层 `/root/mpvex/`，便于直接获取；Gradle `app/build` 临时产物已清理
@@ -57,7 +55,6 @@
 ### 网络浏览增强
 - `HomeNetworkConnectionsSection.kt`（新增）：首页顶部显示网络连接（Display on Home）
 - `NetworkVideoCard`：视频卡片显示缩略图 + 时长标签
-- WebDAV 自定义创建日期直接从命名空间属性读取，避免 Android 16 访问 `QName.localPart` 导致崩溃
 - 每目录独立排序（Title/Date/Size/Duration + 文件名二次排序防闪烁），存 `network_folder_sort`
 - 长按刷新缓存（`refreshCache`）：文件夹递归失效 + 重探
 - 预取视野外缩略图（AHEAD=10）+ 快速滚动取消（`cancelThumbnailsExcept`）

@@ -108,9 +108,7 @@ data class NetworkBrowserScreen(
     val networkSortType by viewModel.sortType.collectAsState()
     val networkSortOrder by viewModel.sortOrder.collectAsState()
     val showSizeChip by browserPreferences.showSizeChip.collectAsState()
-    val showCreationDateChip by browserPreferences.showNetworkCreationDateChip.collectAsState()
     val showModifiedDateChip by browserPreferences.showNetworkModifiedDateChip.collectAsState()
-    val showItemDateChip by browserPreferences.showNetworkItemDateChip.collectAsState()
     val unlimitedNameLines by appearancePreferences.unlimitedNameLines.collectAsState()
     val showNetworkThumbnails by appearancePreferences.showNetworkThumbnails.collectAsState()
 
@@ -286,19 +284,9 @@ data class NetworkBrowserScreen(
           onCheckedChange = { browserPreferences.showSizeChip.set(it) },
         ),
         VisibilityToggle(
-          label = stringResource(R.string.network_visibility_creation_date),
-          checked = showCreationDateChip,
-          onCheckedChange = { browserPreferences.showNetworkCreationDateChip.set(it) },
-        ),
-        VisibilityToggle(
           label = stringResource(R.string.network_visibility_modified_date),
           checked = showModifiedDateChip,
           onCheckedChange = { browserPreferences.showNetworkModifiedDateChip.set(it) },
-        ),
-        VisibilityToggle(
-          label = stringResource(R.string.network_visibility_item_date),
-          checked = showItemDateChip,
-          onCheckedChange = { browserPreferences.showNetworkItemDateChip.set(it) },
         ),
         VisibilityToggle(
           label = stringResource(R.string.network_visibility_thumbnails),

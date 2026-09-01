@@ -9,8 +9,6 @@ data class NetworkFile(
   val size: Long,
   val isDirectory: Boolean,
   val lastModified: Long = 0,
-  val creationDate: Long = 0,
-  val itemDate: Long = 0,
   val mimeType: String? = null,
   val duration: Long = 0,
   val etag: String? = null,  // Remote ETag when the protocol provides one (WebDAV)

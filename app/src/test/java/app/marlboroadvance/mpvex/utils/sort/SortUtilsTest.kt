@@ -37,9 +37,9 @@ class SortUtilsTest {
   @Test
   fun networkDateSortContinuesToUseLastModified() {
     val datedFiles = listOf(
-      NetworkFile("a.mkv", "/a.mkv", 0L, false, lastModified = 300L, creationDate = 100L, itemDate = 200L),
-      NetworkFile("b.mkv", "/b.mkv", 0L, false, lastModified = 100L, creationDate = 200L, itemDate = 300L),
-      NetworkFile("c.mkv", "/c.mkv", 0L, false, lastModified = 200L, creationDate = 300L, itemDate = 100L),
+      NetworkFile("a.mkv", "/a.mkv", 0L, false, lastModified = 300L),
+      NetworkFile("b.mkv", "/b.mkv", 0L, false, lastModified = 100L),
+      NetworkFile("c.mkv", "/c.mkv", 0L, false, lastModified = 200L),
     )
 
     assertEquals(

@@ -141,11 +141,9 @@ class NetworkBrowserViewModel(
           .onSuccess { fileList ->
             // Pre-load cached durations so the list displays instantly without re-probing
             val cachedDurations = NetworkMetadataProbe.getCachedDurations(connection, fileList)
-            val cachedItemDates = NetworkMetadataProbe.getCachedItemDates(connection, fileList)
             _files.value = fileList.map { file ->
               file.copy(
                 duration = cachedDurations[file.path]?.takeIf { it > 0 } ?: file.duration,
-                itemDate = cachedItemDates[file.path]?.takeIf { it > 0 } ?: file.itemDate,
               )
             }
             probeMissingDurations(connection, fileList)
@@ -187,8 +185,7 @@ class NetworkBrowserViewModel(
     fileList: List<NetworkFile>,
   ) {
     val videos = fileList.filter {
-      !it.isDirectory && it.mimeType?.startsWith("video/") == true &&
-        (it.duration <= 0 || !NetworkMetadataProbe.isItemDateChecked(connection, it))
+      !it.isDirectory && it.mimeType?.startsWith("video/") == true && it.duration <= 0
     }
     if (videos.isEmpty()) return
 
@@ -198,16 +195,14 @@ class NetworkBrowserViewModel(
           async {
             try {
               val duration = NetworkMetadataProbe.probeDuration(connection, file)
-              val itemDate = NetworkMetadataProbe.getCachedItemDate(connection, file)
-              if (duration > 0 || itemDate > 0) {
+              if (duration > 0) {
                 withContext(Dispatchers.Main) {
                   _files.update { current ->
-                    if (current.any { it.path == file.path && (it.duration != duration || it.itemDate != itemDate) }) {
+                    if (current.any { it.path == file.path && it.duration != duration }) {
                       current.map {
                         if (it.path == file.path) {
                           it.copy(
                             duration = duration.takeIf { value -> value > 0 } ?: it.duration,
-                            itemDate = itemDate.takeIf { value -> value > 0 } ?: it.itemDate,
                           )
                         } else it
                       }
@@ -354,10 +349,9 @@ class NetworkBrowserViewModel(
     try {
       NetworkMetadataProbe.invalidateCache(connection, file)
       val duration = NetworkMetadataProbe.probeDuration(connection, file)
-      val itemDate = NetworkMetadataProbe.getCachedItemDate(connection, file)
       withContext(Dispatchers.Main) {
         _files.value = _files.value.map {
-          if (it.path == file.path) it.copy(duration = duration, itemDate = itemDate) else it
+          if (it.path == file.path) it.copy(duration = duration) else it
         }
       }
       if (appearancePreferences.showNetworkThumbnails.get()) {
