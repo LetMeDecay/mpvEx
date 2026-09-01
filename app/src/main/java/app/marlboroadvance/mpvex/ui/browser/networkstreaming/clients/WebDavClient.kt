@@ -100,8 +100,8 @@ class WebDavClient(private val connection: NetworkConnection) : NetworkClient {
                 size = resource.contentLength ?: 0,
                 lastModified = resource.modified?.time ?: 0,
                 creationDate = resource.creation?.time
-                  ?: resource.customProps.entries
-                    .firstOrNull { it.key.contains("creationdate", ignoreCase = true) }
+                  ?: resource.customPropsNS.entries
+                    .firstOrNull { it.key.toString().contains("creationdate", ignoreCase = true) }
                     ?.value
                     ?.let(NetworkItemDate::parse)
                   ?: 0,

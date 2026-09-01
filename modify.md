@@ -56,6 +56,7 @@
 ### 网络浏览增强
 - `HomeNetworkConnectionsSection.kt`（新增）：首页顶部显示网络连接（Display on Home）
 - `NetworkVideoCard`：视频卡片显示缩略图 + 时长标签
+- WebDAV 自定义创建日期直接从命名空间属性读取，避免 Android 16 访问 `QName.localPart` 导致崩溃
 - 每目录独立排序（Title/Date/Size/Duration + 文件名二次排序防闪烁），存 `network_folder_sort`
 - 长按刷新缓存（`refreshCache`）：文件夹递归失效 + 重探
 - 预取视野外缩略图（AHEAD=10）+ 快速滚动取消（`cancelThumbnailsExcept`）
