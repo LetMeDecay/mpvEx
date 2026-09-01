@@ -33,4 +33,17 @@ class NetworkItemDateTest {
       NetworkItemDate.parse("UTC 2024-08-21T12:34:56Z"),
     )
   }
+
+  @Test
+  fun parsesEpochSecondsFromWebDavProperty() {
+    assertEquals(1_724_243_696_000L, NetworkItemDate.parse("1724243696"))
+  }
+
+  @Test
+  fun parsesRfc1123WebDavDate() {
+    assertEquals(
+      Instant.parse("2024-08-21T12:34:56Z").toEpochMilli(),
+      NetworkItemDate.parse("Wed, 21 Aug 2024 12:34:56 GMT"),
+    )
+  }
 }
