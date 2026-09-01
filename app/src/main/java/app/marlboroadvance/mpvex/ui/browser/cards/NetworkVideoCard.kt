@@ -59,6 +59,9 @@ fun NetworkVideoCard(
   val browserPreferences = koinInject<BrowserPreferences>()
   val unlimitedNameLines by appearancePreferences.unlimitedNameLines.collectAsState()
   val showSizeChip by browserPreferences.showSizeChip.collectAsState()
+  val showCreationDateChip by browserPreferences.showNetworkCreationDateChip.collectAsState()
+  val showModifiedDateChip by browserPreferences.showNetworkModifiedDateChip.collectAsState()
+  val showItemDateChip by browserPreferences.showNetworkItemDateChip.collectAsState()
   val maxLines = if (unlimitedNameLines) Int.MAX_VALUE else 2
 
   val thumbSizeDp = 64.dp
@@ -163,9 +166,37 @@ fun NetworkVideoCard(
               color = MaterialTheme.colorScheme.onSurface,
             )
           }
-          if (file.lastModified > 0) {
+          if (showCreationDateChip && file.creationDate > 0) {
             Text(
-              formatDate(file.lastModified),
+              stringResource(R.string.network_date_created, formatDate(file.creationDate)),
+              style = MaterialTheme.typography.labelSmall,
+              modifier =
+                Modifier
+                  .background(
+                    MaterialTheme.colorScheme.surfaceContainerHigh,
+                    RoundedCornerShape(8.dp),
+                  )
+                  .padding(horizontal = 8.dp, vertical = 4.dp),
+              color = MaterialTheme.colorScheme.onSurface,
+            )
+          }
+          if (showModifiedDateChip && file.lastModified > 0) {
+            Text(
+              stringResource(R.string.network_date_modified, formatDate(file.lastModified)),
+              style = MaterialTheme.typography.labelSmall,
+              modifier =
+                Modifier
+                  .background(
+                    MaterialTheme.colorScheme.surfaceContainerHigh,
+                    RoundedCornerShape(8.dp),
+                  )
+                  .padding(horizontal = 8.dp, vertical = 4.dp),
+              color = MaterialTheme.colorScheme.onSurface,
+            )
+          }
+          if (showItemDateChip && file.itemDate > 0) {
+            Text(
+              stringResource(R.string.network_date_item, formatDate(file.itemDate)),
               style = MaterialTheme.typography.labelSmall,
               modifier =
                 Modifier
@@ -211,6 +242,6 @@ private fun formatFileSize(bytes: Long): String {
 
 private fun formatDate(timestamp: Long): String {
   val date = Date(timestamp)
-  val format = SimpleDateFormat("MMM dd", Locale.getDefault())
+  val format = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
   return format.format(date)
 }

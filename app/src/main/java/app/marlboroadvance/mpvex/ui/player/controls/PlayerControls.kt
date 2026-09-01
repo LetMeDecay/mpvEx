@@ -891,30 +891,19 @@ fun PlayerControls(
         ) {
           val invertDuration by playerPreferences.invertDuration.collectAsState()
           val seekbarStyle by appearancePreferences.seekbarStyle.collectAsState()
-          var wasPlayerAlreadyPaused by remember { mutableStateOf(false) }
-
           SeekbarWithTimers(
             position = precisePosition,
             duration = if (preciseDuration > 0) preciseDuration else duration?.toFloat() ?: 0f,
             onValueChange = {
-              if (!isSeeking) {
-                // First drag frame - pause playback
-                wasPlayerAlreadyPaused = paused ?: false
-                if (!wasPlayerAlreadyPaused) {
-                  viewModel.pause()
-                }
-              }
               isSeeking = true
               resetControlsTimestamp = System.currentTimeMillis()
-              viewModel.seekTo(it.toInt())
             },
-            onValueChangeFinished = {
+            onValueChangeFinished = { targetPosition ->
+              // Network streams are Range-backed. Seek once when scrubbing
+              // finishes instead of starting a new request on every drag frame.
+              viewModel.seekTo(targetPosition.toInt())
               isSeeking = false
               resetControlsTimestamp = System.currentTimeMillis()
-              // Unpause if it wasn't paused before seeking
-              if (!wasPlayerAlreadyPaused) {
-                viewModel.unpause()
-              }
               viewModel.showControls()
             },
             timersInverted = Pair(false, invertDuration),
@@ -1223,7 +1212,6 @@ fun PlayerControls(
       chapters = chapters.toImmutableList(),
       onSeekToChapter = {
         MPVLib.setPropertyInt("chapter", it)
-        viewModel.unpause()
       },
       decoder = decoder,
       onUpdateDecoder = { MPVLib.setPropertyString("hwdec", it.value) },

@@ -9,6 +9,7 @@ import android.util.Log
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
+import app.marlboroadvance.mpvex.utils.media.NetworkItemDate
 import `is`.xyz.mpv.FastThumbnails
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -66,6 +67,7 @@ object NetworkMetadataProbe {
   private val durationCache = ConcurrentHashMap<String, Long>()
   private val thumbnailCache = ConcurrentHashMap<String, Bitmap>()
   private val resolutionCache = ConcurrentHashMap<String, Pair<Int, Int>>()
+  private val itemDateCache = ConcurrentHashMap<String, Long>()
 
   // O(1) index from "<connectionId>::<filePath>" to the exact cache key, so
   // playback-list lookups (which only know connection id + path) never have to
@@ -329,10 +331,12 @@ object NetworkMetadataProbe {
     val key = cacheKey(connection, file)
 
     // Memory cache
-    durationCache[key]?.let { return it }
+    durationCache[key]?.takeIf { prefs.getBoolean("${key}:itemDateChecked", false) }?.let { return it }
 
     // Persistent cache (SharedPreferences)
-    prefs.getLong(key, 0L).takeIf { it > 0 }?.let { cached ->
+    prefs.getLong(key, 0L)
+      .takeIf { it > 0 && prefs.getBoolean("${key}:itemDateChecked", false) }
+      ?.let { cached ->
       durationCache[key] = cached
       return cached
     }
@@ -369,25 +373,28 @@ object NetworkMetadataProbe {
                   .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
                   ?.toIntOrNull()
                   ?: 0
-              ProbeResult(duration, width, height)
+              val itemDate = NetworkItemDate.parse(
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE),
+              )
+              ProbeResult(duration, width, height, itemDate)
             } catch (e: CancellationException) {
               throw e
             } catch (e: Exception) {
-              ProbeResult(0L, 0, 0)
+              ProbeResult(0L, 0, 0, 0L)
             } finally {
               runCatching { retriever.release() }
             }
           } catch (e: CancellationException) {
             throw e
           } catch (e: Exception) {
-            ProbeResult(0L, 0, 0)
+            ProbeResult(0L, 0, 0, 0L)
           } finally {
             proxy.unregisterStream(streamId)
           }
         }
       }
 
-    if (result.duration > 0 || (result.width > 0 && result.height > 0)) {
+    if (result.duration > 0 || (result.width > 0 && result.height > 0) || result.itemDate > 0) {
       keyIndex["${connection.id}::${file.path}"] = key
       // Remove stale entries for the same path (old size/etag/lastModified
       // versions may hold bogus durations from failed probes).
@@ -396,7 +403,8 @@ object NetworkMetadataProbe {
       prefs.all.keys
         .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
         .forEach { stale ->
-          prefs.edit().remove(stale).remove("${stale}:w").remove("${stale}:h").apply()
+          prefs.edit().remove(stale).remove("${stale}:w").remove("${stale}:h")
+            .remove("${stale}:itemDate").remove("${stale}:itemDateChecked").apply()
           runCatching { thumbnailFile(stale, connection).delete() }
         }
       durationCache.keys
@@ -408,6 +416,9 @@ object NetworkMetadataProbe {
       resolutionCache.keys
         .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
         .forEach { resolutionCache.remove(it) }
+      itemDateCache.keys
+        .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
+        .forEach { itemDateCache.remove(it) }
       val editor = prefs.edit()
       if (result.duration > 0) {
         durationCache[key] = result.duration
@@ -418,6 +429,11 @@ object NetworkMetadataProbe {
         editor.putLong("${key}:w", result.width.toLong())
         editor.putLong("${key}:h", result.height.toLong())
       }
+      if (result.itemDate > 0) {
+        itemDateCache[key] = result.itemDate
+        editor.putLong("${key}:itemDate", result.itemDate)
+      }
+      editor.putBoolean("${key}:itemDateChecked", true)
       editor.apply()
     }
     return result.duration
@@ -427,6 +443,7 @@ object NetworkMetadataProbe {
     val duration: Long,
     val width: Int,
     val height: Int,
+    val itemDate: Long,
   )
 
   /**
@@ -680,8 +697,10 @@ object NetworkMetadataProbe {
     durationCache.remove(key)
     thumbnailCache.remove(key)
     resolutionCache.remove(key)
+    itemDateCache.remove(key)
     keyIndex.remove("${connection.id}::${file.path}")
-    prefs.edit().remove(key).remove("${key}:w").remove("${key}:h").apply()
+    prefs.edit().remove(key).remove("${key}:w").remove("${key}:h")
+      .remove("${key}:itemDate").remove("${key}:itemDateChecked").apply()
     runCatching {
       thumbnailFile(key, connection).delete()
     }
@@ -708,6 +727,7 @@ object NetworkMetadataProbe {
     durationCache.clear()
     thumbnailCache.clear()
     resolutionCache.clear()
+    itemDateCache.clear()
     keyIndex.clear()
     prefs.edit().clear().apply()
     runCatching {
@@ -750,7 +770,8 @@ object NetworkMetadataProbe {
   }
 
   private fun isCanonicalCacheKey(key: String): Boolean =
-    !key.endsWith(":w") && !key.endsWith(":h")
+    !key.endsWith(":w") && !key.endsWith(":h") &&
+      !key.endsWith(":itemDate") && !key.endsWith(":itemDateChecked")
 
   private fun indexKey(
     connection: NetworkConnection,
@@ -772,6 +793,29 @@ object NetworkMetadataProbe {
     val key = findKey(connectionId, filePath) ?: return 0L
     return durationCache[key] ?: prefs.getLong(key, 0L)
   }
+
+  /** Pre-load embedded item dates for a directory without starting probes. */
+  fun getCachedItemDates(
+    connection: NetworkConnection,
+    files: List<NetworkFile>,
+  ): Map<String, Long> =
+    files.associate { file ->
+      val key = cacheKey(connection, file)
+      file.path to (itemDateCache[key] ?: prefs.getLong("${key}:itemDate", 0L))
+    }
+
+  fun getCachedItemDate(
+    connection: NetworkConnection,
+    file: NetworkFile,
+  ): Long {
+    val key = cacheKey(connection, file)
+    return itemDateCache[key] ?: prefs.getLong("${key}:itemDate", 0L)
+  }
+
+  fun isItemDateChecked(
+    connection: NetworkConnection,
+    file: NetworkFile,
+  ): Boolean = prefs.getBoolean("${cacheKey(connection, file)}:itemDateChecked", false)
 
   /** Exact-version lookup used by active proxy streams. */
   fun getCachedDuration(
@@ -845,6 +889,7 @@ object NetworkMetadataProbe {
       durationCache.keys.removeAll { it.startsWith(prefix) }
       thumbnailCache.keys.removeAll { it.startsWith(prefix) }
       resolutionCache.keys.removeAll { it.startsWith(prefix) }
+      itemDateCache.keys.removeAll { it.startsWith(prefix) }
       keyIndex.keys.removeAll { it.startsWith(prefix) }
       prefs.all.keys
         .filter { it.startsWith(prefix) }

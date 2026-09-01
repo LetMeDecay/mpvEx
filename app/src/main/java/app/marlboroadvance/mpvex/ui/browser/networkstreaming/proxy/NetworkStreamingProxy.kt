@@ -113,7 +113,11 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
 
     activeStreams[streamId] = streamInfo
 
-    return "http://127.0.0.1:$listeningPort/$streamId"
+    // Keep the real filename in the URI. The proxy routes by the first path
+    // segment, while the second segment gives player UI a stable title even
+    // if the in-memory stream lookup is briefly unavailable.
+    val encodedName = android.net.Uri.encode(file.name)
+    return "http://127.0.0.1:$listeningPort/$streamId/$encodedName"
   }
 
   /**

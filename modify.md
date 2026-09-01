@@ -4,6 +4,21 @@
 >
 > 官方版本已经提供网络连接与 SMB / FTP / WebDAV 播放能力；本文仅记录本分支相对官方版本新增的功能。
 
+## 待发布修复
+
+### WebDAV 播放与控制
+
+- 进度条和横向滑动调整为拖动时只更新预览、松手时仅发送一次 `absolute+exact` seek，避免连续 Range 请求互相打断导致暂停或进度回跳。
+- 进度条 seek 不再主动暂停/恢复播放；章节切换保留用户切换前的播放/暂停状态。
+- 音量纵向手势按屏幕高度映射完整系统音量范围，单次滑动可快速完成大幅调整。
+
+### 播放列表与网络日期
+
+- 本地代理 URL 增加编码后的真实文件名作为稳定回退，播放列表首次打开即可显示文件名，不再依赖临时数字 stream id。
+- 网络视频日期格式由 `MMM dd` 改为与本地视频一致的 `MMM dd, yyyy`。
+- 网络排序保持原有标题/日期/大小/时长逻辑，其中 `Date` 继续按文件修改日期排序。
+- “字段”区域增加文件创建日期、文件修改日期和视频内嵌 Item Date 三个显示开关：WebDAV/SMB 提供创建日期，视频 Item Date 随时长/分辨率探测一并读取和缓存。
+
 ## 版本
 
 - 版本号：官方 `1.2.9` → 本分支 `1.2.9-rev0821`（versionCode 129 不变；arm64 拆分包 versionCode 1292）
@@ -11,7 +26,7 @@
 
 ## 构建与验证
 
-- `:app:testStandardDebugUnitTest`：21 项测试全部通过（原有 10 项 + 本轮新增 11 项）
+- `:app:testStandardDebugUnitTest`：25 项测试全部通过
 - `:app:assembleStandardDebug` 与 `:app:assembleStandardRelease` 构建通过
 - universal / arm64-v8a / armeabi-v7a / x86_64 / x86 五个 Release APK 均已完成 zipalign、v2/v3 签名、版本号和 ABI 校验
 

@@ -919,10 +919,9 @@ class PlayerViewModel(
       seekCoalesceJob?.cancel()
       pendingSeekOffset = 0
       
-      // Use precise seeking for videos shorter than 2 minutes (120 seconds) or if preference is enabled
-      val shouldUsePreciseSeeking = playerPreferences.usePreciseSeeking.get() || maxDuration < 120
-      val seekMode = if (shouldUsePreciseSeeking) "absolute+exact" else "absolute+keyframes"
-      MPVLib.command("seek", clampedPosition.toString(), seekMode)
+      // Direct timeline/gesture targets must land at the requested timestamp.
+      // Keyframe seeking can visibly jump away from the tapped position.
+      MPVLib.command("seek", clampedPosition.toString(), "absolute+exact")
     }
   }
 

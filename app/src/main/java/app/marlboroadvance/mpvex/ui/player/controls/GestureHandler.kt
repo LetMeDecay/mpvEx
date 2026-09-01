@@ -348,7 +348,9 @@ fun GestureHandler(
           var lastMPVVolumeValue = currentMPVVolume ?: 100
           var lastBrightnessValue = currentBrightness
           val brightnessGestureSens = 0.001f
-          val volumeGestureSens = 0.017f
+          // Half a screen covers the complete Android volume range, matching
+          // the fast adjustment expected from mainstream mobile players.
+          val volumeGestureSens = (viewModel.maxVolume * 2f) / size.height.coerceAtLeast(1)
           val mpvVolumeGestureSens = 0.017f
 
           // Original speed for long press
@@ -812,7 +814,7 @@ fun GestureHandler(
           var gestureType: String? = null
           var hasStartedSeeking = false
           var initialVideoPosition = 0f
-          var wasPlayerAlreadyPaused = false
+          var finalSeekPosition = 0f
           // Use the sensitivity preference instead of hardcoded value
           val seekSensitivity = horizontalSwipeSensitivity
           
@@ -841,12 +843,7 @@ fun GestureHandler(
                     gestureType = "horizontal_seek"
                     hasStartedSeeking = true
                     initialVideoPosition = position?.toFloat() ?: 0f
-                    
-                    // Pause before seeking to prevent decoder stalls
-                    wasPlayerAlreadyPaused = paused ?: false
-                    if (!wasPlayerAlreadyPaused) {
-                      viewModel.pause()
-                    }
+                    finalSeekPosition = initialVideoPosition
                     
                     // Show seekbar and start seeking mode (same as seekbar scrubbing)
                     viewModel.showSeekBar()
@@ -859,10 +856,7 @@ fun GestureHandler(
                     val targetPosition = (initialVideoPosition + seekAmount).coerceAtLeast(0f)
                     val maxDuration = duration?.toFloat() ?: 0f
                     val clampedPosition = targetPosition.coerceAtMost(maxDuration)
-                    
-                    // Use the same seeking mechanism as seekbar scrubbing
-                    // This will update the seekbar position and provide live preview
-                    viewModel.seekTo(clampedPosition.toInt())
+                    finalSeekPosition = clampedPosition
                     
                     // Format and display time position updates
                     val currentPos = clampedPosition.toInt()
@@ -900,10 +894,7 @@ fun GestureHandler(
 
           // Apply the final seek when gesture ends
           if (hasStartedSeeking) {
-            // Unpause if it wasn't paused before seeking
-            if (!wasPlayerAlreadyPaused) {
-              viewModel.unpause()
-            }
+            viewModel.seekTo(finalSeekPosition.toInt())
             
             // Clear the horizontal seek update and hide seekbar after a short delay
             coroutineScope.launch {

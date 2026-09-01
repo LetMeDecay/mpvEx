@@ -315,6 +315,7 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
                 isDirectory = isDirectory,
                 size = fileSize,
                 lastModified = fileInfo.lastWriteTime.toEpochMillis(),
+                creationDate = fileInfo.creationTime.toEpochMillis(),
                 mimeType = if (!isDirectory) getMimeType(fileName) else null,
               )
             } catch (e: Exception) {
