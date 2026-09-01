@@ -4,6 +4,7 @@ import android.net.Uri
 import android.util.Log
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
+import app.marlboroadvance.mpvex.utils.media.NetworkItemDate
 import com.thegrizzlylabs.sardineandroid.Sardine
 import com.thegrizzlylabs.sardineandroid.impl.OkHttpSardine
 import com.thegrizzlylabs.sardineandroid.DavResource
@@ -98,7 +99,12 @@ class WebDavClient(private val connection: NetworkConnection) : NetworkClient {
                 isDirectory = resource.isDirectory,
                 size = resource.contentLength ?: 0,
                 lastModified = resource.modified?.time ?: 0,
-                creationDate = resource.creation?.time ?: 0,
+                creationDate = resource.creation?.time
+                  ?: resource.customProps.entries
+                    .firstOrNull { it.key.contains("creationdate", ignoreCase = true) }
+                    ?.value
+                    ?.let(NetworkItemDate::parse)
+                  ?: 0,
                 mimeType = if (!resource.isDirectory) getMimeType(resourceName) else null,
                 etag = resource.etag?.takeIf { it.isNotEmpty() },
               )

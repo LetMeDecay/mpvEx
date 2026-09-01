@@ -185,6 +185,7 @@ data class NetworkBrowserScreen(
         isRefreshing = isRefreshing,
         error = error,
         thumbnails = thumbnails,
+        showThumbnails = showNetworkThumbnails,
         listState = listState,
         selectedPaths = selectedPaths,
         onRefresh = { viewModel.loadFiles() },
@@ -323,6 +324,7 @@ private fun NetworkBrowserContent(
   isRefreshing: MutableState<Boolean>,
   error: String?,
   thumbnails: Map<String, Bitmap>,
+  showThumbnails: Boolean,
   listState: LazyListState,
   selectedPaths: Set<String>,
   onRefresh: suspend () -> Unit,
@@ -500,10 +502,12 @@ private fun NetworkBrowserContent(
                 // prefetching a few items ahead so thumbnails are ready as the
                 // user scrolls. ensureThumbnail is idempotent (memory + disk cache),
                 // and actual network work stays capped by NetworkMetadataProbe.
-                LaunchedEffect(video.path) {
-                  onVideoVisible(video)
-                  for (offset in 1..THUMBNAIL_PREFETCH_AHEAD) {
-                    videos.getOrNull(index + offset)?.let(onVideoPrefetch)
+                LaunchedEffect(video.path, showThumbnails) {
+                  if (showThumbnails) {
+                    onVideoVisible(video)
+                    for (offset in 1..THUMBNAIL_PREFETCH_AHEAD) {
+                      videos.getOrNull(index + offset)?.let(onVideoPrefetch)
+                    }
                   }
                 }
                 // Only show card if connection is loaded
@@ -514,7 +518,7 @@ private fun NetworkBrowserContent(
                     onClick = { onVideoClick(video) },
                     onLongClick = { onItemLongClick(video) },
                     isSelected = selectedPaths.contains(video.path),
-                    thumbnail = thumbnails[video.path],
+                    thumbnail = thumbnails[video.path].takeIf { showThumbnails },
                     modifier = Modifier,
                   )
                 }

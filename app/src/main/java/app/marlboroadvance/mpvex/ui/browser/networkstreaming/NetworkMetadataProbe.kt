@@ -331,11 +331,11 @@ object NetworkMetadataProbe {
     val key = cacheKey(connection, file)
 
     // Memory cache
-    durationCache[key]?.takeIf { prefs.getBoolean("${key}:itemDateChecked", false) }?.let { return it }
+    durationCache[key]?.takeIf { prefs.getBoolean("${key}:videoCreationDateCheckedV2", false) }?.let { return it }
 
     // Persistent cache (SharedPreferences)
     prefs.getLong(key, 0L)
-      .takeIf { it > 0 && prefs.getBoolean("${key}:itemDateChecked", false) }
+      .takeIf { it > 0 && prefs.getBoolean("${key}:videoCreationDateCheckedV2", false) }
       ?.let { cached ->
       durationCache[key] = cached
       return cached
@@ -404,7 +404,8 @@ object NetworkMetadataProbe {
         .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
         .forEach { stale ->
           prefs.edit().remove(stale).remove("${stale}:w").remove("${stale}:h")
-            .remove("${stale}:itemDate").remove("${stale}:itemDateChecked").apply()
+            .remove("${stale}:itemDate").remove("${stale}:itemDateChecked")
+            .remove("${stale}:videoCreationDateCheckedV2").apply()
           runCatching { thumbnailFile(stale, connection).delete() }
         }
       durationCache.keys
@@ -433,7 +434,7 @@ object NetworkMetadataProbe {
         itemDateCache[key] = result.itemDate
         editor.putLong("${key}:itemDate", result.itemDate)
       }
-      editor.putBoolean("${key}:itemDateChecked", true)
+      editor.putBoolean("${key}:videoCreationDateCheckedV2", true)
       editor.apply()
     }
     return result.duration
@@ -700,7 +701,8 @@ object NetworkMetadataProbe {
     itemDateCache.remove(key)
     keyIndex.remove("${connection.id}::${file.path}")
     prefs.edit().remove(key).remove("${key}:w").remove("${key}:h")
-      .remove("${key}:itemDate").remove("${key}:itemDateChecked").apply()
+      .remove("${key}:itemDate").remove("${key}:itemDateChecked")
+      .remove("${key}:videoCreationDateCheckedV2").apply()
     runCatching {
       thumbnailFile(key, connection).delete()
     }
@@ -771,7 +773,8 @@ object NetworkMetadataProbe {
 
   private fun isCanonicalCacheKey(key: String): Boolean =
     !key.endsWith(":w") && !key.endsWith(":h") &&
-      !key.endsWith(":itemDate") && !key.endsWith(":itemDateChecked")
+      !key.endsWith(":itemDate") && !key.endsWith(":itemDateChecked") &&
+      !key.endsWith(":videoCreationDateCheckedV2")
 
   private fun indexKey(
     connection: NetworkConnection,
@@ -815,7 +818,7 @@ object NetworkMetadataProbe {
   fun isItemDateChecked(
     connection: NetworkConnection,
     file: NetworkFile,
-  ): Boolean = prefs.getBoolean("${cacheKey(connection, file)}:itemDateChecked", false)
+  ): Boolean = prefs.getBoolean("${cacheKey(connection, file)}:videoCreationDateCheckedV2", false)
 
   /** Exact-version lookup used by active proxy streams. */
   fun getCachedDuration(

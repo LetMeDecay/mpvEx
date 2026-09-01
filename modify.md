@@ -17,7 +17,9 @@
 - 本地代理 URL 增加编码后的真实文件名作为稳定回退，播放列表首次打开即可显示文件名，不再依赖临时数字 stream id。
 - 网络视频日期格式由 `MMM dd` 改为与本地视频一致的 `MMM dd, yyyy`。
 - 网络排序保持原有标题/日期/大小/时长逻辑，其中 `Date` 继续按文件修改日期排序。
-- “字段”区域增加文件创建日期、文件修改日期和视频内嵌 Item Date 三个显示开关：WebDAV/SMB 提供创建日期，视频 Item Date 随时长/分辨率探测一并读取和缓存。
+- “字段”区域增加文件创建日期、文件修改日期和视频创建日期三个显示开关：WebDAV/SMB 提供文件创建日期，视频创建日期随时长/分辨率探测一并读取和缓存。
+- 修复文件创建日期、视频创建日期和视频缩略图开关：WebDAV 创建日期兼容自定义 PROPFIND 属性，旧日期缓存会重新探测；关闭缩略图后立即隐藏缓存图片，重新开启时恢复探测。
+- 三类日期卡片只显示 `MMM dd, yyyy`，不再显示“创建/修改”等前缀。
 
 ## 版本
 
@@ -26,7 +28,7 @@
 
 ## 构建与验证
 
-- `:app:testStandardDebugUnitTest`：25 项测试全部通过
+- `:app:testStandardDebugUnitTest`：26 项测试全部通过
 - `:app:assembleStandardDebug` 与 `:app:assembleStandardRelease` 构建通过
 - universal / arm64-v8a / armeabi-v7a / x86_64 / x86 五个 Release APK 均已完成 zipalign、v2/v3 签名、版本号和 ABI 校验
 - 当前五个已签名 APK 及对应 `.idsig` 位于工作区最外层 `/root/mpvex/`，便于直接获取；Gradle `app/build` 临时产物已清理

@@ -25,4 +25,12 @@ class NetworkItemDateTest {
   fun invalidDateIsUnknown() {
     assertEquals(0L, NetworkItemDate.parse("not-a-date"))
   }
+
+  @Test
+  fun parsesUtcPrefixedVideoCreationDate() {
+    assertEquals(
+      Instant.parse("2024-08-21T12:34:56Z").toEpochMilli(),
+      NetworkItemDate.parse("UTC 2024-08-21T12:34:56Z"),
+    )
+  }
 }

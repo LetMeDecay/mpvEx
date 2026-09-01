@@ -168,7 +168,7 @@ fun NetworkVideoCard(
           }
           if (showCreationDateChip && file.creationDate > 0) {
             Text(
-              stringResource(R.string.network_date_created, formatDate(file.creationDate)),
+              formatDate(file.creationDate),
               style = MaterialTheme.typography.labelSmall,
               modifier =
                 Modifier
@@ -182,7 +182,7 @@ fun NetworkVideoCard(
           }
           if (showModifiedDateChip && file.lastModified > 0) {
             Text(
-              stringResource(R.string.network_date_modified, formatDate(file.lastModified)),
+              formatDate(file.lastModified),
               style = MaterialTheme.typography.labelSmall,
               modifier =
                 Modifier
@@ -196,7 +196,7 @@ fun NetworkVideoCard(
           }
           if (showItemDateChip && file.itemDate > 0) {
             Text(
-              stringResource(R.string.network_date_item, formatDate(file.itemDate)),
+              formatDate(file.itemDate),
               style = MaterialTheme.typography.labelSmall,
               modifier =
                 Modifier

@@ -16,7 +16,7 @@ object NetworkItemDate {
   )
 
   fun parse(value: String?): Long {
-    val date = value?.trim()?.takeIf { it.isNotEmpty() } ?: return 0L
+    val date = value?.trim()?.removePrefix("UTC ")?.trim()?.takeIf { it.isNotEmpty() } ?: return 0L
     runCatching { return Instant.parse(date).toEpochMilli() }
     offsetFormats.forEach { format ->
       runCatching { return OffsetDateTime.parse(date, format).toInstant().toEpochMilli() }
@@ -24,6 +24,12 @@ object NetworkItemDate {
     runCatching {
       return LocalDateTime.parse(date, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+    }
+    listOf("yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm:ss.SSS").forEach { pattern ->
+      runCatching {
+        return LocalDateTime.parse(date, DateTimeFormatter.ofPattern(pattern))
+          .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+      }
     }
     runCatching {
       return LocalDate.parse(date.take(10), DateTimeFormatter.ISO_LOCAL_DATE)

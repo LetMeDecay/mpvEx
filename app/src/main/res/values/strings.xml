@@ -590,10 +590,7 @@
   <string name="network_sort_view_options">Sort &amp; View Options</string>
   <string name="network_visibility_creation_date">File created date</string>
   <string name="network_visibility_modified_date">File modified date</string>
-  <string name="network_visibility_item_date">Video item date</string>
-  <string name="network_date_created">Created: %1$s</string>
-  <string name="network_date_modified">Modified: %1$s</string>
-  <string name="network_date_item">Item date: %1$s</string>
+  <string name="network_visibility_item_date">Video created date</string>
   <string name="network_sort_az">A-Z</string>
   <string name="network_sort_za">Z-A</string>
   <string name="network_sort_oldest">Oldest</string>
