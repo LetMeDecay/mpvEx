@@ -30,11 +30,9 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
+import app.marlboroadvance.mpvex.ui.browser.networkstreaming.forEachNetworkItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.Flow
@@ -1765,7 +1763,9 @@ class PlayerViewModel(
     try {
       val now = System.currentTimeMillis()
       val missing =
-        activity.playlist.mapNotNull { uri ->
+        activity.playlist.withIndex()
+          .sortedBy { kotlin.math.abs(it.index - activity.playlistIndex) }
+          .mapNotNull { (_, uri) ->
           if (uri.host != "127.0.0.1" && uri.host != "localhost") return@mapNotNull null
           val streamId = uri.path?.removePrefix("/")?.substringBefore("/") ?: return@mapNotNull null
           val info =
@@ -1781,33 +1781,25 @@ class PlayerViewModel(
         }.distinctBy { it.first }
       if (missing.isEmpty()) return
 
-      // Probe concurrently - NetworkMetadataProbe caps the real concurrency
-      // (durationSemaphore = 6), so batching here only speeds up completion
-      // without risking the network/CPU.
-      coroutineScope {
-        missing.map { (key, info) ->
-          async {
-            val duration = try {
-              app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
-                .probeDuration(info.connection, info.file)
-            } catch (e: CancellationException) {
-              throw e
-            } catch (e: Exception) {
-              0L
-            }
-            key to duration
-          }
-        }.awaitAll().forEach { (key, duration) ->
-          if (duration > 0L) {
-            networkMetadataFailures.remove(key)
-            networkMetadataRetryAt.remove(key)
-          } else {
-            val failures = (networkMetadataFailures[key] ?: 0) + 1
-            networkMetadataFailures[key] = failures
-            val backoff = app.marlboroadvance.mpvex.ui.browser.networkstreaming
-              .NetworkMetadataRetryPolicy.delayForFailure(failures)
-            networkMetadataRetryAt[key] = System.currentTimeMillis() + backoff
-          }
+      // Keep current/adjacent items first and allocate only six workers.
+      missing.forEachNetworkItem(6) { (key, info) ->
+        val duration = try {
+          app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
+            .probeDuration(info.connection, info.file)
+        } catch (e: CancellationException) {
+          throw e
+        } catch (e: Exception) {
+          0L
+        }
+        if (duration > 0L) {
+          networkMetadataFailures.remove(key)
+          networkMetadataRetryAt.remove(key)
+        } else {
+          val failures = (networkMetadataFailures[key] ?: 0) + 1
+          networkMetadataFailures[key] = failures
+          val backoff = app.marlboroadvance.mpvex.ui.browser.networkstreaming
+            .NetworkMetadataRetryPolicy.delayForFailure(failures)
+          networkMetadataRetryAt[key] = System.currentTimeMillis() + backoff
         }
       }
       // Duration (and resolution) are now cached - refresh so the list shows them

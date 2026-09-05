@@ -11,12 +11,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 
 /**
  * Pre-warms the duration and thumbnail cache for network connections marked with
@@ -127,24 +122,14 @@ object NetworkCacheWarmer {
     // configured concurrency. Native thumbnails remain in the single global
     // priority dispatcher and are intentionally never parallelized.
     val durationConcurrency = NetworkPreloadPolicy.clampThreads(connection.preloadThreads)
-    val durationGate = Semaphore(durationConcurrency)
-    coroutineScope {
-      targetVideos.mapIndexed { index, file ->
-        async {
-          durationGate.withPermit {
-            try {
-              NetworkMetadataProbe.probeDuration(connection, file)
-              if ((index + 1) % 20 == 0) {
-                Log.d(TAG, "Probed ${index + 1}/${targetVideos.size} for ${connection.name}")
-              }
-            } catch (e: CancellationException) {
-              throw e
-            } catch (e: Exception) {
-              Log.w(TAG, "Error probing ${file.name}", e)
-            }
-          }
-        }
-      }.awaitAll()
+    targetVideos.forEachNetworkItem(durationConcurrency) { file ->
+      try {
+        NetworkMetadataProbe.probeDuration(connection, file)
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        Log.w(TAG, "Error probing ${file.name}", e)
+      }
     }
     if (showThumbnails) {
       targetVideos.forEach { file ->
