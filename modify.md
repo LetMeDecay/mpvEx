@@ -4,6 +4,14 @@
 >
 > 官方版本已经提供网络连接与 SMB / FTP / WebDAV 播放能力；本文仅记录本分支相对官方版本新增的功能。
 
+## 本轮交付（2026-09-05）
+
+- 按顺序完成连接并发、缓存失效一致性修复，以及缩略图内存、时长请求合并、大目录任务、HTTP 复用、播放队列流释放、缓存版本索引六项调整。
+- 最终代码提交为 `a09a850`，五个已签名 Release APK 及对应 `.idsig` 已更新到 `/root/mpvex/`；包内 Git 版本均为 `a09a850`，App 版本保持 `1.2.9-rev0821`。
+- 最终 42 项单元测试全部通过；字符串检查、Standard Debug 构建和 Standard Release 构建通过。五个 APK 均通过 zipalign、ABI、包内 Git 版本及 v2/v3/v4 签名验证。
+- 尚未连接 Android 设备，真实 WebDAV 服务、画中画、后台播放和界面重建仍需真机验证；未进行吞吐、耗电或实际内存峰值基准测试。
+- 本轮各批次记录按提交时的验证结果保留；其中旧 APK 版本和较少测试数量属于历史状态，当前交付以上述结果为准。
+
 ## 待发布修复
 
 ### 缩略图取消收尾
@@ -88,9 +96,9 @@
 
 ## 构建与验证
 
-- `:app:testStandardDebugUnitTest`：22 项测试全部通过
+- `:app:testStandardDebugUnitTest`：42 项测试全部通过
 - `:app:assembleStandardDebug` 与 `:app:assembleStandardRelease` 构建通过
-- universal / arm64-v8a / armeabi-v7a / x86_64 / x86 五个 Release APK 均已完成 zipalign、v2/v3 签名、版本号和 ABI 校验
+- universal / arm64-v8a / armeabi-v7a / x86_64 / x86 五个 Release APK 均已完成 zipalign、v2/v3/v4 签名、版本号和 ABI 校验
 - 当前五个已签名 APK 及对应 `.idsig` 位于工作区最外层 `/root/mpvex/`，便于直接获取；Gradle `app/build` 临时产物已清理
 
 ## 数据库（Room，v8 → v11）
