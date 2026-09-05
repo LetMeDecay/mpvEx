@@ -70,7 +70,10 @@ object NetworkMetadataProbe {
     cacheGeneration.token(cacheKey(connection, file))
 
   private val durationCache = ConcurrentHashMap<String, Long>()
-  private val thumbnailCache = ConcurrentHashMap<String, Bitmap>()
+  // Eviction releases this cache's reference only; Compose may still draw the bitmap.
+  private val thumbnailCache = ByteSizeLruCache<String, Bitmap>(8L * 1024 * 1024) {
+    it.allocationByteCount.toLong()
+  }
   private val resolutionCache = ConcurrentHashMap<String, Pair<Int, Int>>()
 
   // O(1) index from "<connectionId>::<filePath>" to the exact cache key, so
@@ -863,7 +866,7 @@ object NetworkMetadataProbe {
       cacheGeneration.invalidateConnection(connectionId) {
         val prefix = "$connectionId::"
         durationCache.keys.removeAll { it.startsWith(prefix) }
-        thumbnailCache.keys.removeAll { it.startsWith(prefix) }
+        thumbnailCache.keys.filter { it.startsWith(prefix) }.forEach { thumbnailCache.remove(it) }
         resolutionCache.keys.removeAll { it.startsWith(prefix) }
         keyIndex.keys.removeAll { it.startsWith(prefix) }
         prefs.all.keys

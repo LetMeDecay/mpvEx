@@ -90,6 +90,10 @@ data class NetworkBrowserScreen(
           ),
       )
 
+    androidx.compose.runtime.DisposableEffect(viewModel) {
+      onDispose { viewModel.releaseBrowserThumbnails() }
+    }
+
     val files by viewModel.files.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
@@ -398,8 +402,8 @@ private fun NetworkBrowserContent(
           }
         }
       }
-      LaunchedEffect(keepWindow) {
-        onCancelPrefetch(keepWindow)
+      LaunchedEffect(keepWindow, showThumbnails) {
+        onCancelPrefetch(if (showThumbnails) keepWindow else emptySet())
       }
 
       // Check if at top of list to hide scrollbar during pull-to-refresh

@@ -71,6 +71,7 @@ class NetworkBrowserViewModel(
   private val runningThumbnails = ConcurrentHashMap<String, Job>()
   private val thumbnailPriorities = ConcurrentHashMap<String, NetworkMetadataProbe.ThumbnailPriority>()
   private val thumbnailLock = Any()
+  private var retainedThumbnailPaths: Set<String> = emptySet()
   private val thumbnailVersions = ConcurrentHashMap<String, Pair<NetworkFile, Long>>()
   @Volatile
   private var loadedConnection: NetworkConnection? = null
@@ -297,8 +298,7 @@ class NetworkBrowserViewModel(
               val generation = NetworkMetadataProbe.cacheToken(connection, file)
               val bitmap = NetworkMetadataProbe.probeThumbnail(connection, file, effectivePriority)
               if (bitmap != null && NetworkMetadataProbe.cacheToken(connection, file) == generation) {
-                thumbnailVersions[file.path] = file to generation
-                _thumbnails.value = _thumbnails.value + (file.path to bitmap)
+                retainThumbnail(file, bitmap, generation)
               }
             } finally {
               runningThumbnails.remove(file.path, kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job])
@@ -326,7 +326,16 @@ class NetworkBrowserViewModel(
    * current visible+prefetch window. In-flight decodes are left alone so we
    * never waste an already-downloaded range and re-fetch it on scroll-back.
    */
+  private fun retainThumbnail(file: NetworkFile, bitmap: Bitmap, generation: Long) {
+    if (file.path !in retainedThumbnailPaths) return
+    thumbnailVersions[file.path] = file to generation
+    _thumbnails.update { it + (file.path to bitmap) }
+  }
+
   fun cancelThumbnailsExcept(keepPaths: Set<String>) {
+    retainedThumbnailPaths = keepPaths
+    thumbnailVersions.keys.retainAll(keepPaths)
+    _thumbnails.update { cached -> cached.filterKeys { it in keepPaths } }
     thumbnailJobs.keys.forEach { path ->
       if (path !in keepPaths && !runningThumbnails.containsKey(path)) {
         synchronized(thumbnailLock) {
@@ -345,6 +354,13 @@ class NetworkBrowserViewModel(
           .map { connection to it },
       )
     }
+  }
+
+  fun releaseBrowserThumbnails() {
+    retainedThumbnailPaths = emptySet()
+    thumbnailVersions.clear()
+    _thumbnails.value = emptyMap()
+    thumbnailJobs.values.forEach { it.cancel() }
   }
 
   /**
@@ -389,8 +405,7 @@ class NetworkBrowserViewModel(
         if (bitmap != null) {
           withContext(Dispatchers.Main) {
             if (NetworkMetadataProbe.cacheToken(connection, file) != generation) return@withContext
-            thumbnailVersions[file.path] = file to generation
-            _thumbnails.value = _thumbnails.value + (file.path to bitmap)
+            retainThumbnail(file, bitmap, generation)
           }
         }
       }
@@ -425,8 +440,7 @@ class NetworkBrowserViewModel(
                 if (NetworkMetadataProbe.cacheToken(connection, file) != generation) return@withContext
                 _files.update { current -> current.map { if (it.path == file.path) it.copy(duration = newDuration) else it } }
                 if (bitmap != null) {
-                  thumbnailVersions[file.path] = file to generation
-                  _thumbnails.update { it + (file.path to bitmap) }
+                  retainThumbnail(file, bitmap, generation)
                 } else {
                   thumbnailVersions.remove(file.path)
                   _thumbnails.update { it - file.path }
