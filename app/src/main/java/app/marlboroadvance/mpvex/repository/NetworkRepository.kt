@@ -6,256 +6,139 @@ import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.NetworkClient
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.NetworkClientFactory
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
-/**
- * Repository for managing network connections and file browsing
- */
+/** Manages saved connections and serializes operations on each protocol client. */
 class NetworkRepository(
   private val dao: NetworkConnectionDao,
+  private val createClient: (NetworkConnection) -> NetworkClient = NetworkClientFactory::createClient,
 ) {
-  // Active network clients
-  private val activeClients = mutableMapOf<Long, NetworkClient>()
+  private val activeClients = ConcurrentHashMap<Long, NetworkClient>()
+  // Keep the lock after disconnect/delete: a suspended caller may still hold it.
+  private val connectionLocks = ConcurrentHashMap<Long, Mutex>()
+  private fun connectionLock(id: Long): Mutex = connectionLocks.computeIfAbsent(id) { Mutex() }
 
-  // Connection statuses
   private val _connectionStatuses = MutableStateFlow<Map<Long, ConnectionStatus>>(emptyMap())
   val connectionStatuses: StateFlow<Map<Long, ConnectionStatus>> = _connectionStatuses.asStateFlow()
 
-  /**
-   * Get all saved connections as a Flow
-   */
   fun getAllConnections(): Flow<List<NetworkConnection>> = dao.getAllConnections()
-
-  /**
-   * Get connections that should be displayed on the Home screen
-   */
   fun getHomeConnections(): Flow<List<NetworkConnection>> = dao.getHomeConnections()
-
-  /**
-   * Get connections that should pre-warm the cache on app launch
-   */
   suspend fun getPreloadCacheConnections(): List<NetworkConnection> = dao.getPreloadCacheConnections()
-
-  /**
-   * Get connections that should auto-connect on launch
-   */
   suspend fun getAutoConnectConnections(): List<NetworkConnection> = dao.getAutoConnectConnections()
-
-  /**
-   * Get a connection by ID
-   */
   suspend fun getConnectionById(id: Long): NetworkConnection? = dao.getConnectionById(id)
-
-  /**
-   * Add a new connection
-   */
   suspend fun addConnection(connection: NetworkConnection): Long = dao.insert(connection)
 
-  /**
-   * Update an existing connection
-   */
   suspend fun updateConnection(connection: NetworkConnection) {
-    dao.update(connection)
-    // Disconnect and remove cached client if it exists
-    // This ensures the next connection uses the updated credentials
-    activeClients[connection.id]?.let { client ->
-      try {
-        client.disconnect()
-      } catch (e: Exception) {
-        // Ignore errors during cleanup
-      }
-      activeClients.remove(connection.id)
-      // Update status to disconnected
-      updateConnectionStatus(
-        connection.id,
-        ConnectionStatus(
-          connectionId = connection.id,
-          isConnected = false,
-          isConnecting = false,
-        ),
-      )
+    connectionLock(connection.id).withLock {
+      dao.update(connection)
+      closeClient(activeClients.remove(connection.id))
+      updateConnectionStatus(connection.id, ConnectionStatus(connection.id))
     }
   }
 
-  /**
-   * Delete a connection
-   */
   suspend fun deleteConnection(connection: NetworkConnection) {
-    dao.delete(connection)
-    // Clean up connection status
-    _connectionStatuses.value -= connection.id
-    // Disconnect if active
-    activeClients[connection.id]?.let { client ->
-      try {
-        client.disconnect()
-      } catch (e: Exception) {
-        // Ignore errors during cleanup
-      }
-      activeClients.remove(connection.id)
+    connectionLock(connection.id).withLock {
+      dao.delete(connection)
+      closeClient(activeClients.remove(connection.id))
+      _connectionStatuses.update { it - connection.id }
     }
   }
 
-  /**
-   * Connect to a network share
-   */
-  suspend fun connect(connection: NetworkConnection): Result<Unit> {
-    // Update status to connecting
-    updateConnectionStatus(
-      connection.id,
-      ConnectionStatus(
-        connectionId = connection.id,
-        isConnecting = true,
-      ),
-    )
-
-    return try {
-      // Create client for this connection
-      val client = NetworkClientFactory.createClient(connection)
-
-      // Attempt to connect
-      client.connect().onSuccess {
-        // Store the active client
-        activeClients[connection.id] = client
-
-        // Update last connected time
-        dao.updateLastConnected(connection.id, System.currentTimeMillis())
-
-        // Update status to connected
-        updateConnectionStatus(
-          connection.id,
-          ConnectionStatus(
-            connectionId = connection.id,
-            isConnected = true,
-            isConnecting = false,
-          ),
-        )
-      }.onFailure { e ->
-        // Update status with error
-        updateConnectionStatus(
-          connection.id,
-          ConnectionStatus(
-            connectionId = connection.id,
-            isConnected = false,
-            isConnecting = false,
-            error = e.message ?: "Connection failed",
-          ),
-        )
+  suspend fun connect(connection: NetworkConnection): Result<Unit> =
+    connectionLock(connection.id).withLock {
+      try {
+        val latest = dao.getConnectionById(connection.id)
+          ?: return@withLock Result.failure(IllegalStateException("Connection not found"))
+        getOrConnectLocked(latest)
+        Result.success(Unit)
+      } catch (e: CancellationException) {
         throw e
-      }
-      Result.success(Unit)
-    } catch (e: Exception) {
-      // Update status with error
-      updateConnectionStatus(
-        connection.id,
-        ConnectionStatus(
-          connectionId = connection.id,
-          isConnected = false,
-          isConnecting = false,
-          error = e.message ?: "Connection failed",
-        ),
-      )
-      Result.failure(e)
-    }
-  }
-
-  /**
-   * Disconnect from a network share
-   */
-  suspend fun disconnect(connection: NetworkConnection): Result<Unit> =
-    try {
-      // Get and disconnect the client
-      activeClients[connection.id]?.let { client ->
-        client.disconnect()
-        activeClients.remove(connection.id)
-      }
-
-      // Update status to disconnected
-      updateConnectionStatus(
-        connection.id,
-        ConnectionStatus(
-          connectionId = connection.id,
-          isConnected = false,
-          isConnecting = false,
-        ),
-      )
-      Result.success(Unit)
-    } catch (e: Exception) {
-      // Even if disconnect fails, update status
-      updateConnectionStatus(
-        connection.id,
-        ConnectionStatus(
-          connectionId = connection.id,
-          isConnected = false,
-          isConnecting = false,
-          error = e.message,
-        ),
-      )
-      Result.failure(e)
-    }
-
-  /**
-   * List files in a directory on a network share
-   */
-  suspend fun listFiles(
-    connection: NetworkConnection,
-    path: String,
-  ): Result<List<NetworkFile>> =
-    try {
-      // Always fetch the latest connection from database to ensure we have current credentials
-      val latestConnection = dao.getConnectionById(connection.id) ?: connection
-
-      // Check if we have an active client
-      val existingClient = activeClients[connection.id]
-
-      // If no client exists, or if connection details have changed, create a new one
-      val client = if (existingClient == null) {
-        // Create new client with latest connection settings
-        NetworkClientFactory.createClient(latestConnection).also { newClient ->
-          newClient.connect().getOrThrow()
-          activeClients[connection.id] = newClient
-        }
-      } else {
-        existingClient
-      }
-
-      // List files
-      client.listFiles(path)
-    } catch (e: Exception) {
-      Result.failure(e)
-    }
-
-  /**
-   * Get an active client for a connection
-   */
-  fun getActiveClient(connectionId: Long): NetworkClient? = activeClients[connectionId]
-
-  /**
-   * Check if a connection is active
-   */
-  fun isConnected(connectionId: Long): Boolean = activeClients.containsKey(connectionId)
-
-  /**
-   * Disconnect all active connections
-   */
-  suspend fun disconnectAll() {
-    activeClients.values.forEach { client ->
-      try {
-        client.disconnect()
       } catch (e: Exception) {
-        // Ignore errors during cleanup
+        Result.failure(e)
       }
     }
-    activeClients.clear()
-    _connectionStatuses.value = emptyMap()
+
+  /** Called only while holding this connection's mutex. */
+  private suspend fun getOrConnectLocked(connection: NetworkConnection): NetworkClient {
+    activeClients[connection.id]?.takeIf { it.isConnected() }?.let { return it }
+    closeClient(activeClients.remove(connection.id))
+    updateConnectionStatus(connection.id, ConnectionStatus(connection.id, isConnecting = true))
+    var client: NetworkClient? = null
+    try {
+      client = createClient(connection)
+      client.connect().getOrThrow()
+      currentCoroutineContext().ensureActive()
+      dao.updateLastConnected(connection.id, System.currentTimeMillis())
+      activeClients[connection.id] = client
+      updateConnectionStatus(connection.id, ConnectionStatus(connection.id, isConnected = true))
+      return client
+    } catch (e: Exception) {
+      closeClient(client)
+      updateConnectionStatus(
+        connection.id,
+        ConnectionStatus(connection.id, error = e.message.takeUnless { e is CancellationException }),
+      )
+      throw e
+    }
   }
 
-  private fun updateConnectionStatus(
-    connectionId: Long,
-    status: ConnectionStatus,
-  ) {
-    _connectionStatuses.value += (connectionId to status)
+  suspend fun disconnect(connection: NetworkConnection): Result<Unit> =
+    connectionLock(connection.id).withLock {
+      closeClient(activeClients.remove(connection.id))
+      updateConnectionStatus(connection.id, ConnectionStatus(connection.id))
+      Result.success(Unit)
+    }
+
+  suspend fun listFiles(connection: NetworkConnection, path: String): Result<List<NetworkFile>> =
+    connectionLock(connection.id).withLock {
+      try {
+        // Never resurrect a deleted connection from a stale browser/preload snapshot.
+        val latest = dao.getConnectionById(connection.id)
+          ?: return@withLock Result.failure(IllegalStateException("Connection not found"))
+        val result = getOrConnectLocked(latest).listFiles(path)
+        currentCoroutineContext().ensureActive()
+        result.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+        result
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        Result.failure(e)
+      }
+    }
+
+  fun getActiveClient(connectionId: Long): NetworkClient? = activeClients[connectionId]
+  fun isConnected(connectionId: Long): Boolean = activeClients[connectionId]?.isConnected() == true
+
+  suspend fun disconnectAll() {
+    // Include connections whose client creation is still in progress.
+    connectionLocks.keys.toList().forEach { id ->
+      connectionLock(id).withLock {
+        closeClient(activeClients.remove(id))
+        _connectionStatuses.update { it - id }
+      }
+    }
+  }
+
+  private suspend fun closeClient(client: NetworkClient?) {
+    if (client == null) return
+    withContext(NonCancellable) {
+      runCatching { client.disconnect() }
+    }
+  }
+
+  private fun updateConnectionStatus(connectionId: Long, status: ConnectionStatus) {
+    _connectionStatuses.update { it + (connectionId to status) }
   }
 }
