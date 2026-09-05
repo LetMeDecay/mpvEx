@@ -181,6 +181,10 @@ class PlayerActivity :
    * Playlist of URIs for sequential playback
    */
   internal var playlist: List<Uri> = emptyList()
+    set(value) {
+      field = value
+      playbackStreams.replaceQueue(value.mapNotNull(::playbackProxyStreamId).toSet())
+    }
 
   /**
    * Current index in the playlist
@@ -357,6 +361,8 @@ class PlayerActivity :
 
     playlistId = intent.getIntExtra("playlist_id", -1).takeIf { it != -1 }
     playlistIndex = intent.getIntExtra("playlist_index", 0)
+
+    intent.data?.let(::playbackProxyStreamId)?.let(playbackStreams::remember)
 
     // Load playlist from intent extras first (fast path - backward compatibility)
     playlist = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
@@ -598,6 +604,10 @@ class PlayerActivity :
       Log.e(TAG, "Error during onDestroy", e)
     }
 
+    if (isFinishing && !isManualBackgroundPlayback && !mpvInitialized) {
+      app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
+        .existingInstance()?.unregisterStreams(playbackStreams.releaseAll())
+    }
     super.onDestroy()
   }
 
@@ -1656,6 +1666,13 @@ class PlayerActivity :
    * applies user preferences, and sets up metadata and media session.
    */
   private fun handleFileLoaded() {
+    // Consult mpv, not playlistIndex: an older FILE_LOADED callback can arrive
+    // while a newer intent has already replaced the queue.
+    MPVLib.getPropertyString("path")?.takeIf { it.isNotBlank() }?.let { path ->
+      val current = playbackProxyStreamId(Uri.parse(path))
+      app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
+        .existingInstance()?.unregisterStreams(playbackStreams.releaseUnused(current))
+    }
     // A playlist item is the source of truth after the initial launch. Do not
     // reuse the launch intent's network_file_path for later WebDAV/SMB/FTP
     // items, and recompute the stable identifier from the current proxy entry.
@@ -2346,6 +2363,10 @@ class PlayerActivity :
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
 
+    // Notification/PiP returns carry no new media. Keep the current intent and queue.
+    if (intent.data == null && !intent.hasExtra("playlist") && !intent.hasExtra("playlist_id")) return
+    intent.data?.let(::playbackProxyStreamId)?.let(playbackStreams::remember)
+
     // Update the intent first so getFileName uses the new intent data
     setIntent(intent)
     initialIntentExtrasApplied = false
@@ -2365,7 +2386,7 @@ class PlayerActivity :
 
     // Only update playlist state if we have new playlist information
     // This prevents losing the playlist when coming back from notification/PiP
-    if (hasPlaylistExtras || playlistFromIntent.isNotEmpty()) {
+    if (hasPlaylistExtras || playlistFromIntent.isNotEmpty() || intent.data != null) {
       val newPlaylistId = intent.getIntExtra("playlist_id", -1).takeIf { it != -1 }
       playlistId = newPlaylistId
       playlistIndex = intent.getIntExtra("playlist_index", 0)
@@ -3547,7 +3568,18 @@ class PlayerActivity :
   fun isCurrentPlaylistM3U(): Boolean = isM3uPlaylist
 
 
+  private fun playbackProxyStreamId(uri: Uri): String? {
+    val proxy = app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
+      .existingInstance() ?: return null
+    if (uri.host !in setOf("127.0.0.1", "localhost") || uri.port != proxy.listeningPort) return null
+    val id = uri.pathSegments.firstOrNull() ?: return null
+    return id.takeIf { proxy.getStreamInfo(it) != null }
+  }
+
   companion object {
+    // mpv and the proxy survive Activity recreation; ownership must survive it too.
+    private val playbackStreams = app.marlboroadvance.mpvex.ui.browser.networkstreaming.PlaybackStreamOwnership()
+
     /**
      * Intent action used to return playback result data to the calling activity.
      */

@@ -481,6 +481,7 @@ class NetworkBrowserViewModel(
    */
   fun playVideo(file: NetworkFile) {
     viewModelScope.launch {
+      val registeredStreams = mutableListOf<String>()
       try {
         val connection = repository.getConnectionById(connectionId)
           ?: throw Exception(application.getString(R.string.network_connection_not_found))
@@ -496,7 +497,7 @@ class NetworkBrowserViewModel(
         val proxy = app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy.getInstance()
 
         // Register a proxy stream for every item so the player can switch to the
-        // next file without re-registering (streams live until app shutdown).
+        // next file without re-registering. The player releases retired queues.
         val uris =
           queue.map { queued ->
             if (useProxy) {
@@ -507,6 +508,7 @@ class NetworkBrowserViewModel(
                   connection = connection,
                   file = queued,
                 )
+              registeredStreams.add(streamId)
               android.net.Uri.parse(proxyUrl)
             } else {
               NetworkStreamingProvider.setConnection(connectionId, connection)
@@ -537,6 +539,9 @@ class NetworkBrowserViewModel(
 
         application.startActivity(intent)
       } catch (e: Exception) {
+        app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
+          .existingInstance()?.unregisterStreams(registeredStreams)
+        if (e is kotlinx.coroutines.CancellationException) throw e
         Log.e(TAG, "Error playing video", e)
         _error.value = e.message ?: application.getString(R.string.network_unknown_error)
       }

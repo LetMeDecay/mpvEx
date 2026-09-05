@@ -18,6 +18,10 @@ import com.hierynomus.smbj.session.Session
 import com.hierynomus.smbj.share.DiskShare
 import fi.iki.elonen.NanoHTTPD
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import java.io.InputStream
 import java.util.EnumSet
 import java.util.concurrent.ConcurrentHashMap
@@ -48,6 +52,8 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
       }
     }
 
+    fun existingInstance(): NetworkStreamingProxy? = instance
+
     fun stopInstance() {
       synchronized(this) {
         instance?.let { proxy ->
@@ -60,6 +66,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
   }
 
   // Store active connections and their clients
+  private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private val activeStreams = ConcurrentHashMap<String, StreamInfo>()
 
   data class StreamInfo(
@@ -145,6 +152,15 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
           // Ignore disconnect errors
         }
       }
+    }
+  }
+
+  /** Detach retired playlist entries immediately; close protocol clients off the UI thread. */
+  fun unregisterStreams(streamIds: Collection<String>) {
+    val retired = streamIds.mapNotNull { activeStreams.remove(it) }
+    if (retired.isEmpty()) return
+    cleanupScope.launch {
+      retired.forEach { info -> runCatching { info.client.disconnect() } }
     }
   }
 
