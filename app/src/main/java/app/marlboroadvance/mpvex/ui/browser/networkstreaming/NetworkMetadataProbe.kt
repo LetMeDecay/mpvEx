@@ -64,6 +64,9 @@ object NetworkMetadataProbe {
   private const val THUMBNAIL_PREFER_HW = true
 
   private val cacheGeneration = MetadataCacheGeneration()
+  // Access only under cacheGeneration's lock, together with cache writes.
+  private val versionIndex = MetadataVersionIndex()
+  private var cacheInitialized = false
   val cacheChanges = cacheGeneration.changes
 
   fun cacheToken(connection: NetworkConnection, file: NetworkFile): Long =
@@ -299,10 +302,21 @@ object NetworkMetadataProbe {
 
   fun init(context: Context) {
     appContext = context.applicationContext
-    val obsoleteSuffixes = arrayOf(":itemDate", ":itemDateChecked", ":videoCreationDateCheckedV2")
-    val obsoleteKeys = prefs.all.keys.filter { key -> obsoleteSuffixes.any(key::endsWith) }
-    if (obsoleteKeys.isNotEmpty()) {
-      prefs.edit().also { editor -> obsoleteKeys.forEach(editor::remove) }.apply()
+    cacheGeneration.read {
+      if (!cacheInitialized) {
+        val obsoleteSuffixes = arrayOf(":itemDate", ":itemDateChecked", ":videoCreationDateCheckedV2")
+        val snapshot = prefs.all
+        val editor = prefs.edit()
+        snapshot.keys.forEach { key ->
+          if (obsoleteSuffixes.any(key::endsWith)) {
+            editor.remove(key)
+          } else {
+            versionIndex.add(key.removeSuffix(":w").removeSuffix(":h"))
+          }
+        }
+        editor.apply()
+        cacheInitialized = true
+      }
     }
   }
 
@@ -423,26 +437,17 @@ object NetworkMetadataProbe {
     val published = cacheGeneration.publish(key, generation) {
       if (result.duration > 0 || (result.width > 0 && result.height > 0)) {
         keyIndex["${connection.id}::${file.path}"] = key
-        // Remove stale entries for the same path (old size/etag/lastModified
-        // versions may hold bogus durations from failed probes).
-        val prefix = "${connection.id}::"
-        val needle = "::${file.path}::"
-        prefs.all.keys
-          .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
-          .forEach { stale ->
-            prefs.edit().remove(stale).remove("${stale}:w").remove("${stale}:h").apply()
-            runCatching { thumbnailFile(stale, connection).delete() }
-          }
-        durationCache.keys
-          .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
-          .forEach { durationCache.remove(it) }
-        thumbnailCache.keys
-          .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
-          .forEach { thumbnailCache.remove(it) }
-        resolutionCache.keys
-          .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
-          .forEach { resolutionCache.remove(it) }
         val editor = prefs.edit()
+        // The startup index avoids scanning/copying all preferences for each video.
+        (versionIndex.keysFor(connection.id, file.path) - key).forEach { stale ->
+          editor.remove(stale).remove("${stale}:w").remove("${stale}:h")
+          durationCache.remove(stale)
+          thumbnailCache.remove(stale)
+          resolutionCache.remove(stale)
+          versionIndex.remove(stale)
+          runCatching { thumbnailFile(stale, connection).delete() }
+        }
+        versionIndex.add(key)
         if (result.duration > 0) {
           durationCache[key] = result.duration
           editor.putLong(key, result.duration)
@@ -524,6 +529,7 @@ object NetworkMetadataProbe {
     val published = cacheGeneration.publish(key, generation) {
       if (bitmap != null) {
         thumbnailCache[key] = bitmap
+        versionIndex.add(key)
         keyIndex["${connection.id}::${file.path}"] = key
         val compressed = runCatching {
           val format = if (Build.VERSION.SDK_INT >= 30) {
@@ -704,6 +710,7 @@ object NetworkMetadataProbe {
   ) {
     val key = cacheKey(connection, file)
     cacheGeneration.invalidate(key) {
+      versionIndex.remove(key)
       durationCache.remove(key)
       thumbnailCache.remove(key)
       resolutionCache.remove(key)
@@ -734,6 +741,7 @@ object NetworkMetadataProbe {
       return
     }
     cacheGeneration.clear {
+      versionIndex.clear()
       durationCache.clear()
       thumbnailCache.clear()
       resolutionCache.clear()
@@ -749,8 +757,7 @@ object NetworkMetadataProbe {
    * Look up the exact cache key for a connection + file path. Used by the player
    * to resolve cached previews for proxy URLs, where only the path is known
    * (not size/etag/lastModified). Key format: <connId>::<path>::<size>::<etag>::<lm>.
-   * Served from an O(1) in-memory index; falls back to a scan only on a cold
-   * start, then back-fills the index.
+   * Served from the selected-key index or the version index built at startup.
    */
   private fun findKey(
     connectionId: Long,
@@ -759,16 +766,8 @@ object NetworkMetadataProbe {
     val indexLookup = "$connectionId::$filePath"
     keyIndex[indexLookup]?.let { return it }
 
-    val prefix = "$connectionId::"
-    val needle = "::${filePath}::"
-    // A file can have multiple cache keys when size/etag/lastModified changed,
-    // leaving stale entries behind (e.g. an old failed probe cached a bogus
-    // short duration without resolution). Prefer the key with resolution data,
-    // which is the product of a complete successful probe.
-    val matchingKeys =
-      (prefs.all.keys.filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) } +
-        durationCache.keys.filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) })
-        .distinct()
+    // Prefer a complete successful probe when legacy caches contain versions.
+    val matchingKeys = versionIndex.keysFor(connectionId, filePath)
     val best =
       matchingKeys.firstOrNull { key ->
         prefs.getLong("${key}:w", 0L) > 0 && prefs.getLong("${key}:h", 0L) > 0
@@ -777,18 +776,6 @@ object NetworkMetadataProbe {
       keyIndex[indexLookup] = best
     }
     return best
-  }
-
-  private fun isCanonicalCacheKey(key: String): Boolean =
-    !key.endsWith(":w") && !key.endsWith(":h")
-
-  private fun indexKey(
-    connection: NetworkConnection,
-    file: NetworkFile,
-  ): String {
-    val key = cacheKey(connection, file)
-    keyIndex["${connection.id}::${file.path}"] = key
-    return key
   }
 
   /**
@@ -887,9 +874,12 @@ object NetworkMetadataProbe {
         thumbnailCache.keys.filter { it.startsWith(prefix) }.forEach { thumbnailCache.remove(it) }
         resolutionCache.keys.removeAll { it.startsWith(prefix) }
         keyIndex.keys.removeAll { it.startsWith(prefix) }
-        prefs.all.keys
-          .filter { it.startsWith(prefix) }
-          .forEach { key -> prefs.edit().remove(key).apply() }
+        val editor = prefs.edit()
+        versionIndex.keysForConnection(connectionId).forEach { key ->
+          editor.remove(key).remove("${key}:w").remove("${key}:h")
+          versionIndex.remove(key)
+        }
+        editor.apply()
         runCatching {
           File(thumbnailDir, connectionId.toString()).deleteRecursively()
         }
