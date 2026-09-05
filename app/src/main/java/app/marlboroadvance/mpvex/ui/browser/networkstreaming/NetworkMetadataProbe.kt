@@ -287,6 +287,9 @@ object NetworkMetadataProbe {
   // MediaMetadataRetriever instances are independent and truly parallel, so
   // durations keep a higher concurrency for real gains.
   private val durationSemaphore = Semaphore(6)
+  private val prefetchHttpClient = okhttp3.OkHttpClient.Builder()
+    .callTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+    .build()
   private val durationRequests = SharedProbeRequests<String, Long>(
     CoroutineScope(SupervisorJob() + Dispatchers.IO),
   )
@@ -640,9 +643,6 @@ object NetworkMetadataProbe {
       )
     return try {
       try {
-        val client = okhttp3.OkHttpClient.Builder()
-          .callTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-          .build()
         val segmentSize = minOf(
           file.size.takeIf { it > 0 } ?: (2L * 1024 * 1024),
           2L * 1024 * 1024,
@@ -650,7 +650,7 @@ object NetworkMetadataProbe {
         suspend fun fetch(start: Long, end: Long): Boolean {
           if (start < 0L || end < start) return false
           val request = okhttp3.Request.Builder().url(url).header("Range", "bytes=$start-$end").build()
-          return client.newCall(request).execute().use { response ->
+          return prefetchHttpClient.newCall(request).execute().use { response ->
             if (response.code != 206) return@use false
             val contentRange = response.header("Content-Range") ?: return@use false
             val range = contentRange.removePrefix("bytes ").split('-', limit = 2)

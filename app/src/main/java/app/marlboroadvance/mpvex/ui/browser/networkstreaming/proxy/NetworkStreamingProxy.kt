@@ -72,6 +72,9 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     val mimeType: String get() = file.mimeType ?: "video/mp4"
   }
 
+  // Range and credentials belong to each request; the transport pool is shared.
+  private val webDavHttpClient = okhttp3.OkHttpClient()
+
   private val rangeSegmentCache =
     RangeSegmentCache()
 
@@ -717,19 +720,10 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
       val cleanFilePath = if (streamInfo.filePath.startsWith("/")) streamInfo.filePath else "/${streamInfo.filePath}"
       val url = "$protocol://${streamInfo.connection.host}:${streamInfo.connection.port}$cleanBasePath$cleanFilePath"
 
-      // Use OkHttp directly to add Range header support
-      val okHttpClient = okhttp3.OkHttpClient.Builder()
-        .addInterceptor { chain ->
-          val request = chain.request().newBuilder()
-            .addHeader("Range", "bytes=$offset-$end")
-            .build()
-          chain.proceed(request)
-        }
-        .build()
-
       // Build the request
       val requestBuilder = okhttp3.Request.Builder()
         .url(url)
+        .header("Range", "bytes=$offset-$end")
         .get()
 
       // Add auth if needed
@@ -739,7 +733,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
       }
 
       val request = requestBuilder.build()
-      val response = okHttpClient.newCall(request).execute()
+      val response = webDavHttpClient.newCall(request).execute()
 
       // Range integrity: a ranged request MUST be answered with 206.
       // Some servers ignore the Range header and reply 200 with the whole body.
@@ -779,8 +773,11 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
       // never turn prefetch into an unbounded download.
       if (requestedLength in 1..RangeSegmentCache.MAX_SEGMENT_BYTES.toLong()) {
         val expected = requestedLength.toInt()
-        val bytes = readBounded(rawStream, expected)
-        response.close()
+        val bytes = try {
+          readBounded(rawStream, expected)
+        } finally {
+          response.close()
+        }
         if (bytes.size != expected) {
           Log.w(TAG, "WebDAV short range: ${bytes.size}/$expected bytes for $offset-$end")
           return null
