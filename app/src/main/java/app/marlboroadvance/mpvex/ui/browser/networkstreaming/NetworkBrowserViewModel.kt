@@ -258,7 +258,7 @@ class NetworkBrowserViewModel(
 
     synchronized(thumbnailLock) {
       val existing = thumbnailJobs[file.path]
-      if (existing != null && !existing.isCompleted) {
+      if (existing != null && !existing.isCompleted && !existing.isCancelled) {
         val effectivePriority =
           thumbnailPriorities.compute(file.path) { _, previous ->
             if (previous == null || priority.ordinal < previous.ordinal) priority else previous
@@ -357,7 +357,12 @@ class NetworkBrowserViewModel(
     retainedThumbnailPaths = emptySet()
     thumbnailVersions.clear()
     _thumbnails.value = emptyMap()
-    thumbnailJobs.values.forEach { it.cancel() }
+    synchronized(thumbnailLock) {
+      val pending = thumbnailJobs.values.toList()
+      thumbnailJobs.clear()
+      thumbnailPriorities.clear()
+      pending.forEach { it.cancel() }
+    }
   }
 
   /**
