@@ -63,6 +63,12 @@ object NetworkMetadataProbe {
   // software. Flip to false if hardware decode proves unstable on a given device.
   private const val THUMBNAIL_PREFER_HW = true
 
+  private val cacheGeneration = MetadataCacheGeneration()
+  val cacheChanges = cacheGeneration.changes
+
+  fun cacheToken(connection: NetworkConnection, file: NetworkFile): Long =
+    cacheGeneration.token(cacheKey(connection, file))
+
   private val durationCache = ConcurrentHashMap<String, Long>()
   private val thumbnailCache = ConcurrentHashMap<String, Bitmap>()
   private val resolutionCache = ConcurrentHashMap<String, Pair<Int, Int>>()
@@ -81,6 +87,7 @@ object NetworkMetadataProbe {
 
   private data class ThumbnailRequest(
     val key: String,
+    val generation: Long,
     val connection: NetworkConnection,
     val file: NetworkFile,
     var priority: ThumbnailPriority,
@@ -150,7 +157,7 @@ object NetworkMetadataProbe {
                 return@launch
               }
               try {
-                request.result.complete(probeThumbnailNow(request.connection, request.file))
+                request.result.complete(probeThumbnailNow(request.connection, request.file, request.generation))
               } catch (e: CancellationException) {
                 request.result.cancel(e)
               } catch (e: Exception) {
@@ -198,6 +205,7 @@ object NetworkMetadataProbe {
 
     suspend fun submit(
       key: String,
+      generation: Long,
       connection: NetworkConnection,
       file: NetworkFile,
       priority: ThumbnailPriority,
@@ -211,7 +219,7 @@ object NetworkMetadataProbe {
           }
           existing
         } else {
-          val request = ThumbnailRequest(key, connection, file, priority)
+          val request = ThumbnailRequest(key, generation, connection, file, priority)
           byKey[key] = request
           requests.offer(key, priority)
           wakeUp.trySend(Unit)
@@ -333,14 +341,10 @@ object NetworkMetadataProbe {
     if (file.isDirectory) return 0L
     val key = cacheKey(connection, file)
 
-    // Memory cache
-    durationCache[key]?.let { return it }
-
-    // Persistent cache (SharedPreferences)
-    prefs.getLong(key, 0L).takeIf { it > 0 }?.let { cached ->
-      durationCache[key] = cached
-      return cached
-    }
+    val generation = cacheGeneration.token(key)
+    cacheGeneration.read {
+      durationCache[key] ?: prefs.getLong(key, 0L).takeIf { it > 0 }?.also { durationCache[key] = it }
+    }?.let { return it }
 
     // Probe over the network (MediaMetadataRetriever only reads the container
     // header to extract the duration and resolution - minimal data transfer).
@@ -392,40 +396,42 @@ object NetworkMetadataProbe {
         }
       }
 
-    if (result.duration > 0 || (result.width > 0 && result.height > 0)) {
-      keyIndex["${connection.id}::${file.path}"] = key
-      // Remove stale entries for the same path (old size/etag/lastModified
-      // versions may hold bogus durations from failed probes).
-      val prefix = "${connection.id}::"
-      val needle = "::${file.path}::"
-      prefs.all.keys
-        .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
-        .forEach { stale ->
-          prefs.edit().remove(stale).remove("${stale}:w").remove("${stale}:h").apply()
-          runCatching { thumbnailFile(stale, connection).delete() }
+    val published = cacheGeneration.publish(key, generation) {
+      if (result.duration > 0 || (result.width > 0 && result.height > 0)) {
+        keyIndex["${connection.id}::${file.path}"] = key
+        // Remove stale entries for the same path (old size/etag/lastModified
+        // versions may hold bogus durations from failed probes).
+        val prefix = "${connection.id}::"
+        val needle = "::${file.path}::"
+        prefs.all.keys
+          .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
+          .forEach { stale ->
+            prefs.edit().remove(stale).remove("${stale}:w").remove("${stale}:h").apply()
+            runCatching { thumbnailFile(stale, connection).delete() }
+          }
+        durationCache.keys
+          .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
+          .forEach { durationCache.remove(it) }
+        thumbnailCache.keys
+          .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
+          .forEach { thumbnailCache.remove(it) }
+        resolutionCache.keys
+          .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
+          .forEach { resolutionCache.remove(it) }
+        val editor = prefs.edit()
+        if (result.duration > 0) {
+          durationCache[key] = result.duration
+          editor.putLong(key, result.duration)
         }
-      durationCache.keys
-        .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
-        .forEach { durationCache.remove(it) }
-      thumbnailCache.keys
-        .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
-        .forEach { thumbnailCache.remove(it) }
-      resolutionCache.keys
-        .filter { isCanonicalCacheKey(it) && it.startsWith(prefix) && it.contains(needle) && it != key }
-        .forEach { resolutionCache.remove(it) }
-      val editor = prefs.edit()
-      if (result.duration > 0) {
-        durationCache[key] = result.duration
-        editor.putLong(key, result.duration)
+        if (result.width > 0 && result.height > 0) {
+          resolutionCache[key] = result.width to result.height
+          editor.putLong("${key}:w", result.width.toLong())
+          editor.putLong("${key}:h", result.height.toLong())
+        }
+        editor.apply()
       }
-      if (result.width > 0 && result.height > 0) {
-        resolutionCache[key] = result.width to result.height
-        editor.putLong("${key}:w", result.width.toLong())
-        editor.putLong("${key}:h", result.height.toLong())
-      }
-      editor.apply()
     }
-    return result.duration
+    return if (published) result.duration else 0L
   }
 
   private data class ProbeResult(
@@ -452,37 +458,27 @@ object NetworkMetadataProbe {
     if (file.isDirectory) return null
     val key = cacheKey(connection, file)
 
-    // Memory cache
-    thumbnailCache[key]?.let { return it }
-
-    // Disk cache
-    val diskFile = thumbnailFile(key, connection)
-    if (diskFile.exists()) {
-      val cached = runCatching {
-        BitmapFactory.decodeFile(diskFile.absolutePath)
-      }.getOrNull()
-      if (cached != null) {
-        thumbnailCache[key] = cached
-        return cached
-      }
-    }
-
-    return ThumbnailDispatcher.submit(key, connection, file, priority)
+    val generation = cacheGeneration.token(key)
+    cachedThumbnail(key, connection)?.let { return it }
+    return ThumbnailDispatcher.submit("$key#$generation", generation, connection, file, priority)
   }
+
+  private fun cachedThumbnail(key: String, connection: NetworkConnection): Bitmap? =
+    cacheGeneration.read {
+      thumbnailCache[key] ?: runCatching {
+        BitmapFactory.decodeFile(thumbnailFile(key, connection).absolutePath)
+      }.getOrNull()?.also { thumbnailCache[key] = it }
+    }
 
   private suspend fun probeThumbnailNow(
     connection: NetworkConnection,
     file: NetworkFile,
+    generation: Long,
   ): Bitmap? {
     val key = cacheKey(connection, file)
-    thumbnailCache[key]?.let { return it }
+    if (cacheGeneration.token(key) != generation) return null
+    cachedThumbnail(key, connection)?.let { return it }
     val diskFile = thumbnailFile(key, connection)
-    if (diskFile.exists()) {
-      BitmapFactory.decodeFile(diskFile.absolutePath)?.let {
-        thumbnailCache[key] = it
-        return it
-      }
-    }
     val result =
       withContext(Dispatchers.IO) {
           val proxy = NetworkStreamingProxy.getInstance()
@@ -501,39 +497,41 @@ object NetworkMetadataProbe {
       }
 
     val bitmap = result?.bitmap
-    if (bitmap != null) {
-      thumbnailCache[key] = bitmap
-      keyIndex["${connection.id}::${file.path}"] = key
-      val compressed = runCatching {
-        val format = if (Build.VERSION.SDK_INT >= 30) {
-          Bitmap.CompressFormat.WEBP_LOSSY
-        } else {
-          Bitmap.CompressFormat.WEBP
-        }
-        FileOutputStream(diskFile).use { out ->
-          bitmap.compress(format, THUMBNAIL_JPEG_QUALITY, out)
-          out.flush()
-        }
-        true
-      }.getOrDefault(false)
-
-      // Fallback to JPEG if WebP encoding was not possible
-      if (!compressed) {
-        runCatching {
+    val published = cacheGeneration.publish(key, generation) {
+      if (bitmap != null) {
+        thumbnailCache[key] = bitmap
+        keyIndex["${connection.id}::${file.path}"] = key
+        val compressed = runCatching {
+          val format = if (Build.VERSION.SDK_INT >= 30) {
+            Bitmap.CompressFormat.WEBP_LOSSY
+          } else {
+            Bitmap.CompressFormat.WEBP
+          }
           FileOutputStream(diskFile).use { out ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, THUMBNAIL_JPEG_QUALITY, out)
+            bitmap.compress(format, THUMBNAIL_JPEG_QUALITY, out)
             out.flush()
+          }
+          true
+        }.getOrDefault(false)
+
+        // Fallback to JPEG if WebP encoding was not possible
+        if (!compressed) {
+          runCatching {
+            FileOutputStream(diskFile).use { out ->
+              bitmap.compress(Bitmap.CompressFormat.JPEG, THUMBNAIL_JPEG_QUALITY, out)
+              out.flush()
+            }
           }
         }
       }
     }
-    return bitmap
+    return bitmap.takeIf { published }
   }
 
   fun cancelBackgroundThumbnailsExcept(
     retained: Collection<Pair<NetworkConnection, NetworkFile>>,
   ) {
-    ThumbnailDispatcher.cancelBackgroundExcept(retained.mapTo(mutableSetOf()) { cacheKey(it.first, it.second) })
+    ThumbnailDispatcher.cancelBackgroundExcept(retained.mapTo(mutableSetOf()) { "${cacheKey(it.first, it.second)}#${cacheToken(it.first, it.second)}" })
   }
 
   /** Promote an already queued request without creating another native job. */
@@ -543,7 +541,7 @@ object NetworkMetadataProbe {
     priority: ThumbnailPriority,
   ) {
     if (file.isDirectory) return
-    ThumbnailDispatcher.promote(cacheKey(connection, file), priority)
+    ThumbnailDispatcher.promote("${cacheKey(connection, file)}#${cacheToken(connection, file)}", priority)
   }
 
   private data class ThumbnailResult(
@@ -666,10 +664,12 @@ object NetworkMetadataProbe {
     connection: NetworkConnection,
     file: NetworkFile,
   ): Boolean {
-    if (file.isDirectory) return false
-    val key = cacheKey(connection, file)
-    if (thumbnailCache.containsKey(key)) return true
-    return thumbnailFile(key, connection).exists()
+    return cacheGeneration.read {
+      if (file.isDirectory) return@read false
+      val key = cacheKey(connection, file)
+      if (thumbnailCache.containsKey(key)) return@read true
+      return@read thumbnailFile(key, connection).exists()
+    }
   }
 
   /**
@@ -682,13 +682,15 @@ object NetworkMetadataProbe {
     file: NetworkFile,
   ) {
     val key = cacheKey(connection, file)
-    durationCache.remove(key)
-    thumbnailCache.remove(key)
-    resolutionCache.remove(key)
-    keyIndex.remove("${connection.id}::${file.path}")
-    prefs.edit().remove(key).remove("${key}:w").remove("${key}:h").apply()
-    runCatching {
-      thumbnailFile(key, connection).delete()
+    cacheGeneration.invalidate(key) {
+      durationCache.remove(key)
+      thumbnailCache.remove(key)
+      resolutionCache.remove(key)
+      keyIndex.remove("${connection.id}::${file.path}")
+      prefs.edit().remove(key).remove("${key}:w").remove("${key}:h").apply()
+      runCatching {
+        thumbnailFile(key, connection).delete()
+      }
     }
   }
 
@@ -710,13 +712,15 @@ object NetworkMetadataProbe {
       Log.e(TAG, "clearCache: NetworkMetadataProbe not initialized (appContext null)")
       return
     }
-    durationCache.clear()
-    thumbnailCache.clear()
-    resolutionCache.clear()
-    keyIndex.clear()
-    prefs.edit().clear().apply()
-    runCatching {
-      thumbnailDir.deleteRecursively()
+    cacheGeneration.clear {
+      durationCache.clear()
+      thumbnailCache.clear()
+      resolutionCache.clear()
+      keyIndex.clear()
+      prefs.edit().clear().apply()
+      runCatching {
+        thumbnailDir.deleteRecursively()
+      }
     }
   }
 
@@ -774,8 +778,10 @@ object NetworkMetadataProbe {
     connectionId: Long,
     filePath: String,
   ): Long {
-    val key = findKey(connectionId, filePath) ?: return 0L
-    return durationCache[key] ?: prefs.getLong(key, 0L)
+    return cacheGeneration.read {
+      val key = findKey(connectionId, filePath) ?: return@read 0L
+      return@read durationCache[key] ?: prefs.getLong(key, 0L)
+    }
   }
 
   /** Exact-version lookup used by active proxy streams. */
@@ -783,8 +789,10 @@ object NetworkMetadataProbe {
     connection: NetworkConnection,
     file: NetworkFile,
   ): Long {
-    val key = cacheKey(connection, file)
-    return durationCache[key] ?: prefs.getLong(key, 0L)
+    return cacheGeneration.read {
+      val key = cacheKey(connection, file)
+      return@read durationCache[key] ?: prefs.getLong(key, 0L)
+    }
   }
 
   /**
@@ -795,11 +803,13 @@ object NetworkMetadataProbe {
     connectionId: Long,
     filePath: String,
   ): Pair<Int, Int>? {
-    val key = findKey(connectionId, filePath) ?: return null
-    resolutionCache[key]?.let { return it }
-    val w = prefs.getLong("${key}:w", 0L).toInt()
-    val h = prefs.getLong("${key}:h", 0L).toInt()
-    return if (w > 0 && h > 0) (w to h).also { resolutionCache[key] = it } else null
+    return cacheGeneration.read {
+      val key = findKey(connectionId, filePath) ?: return@read null
+      resolutionCache[key]?.let { return@read it }
+      val w = prefs.getLong("${key}:w", 0L).toInt()
+      val h = prefs.getLong("${key}:h", 0L).toInt()
+      return@read if (w > 0 && h > 0) (w to h).also { resolutionCache[key] = it } else null
+    }
   }
 
   /** Exact-version lookup used by active proxy streams. */
@@ -807,11 +817,13 @@ object NetworkMetadataProbe {
     connection: NetworkConnection,
     file: NetworkFile,
   ): Pair<Int, Int>? {
-    val key = cacheKey(connection, file)
-    resolutionCache[key]?.let { return it }
-    val w = prefs.getLong("${key}:w", 0L).toInt()
-    val h = prefs.getLong("${key}:h", 0L).toInt()
-    return if (w > 0 && h > 0) (w to h).also { resolutionCache[key] = it } else null
+    return cacheGeneration.read {
+      val key = cacheKey(connection, file)
+      resolutionCache[key]?.let { return@read it }
+      val w = prefs.getLong("${key}:w", 0L).toInt()
+      val h = prefs.getLong("${key}:h", 0L).toInt()
+      return@read if (w > 0 && h > 0) (w to h).also { resolutionCache[key] = it } else null
+    }
   }
 
   /**
@@ -822,15 +834,17 @@ object NetworkMetadataProbe {
     connectionId: Long,
     filePath: String,
   ): Bitmap? {
-    val key = findKey(connectionId, filePath) ?: return null
-    thumbnailCache[key]?.let { return it }
-    val file = File(File(thumbnailDir, connectionId.toString()), keyToFileName(key))
-    if (file.exists()) {
-      val bmp = runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()
-      if (bmp != null) thumbnailCache[key] = bmp
-      return bmp
+    return cacheGeneration.read {
+      val key = findKey(connectionId, filePath) ?: return@read null
+      thumbnailCache[key]?.let { return@read it }
+      val file = File(File(thumbnailDir, connectionId.toString()), keyToFileName(key))
+      if (file.exists()) {
+        val bmp = runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()
+        if (bmp != null) thumbnailCache[key] = bmp
+        return@read bmp
+      }
+      return@read null
     }
-    return null
   }
 
   /**
@@ -846,16 +860,18 @@ object NetworkMetadataProbe {
         Log.e(TAG, "clearConnectionCache: NetworkMetadataProbe not initialized (appContext null)")
         return false
       }
-      val prefix = "$connectionId::"
-      durationCache.keys.removeAll { it.startsWith(prefix) }
-      thumbnailCache.keys.removeAll { it.startsWith(prefix) }
-      resolutionCache.keys.removeAll { it.startsWith(prefix) }
-      keyIndex.keys.removeAll { it.startsWith(prefix) }
-      prefs.all.keys
-        .filter { it.startsWith(prefix) }
-        .forEach { key -> prefs.edit().remove(key).apply() }
-      runCatching {
-        File(thumbnailDir, connectionId.toString()).deleteRecursively()
+      cacheGeneration.invalidateConnection(connectionId) {
+        val prefix = "$connectionId::"
+        durationCache.keys.removeAll { it.startsWith(prefix) }
+        thumbnailCache.keys.removeAll { it.startsWith(prefix) }
+        resolutionCache.keys.removeAll { it.startsWith(prefix) }
+        keyIndex.keys.removeAll { it.startsWith(prefix) }
+        prefs.all.keys
+          .filter { it.startsWith(prefix) }
+          .forEach { key -> prefs.edit().remove(key).apply() }
+        runCatching {
+          File(thumbnailDir, connectionId.toString()).deleteRecursively()
+        }
       }
       true
     } catch (e: Exception) {

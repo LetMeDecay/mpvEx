@@ -71,6 +71,7 @@ class NetworkBrowserViewModel(
   private val runningThumbnails = ConcurrentHashMap<String, Job>()
   private val thumbnailPriorities = ConcurrentHashMap<String, NetworkMetadataProbe.ThumbnailPriority>()
   private val thumbnailLock = Any()
+  private val thumbnailVersions = ConcurrentHashMap<String, Pair<NetworkFile, Long>>()
   @Volatile
   private var loadedConnection: NetworkConnection? = null
 
@@ -109,6 +110,24 @@ class NetworkBrowserViewModel(
   init {
     // Initialize the persistent metadata probe cache
     NetworkMetadataProbe.init(application)
+
+    viewModelScope.launch {
+      NetworkMetadataProbe.cacheChanges.collect {
+        val connection = loadedConnection ?: return@collect
+        _thumbnails.update { cached ->
+          cached.filterKeys { path ->
+            thumbnailVersions[path]?.let { (file, token) ->
+              NetworkMetadataProbe.cacheToken(connection, file) == token
+            } == true
+          }
+        }
+        _files.update { current ->
+          current.map { file ->
+            file.copy(duration = NetworkMetadataProbe.getCachedDuration(connection, file))
+          }
+        }
+      }
+    }
 
     // Apply sorting whenever files or this folder's sort settings change
     viewModelScope.launch {
@@ -194,9 +213,11 @@ class NetworkBrowserViewModel(
         videos.map { file ->
           async {
             try {
+              val generation = NetworkMetadataProbe.cacheToken(connection, file)
               val duration = NetworkMetadataProbe.probeDuration(connection, file)
               if (duration > 0) {
                 withContext(Dispatchers.Main) {
+                  if (NetworkMetadataProbe.cacheToken(connection, file) != generation) return@withContext
                   _files.update { current ->
                     if (current.any { it.path == file.path && it.duration != duration }) {
                       current.map {
@@ -273,8 +294,10 @@ class NetworkBrowserViewModel(
               val effectivePriority = synchronized(thumbnailLock) {
                 thumbnailPriorities[file.path] ?: priority
               }
+              val generation = NetworkMetadataProbe.cacheToken(connection, file)
               val bitmap = NetworkMetadataProbe.probeThumbnail(connection, file, effectivePriority)
-              if (bitmap != null) {
+              if (bitmap != null && NetworkMetadataProbe.cacheToken(connection, file) == generation) {
+                thumbnailVersions[file.path] = file to generation
                 _thumbnails.value = _thumbnails.value + (file.path to bitmap)
               }
             } finally {
@@ -348,8 +371,15 @@ class NetworkBrowserViewModel(
   ) {
     try {
       NetworkMetadataProbe.invalidateCache(connection, file)
+      val generation = NetworkMetadataProbe.cacheToken(connection, file)
+      withContext(Dispatchers.Main) {
+        thumbnailJobs.remove(file.path)?.cancel()
+        thumbnailVersions.remove(file.path)
+        _thumbnails.update { it - file.path }
+      }
       val duration = NetworkMetadataProbe.probeDuration(connection, file)
       withContext(Dispatchers.Main) {
+        if (NetworkMetadataProbe.cacheToken(connection, file) != generation) return@withContext
         _files.value = _files.value.map {
           if (it.path == file.path) it.copy(duration = duration) else it
         }
@@ -358,11 +388,15 @@ class NetworkBrowserViewModel(
         val bitmap = NetworkMetadataProbe.probeThumbnail(connection, file)
         if (bitmap != null) {
           withContext(Dispatchers.Main) {
+            if (NetworkMetadataProbe.cacheToken(connection, file) != generation) return@withContext
+            thumbnailVersions[file.path] = file to generation
             _thumbnails.value = _thumbnails.value + (file.path to bitmap)
           }
         }
       }
       Log.i(TAG, "Refreshed cache for ${file.name} (${duration}ms)")
+    } catch (e: kotlinx.coroutines.CancellationException) {
+      throw e
     } catch (e: Exception) {
       Log.w(TAG, "Error refreshing cache for ${file.name}", e)
     }
@@ -384,33 +418,31 @@ class NetworkBrowserViewModel(
           async {
             try {
               NetworkMetadataProbe.invalidateCache(connection, file)
+              val generation = NetworkMetadataProbe.cacheToken(connection, file)
               val newDuration = NetworkMetadataProbe.probeDuration(connection, file)
-              val bitmap =
-                if (showThumbnails) {
-                  NetworkMetadataProbe.probeThumbnail(connection, file)
+              val bitmap = if (showThumbnails) NetworkMetadataProbe.probeThumbnail(connection, file) else null
+              withContext(Dispatchers.Main) {
+                if (NetworkMetadataProbe.cacheToken(connection, file) != generation) return@withContext
+                _files.update { current -> current.map { if (it.path == file.path) it.copy(duration = newDuration) else it } }
+                if (bitmap != null) {
+                  thumbnailVersions[file.path] = file to generation
+                  _thumbnails.update { it + (file.path to bitmap) }
                 } else {
-                  null
+                  thumbnailVersions.remove(file.path)
+                  _thumbnails.update { it - file.path }
                 }
-              Triple(file.path, newDuration, bitmap)
+              }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+              throw e
             } catch (e: Exception) {
               Log.w(TAG, "Error refreshing cache for ${file.name}", e)
-              Triple(file.path, 0L, null)
             }
           }
-        }.awaitAll().forEach { (path, newDuration, bitmap) ->
-          withContext(Dispatchers.Main) {
-            if (newDuration > 0) {
-              _files.value = _files.value.map {
-                if (it.path == path) it.copy(duration = newDuration) else it
-              }
-            }
-            if (bitmap != null) {
-              _thumbnails.value = _thumbnails.value + (path to bitmap)
-            }
-          }
-        }
+        }.awaitAll()
       }
       Log.i(TAG, "Refreshed cache for ${videos.size} videos in $folderPath")
+    } catch (e: kotlinx.coroutines.CancellationException) {
+      throw e
     } catch (e: Exception) {
       Log.w(TAG, "Error refreshing folder cache $folderPath", e)
     }
