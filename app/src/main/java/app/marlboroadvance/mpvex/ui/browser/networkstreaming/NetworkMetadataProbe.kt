@@ -287,6 +287,9 @@ object NetworkMetadataProbe {
   // MediaMetadataRetriever instances are independent and truly parallel, so
   // durations keep a higher concurrency for real gains.
   private val durationSemaphore = Semaphore(6)
+  private val durationRequests = SharedProbeRequests<String, Long>(
+    CoroutineScope(SupervisorJob() + Dispatchers.IO),
+  )
 
   @Volatile
   private var appContext: Context? = null
@@ -349,11 +352,26 @@ object NetworkMetadataProbe {
       durationCache[key] ?: prefs.getLong(key, 0L).takeIf { it > 0 }?.also { durationCache[key] = it }
     }?.let { return it }
 
+    return durationRequests.run("$key#$generation") {
+      probeDurationNow(connection, file, key, generation)
+    }
+  }
+
+  private suspend fun probeDurationNow(
+    connection: NetworkConnection,
+    file: NetworkFile,
+    key: String,
+    generation: Long,
+  ): Long {
     // Probe over the network (MediaMetadataRetriever only reads the container
     // header to extract the duration and resolution - minimal data transfer).
     val result =
       withContext(Dispatchers.IO) {
         durationSemaphore.withPermit {
+          // A cached result or invalidation may arrive while this job waits.
+          if (cacheGeneration.token(key) != generation) return@withPermit ProbeResult(0L, 0, 0)
+          val cached = getCachedDuration(connection, file)
+          if (cached > 0) return@withPermit ProbeResult(cached, 0, 0)
           val proxy = NetworkStreamingProxy.getInstance()
           val streamId = "probe_${connection.id}_${System.nanoTime()}"
           val url =
