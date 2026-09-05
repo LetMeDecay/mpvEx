@@ -26,6 +26,10 @@ import java.util.concurrent.TimeUnit
 /**
  * Local HTTP proxy server that enables seeking for network streaming protocols
  * that don't support it natively
+ *
+ * Shared for the lifetime of the process: destroying the browser Activity must
+ * not stop streams used by PlayerActivity or application-scoped cache warming.
+ * Temporary metadata streams are released individually by their callers.
  */
 class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
 

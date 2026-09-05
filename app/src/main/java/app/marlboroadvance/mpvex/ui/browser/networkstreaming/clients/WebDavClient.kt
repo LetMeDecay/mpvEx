@@ -54,7 +54,9 @@ class WebDavClient(private val connection: NetworkConnection) : NetworkClient {
 
         // Test connection by checking if base path exists
         val testUrl = buildUrl("")
-        client.exists(testUrl)
+        if (!client.exists(testUrl)) {
+          return@withContext Result.failure(java.io.IOException("WebDAV base directory not found"))
+        }
 
         sardine = client
         Result.success(Unit)

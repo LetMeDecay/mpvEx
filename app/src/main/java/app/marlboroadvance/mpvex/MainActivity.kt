@@ -73,9 +73,6 @@ class MainActivity : AppCompatActivity() {
     
     PermissionUtils.setMediaAccessLauncher(mediaAccessLauncher)
 
-    // Register proxy lifecycle observer for network streaming
-    lifecycle.addObserver(app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.ProxyLifecycleObserver())
-
     setContent {
       // Set up theme and edge-to-edge display
       val dark by appearancePreferences.darkMode.collectAsState()

@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
+import app.marlboroadvance.mpvex.domain.network.NetworkProtocol
 import app.marlboroadvance.mpvex.repository.NetworkRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
@@ -76,7 +77,13 @@ object NetworkCacheWarmer {
     connection: NetworkConnection,
   ) {
     Log.d(TAG, "Preloading cache for ${connection.name}")
-    val rootPath = connection.path.ifBlank { "/" }
+    // WebDAV paths are relative to connection.path; passing the base again
+    // would request /base/base. FTP still needs its configured server path.
+    val rootPath = if (connection.protocol == NetworkProtocol.WEBDAV) {
+      "/"
+    } else {
+      connection.path.ifBlank { "/" }
+    }
 
     // Connect first so listFiles reuses the active client
     repository.connect(connection)
