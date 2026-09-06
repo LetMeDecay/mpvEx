@@ -704,7 +704,18 @@ object NetworkMetadataProbe {
             val range = contentRange.removePrefix("bytes ").split('-', limit = 2)
             val returnedStart = range.getOrNull(0)?.toLongOrNull()
             val returnedEnd = range.getOrNull(1)?.substringBefore('/')?.toLongOrNull()
-            returnedStart == start && returnedEnd != null && returnedEnd in start..end
+            if (returnedStart != start || returnedEnd == null || returnedEnd !in start..end) return@use false
+            val stream = response.body?.byteStream() ?: return@use false
+            val buffer = ByteArray(32 * 1024)
+            var remaining = returnedEnd - start + 1
+            while (remaining > 0) {
+              currentCoroutineContext().ensureActive()
+              if (!shouldContinue()) return@use false
+              val count = stream.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+              if (count <= 0) return@use false
+              remaining -= count
+            }
+            true
           }
         }
         val headOk = fetch(0L, segmentSize - 1)

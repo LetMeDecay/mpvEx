@@ -2,7 +2,6 @@ package app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy
 
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.RangeSegmentCache
 import java.io.ByteArrayInputStream
-import java.io.EOFException
 import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
@@ -46,21 +45,15 @@ internal class WebDavRangeSource(
       val body = response.body ?: throw IOException("Missing range body")
       if (body.contentLength() >= 0 && body.contentLength() != count) throw IOException("Mismatched range length")
       val stream = body.byteStream()
-      if (count <= RangeSegmentCache.MAX_SEGMENT_BYTES) {
-        val bytes = ByteArray(count.toInt())
-        var read = 0
-        while (read < bytes.size) {
-          val n = stream.read(bytes, read, bytes.size - read)
-          if (n <= 0) throw EOFException("Incomplete range")
-          read += n
-        }
-        cache.put(identity, start, end, bytes)
-        response.close()
-        return ByteArrayInputStream(bytes)
-      }
-      return object : FilterInputStream(stream) {
+      val ownedStream = object : FilterInputStream(stream) {
         override fun close() = response.close()
       }
+      if (count <= RangeSegmentCache.MAX_SEGMENT_BYTES) {
+        return CachingRangeInputStream(ownedStream, count.toInt()) { bytes ->
+          cache.put(identity, start, end, bytes)
+        }
+      }
+      return ownedStream
     } catch (e: Exception) {
       response.close()
       throw e
