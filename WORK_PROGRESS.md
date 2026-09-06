@@ -24,17 +24,19 @@
 | 2 | 大请求复用已缓存区间 | 已完成 | 25e5d7e；66 项测试及字符串检查通过，step2.log（1m11s） |
 | 3 | 播放优先，限制后台探测与预取 | 已完成 | e583a72；69 项测试及字符串检查通过，step3.log（37s） |
 | 4 | 小区间边读取边返回 | 已完成 | 5ff7d55；72 项测试及字符串检查通过，step4.log（32s） |
-| 5 | 旧请求取消与有界重复区间合并 | 已完成 | 79 项测试、字符串检查、Debug 通过，final-validation.log（31s）；提交见 Git 日志 |
-| 交付 | 综合验证、Release 签名、文档和清理 | 进行中：准备 Release | 当前 release 仍为 586edf0 |
+| 5 | 旧请求取消与有界重复区间合并 | 已完成 | a4a195c；79 项测试、字符串检查、Debug 通过，final-validation.log（31s） |
+| 交付 | 综合验证、Release 签名、文档和清理 | 已完成 | Release 3m7s；五种签名 APK 为 a4a195c；构建目录已清理 |
 
 ## 当前落点
 
-- 方案 2、3、4 已分别提交 25e5d7e、e583a72、5ff7d55。方案 5 已通过最终验证，准备提交。
+- 方案 2、3、4 已分别提交 25e5d7e、e583a72、5ff7d55。方案 5 已提交 a4a195c。
 - 方案 5 的 ProxyRequestScope/Registry 关联响应与 Call；SharedRangeReads 提供有界渐进共享、独立游标、最后消费者取消和延迟释放资源许可。CancellableHttpRead 覆盖预取整个响应体，native 探测 watcher 将取消传给代理。
 - 同文件定位只有新 GET 真正到达活动播放地址时才替换旧响应；不在手势开始/缓存内 seek 时盲目取消。元数据独立流不触发播放替换规则。
 - 最终 79 项测试、字符串检查及 Standard Debug 通过（31s），日志 `/tmp/mpvex-webdav-final-validation.log`。此前各阶段结果已充分验证，不重复。
-- 下一步：提交方案 5 后运行 Standard Release，日志 `/tmp/mpvex-webdav-final-release.log`；使用 `/tmp/mpvex-webdav-final-sign.py` 签名校验全部五种产物后替换 release，再清理 app/build/.kotlin、更新记录和交付。若该临时签名脚本丢失，按 CONTEXT.md 流程重建，并检查 APK 包内 Git 与本次代码提交一致。
-- 当前 APK 仍为 586edf0，不能声称本批 APK 已交付。没有本批 push。原固定推送任务暂无成功凭证，本任务未改其范围。
+- Standard Release 通过（3m7s），日志 `/tmp/mpvex-webdav-final-release.log`。五种 APK 和 idsig 已通过 zipalign、v2/v3/v4 签名、版本、ABI 及包内 Git 校验，移入 `/root/mpvex/release/`。
+- 当前 APK：代码 a4a195c，版本 1.2.9-rev0906，基础 versionCode 130；签名生成时间为北京时间 2026-09-07 01:08:34–01:08:39。签名日志与清单：`/tmp/mpvex-webdav-final-signing.log`、`/tmp/mpvex-webdav-final-artifacts.json`。
+- app/build 和 .kotlin 已清理。本批没有 push；原固定推送任务范围保持不变，上传结果须另查成功凭证。
+- 当前任务已全部完成，无阻塞。下次启动读取本文件后等待用户新任务，不重复实施 2–5 或重复已通过的验证。
 
 ## 验证命令与记录
 

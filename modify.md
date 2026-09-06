@@ -6,7 +6,9 @@
 
 ## WebDAV 方案 2 → 3 → 4 → 5（2026-09-07）
 
-- 用户已授权依次实施四项播放读取优化，恢复入口为 [WORK_PROGRESS.md](WORK_PROGRESS.md)。各批次验证与提交将在完成后记录；不扩大原低峰推送范围。
+- 最终代码 `a4a195c` 的 Standard Release 构建通过（3m7s）；五种 APK＋idsig 经 zipalign、v2/v3/v4、版本、ABI 和包内 Git 校验，已移入 `/root/mpvex/release/`。签名生成时间：北京时间 2026-09-07 01:08:34–01:08:39，版本仍为 1.2.9-rev0906（基础 versionCode 130）。app/build 和 .kotlin 已清理；本批未推送或发布。
+
+- 用户已授权依次实施四项播放读取优化，恢复入口为 [WORK_PROGRESS.md](WORK_PROGRESS.md)。各批次已验证并本地提交；不扩大原低峰推送范围。
 - 方案 5 完成：每个代理响应关联取消范围和远端 Call，注销流、替换文件和当前播放地址的新 GET 会清理旧响应；HEAD、元数据独立地址、手势开始和缓存内 seek 不触发播放替换取消。共享下载只有最后一个消费者离开才取消源请求。
 - 相同强版本及相同小区间使用独立消费者游标共享渐进读取，最多 4 个共享下载缓冲、合计 8 MiB（不含原 LRU 及普通请求缓冲）；没有空位时走原单流。完整源区间校验后缓存，失败或短读不缓存。预取的协程取消覆盖响应体读取，native 探测增加独立取消观察任务。普通 WebDAV GET 也纳入请求跟踪，有可靠缓存时可复用区间。
 - 方案 5 首轮 78 项测试及 Debug 构建通过；补充真实新 GET 替换旧响应的场景后，79 项单元测试、字符串检查及 Standard Debug 构建通过（31s）。本地 HTTP 测试验证了收到响应头后取消实际 Call，未访问用户私有服务。
@@ -154,7 +156,7 @@
 
 ## 构建与验证
 
-- `:app:testStandardDebugUnitTest`：60 项测试全部通过
+- `:app:testStandardDebugUnitTest`：79 项测试全部通过
 - `:app:assembleStandardDebug` 与 `:app:assembleStandardRelease` 构建通过
 - universal / arm64-v8a / armeabi-v7a / x86_64 / x86 五个 Release APK 均已完成 zipalign、v2/v3/v4 签名、版本号和 ABI 校验
 - 当前五个已签名 APK 及对应 `.idsig` 位于 `/root/mpvex/release/`；Gradle `app/build` 临时产物已清理
