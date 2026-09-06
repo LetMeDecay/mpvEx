@@ -12,6 +12,7 @@
 - 清理和文件失效可在解码/压缩期间执行；旧解码不能重新发布，旧保存不能恢复已清理数据或覆盖新代次。异步保存还检查当前文件身份索引。
 - native 抽帧继续串行，本批未增加 WebDAV 下载并发。以下十项播放读取方案仍为草稿，不等同于本次 T1＋T2。
 - 验证：60 项单元测试全部通过，字符串检查与 Standard Debug 构建通过（1m37s）。新增并发容量、保存背压和失败恢复测试，并调整原磁盘竞态测试以验证锁外解码/压缩。没有 Android 设备，界面响应、吞吐和功耗仍待真机验证。
+- 代码提交 `586edf0` 的 Standard Release 构建通过（3m08s）；五种 APK 和 `.idsig` 已通过 zipalign、v2/v3/v4 签名、版本、ABI 和包内 Git 校验，更新到 `/root/mpvex/release/`。版本仍为 `1.2.9-rev0906`，基础 versionCode 130；构建临时目录已清理。仅本地提交，未上传本批代码或 APK。
 
 ## WebDAV 读取方案草稿（2026-09-06，未实施）
 
@@ -143,7 +144,7 @@
 
 ## 构建与验证
 
-- `:app:testStandardDebugUnitTest`：56 项测试全部通过
+- `:app:testStandardDebugUnitTest`：60 项测试全部通过
 - `:app:assembleStandardDebug` 与 `:app:assembleStandardRelease` 构建通过
 - universal / arm64-v8a / armeabi-v7a / x86_64 / x86 五个 Release APK 均已完成 zipalign、v2/v3/v4 签名、版本号和 ABI 校验
 - 当前五个已签名 APK 及对应 `.idsig` 位于 `/root/mpvex/release/`；Gradle `app/build` 临时产物已清理
