@@ -4,6 +4,11 @@
 >
 > 官方版本已经提供网络连接与 SMB / FTP / WebDAV 播放能力；本文仅记录本分支相对官方版本新增的功能。
 
+## 本地发布产物目录（2026-09-06）
+
+- 每次本地 Release 编译、签名并验证完成后，将五种 APK 和对应 `.idsig` 统一移动到 `/root/mpvex/release/`，之后再清理编译临时目录。
+- 当前 `87bfb83` 的五种 APK 和 `.idsig` 已从工作区根目录移入该目录，移动前后 SHA-256 一致。
+
 ## 代码质量问题修复（2026-09-06）
 
 - `onNewIntent` 复用播放路径解析器判断是否有新媒体，恢复 `ACTION_SEND + EXTRA_STREAM`、`EXTRA_TEXT` 和 `uri` 参数；无媒体的通知/PiP 返回继续保留队列，分享的新媒体可替换旧队列。
@@ -109,7 +114,7 @@
 - `:app:testStandardDebugUnitTest`：48 项测试全部通过
 - `:app:assembleStandardDebug` 与 `:app:assembleStandardRelease` 构建通过
 - universal / arm64-v8a / armeabi-v7a / x86_64 / x86 五个 Release APK 均已完成 zipalign、v2/v3/v4 签名、版本号和 ABI 校验
-- 当前五个已签名 APK 及对应 `.idsig` 位于工作区最外层 `/root/mpvex/`，便于直接获取；Gradle `app/build` 临时产物已清理
+- 当前五个已签名 APK 及对应 `.idsig` 位于 `/root/mpvex/release/`；Gradle `app/build` 临时产物已清理
 
 ## 数据库（Room，v8 → v11）
 
