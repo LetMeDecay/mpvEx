@@ -8,7 +8,8 @@
 
 - App 更新为 `1.2.9-rev0906`，基础 versionCode 从 129 增至 130；五种输出继续使用原有架构编码规则（1300–1304）。
 - 包含此前 WebDAV 播放时间、进度定位及缓存相关修复；本地签名 APK 统一存放在 `/root/mpvex/release/`。
-- 用户授权推送代码到 GitHub，但要求低峰上传；不创建 tag 或 GitHub Release，不上传 APK 发布附件。
+- 用户授权低峰推送代码到 GitHub；按北京时间 2026-09-07 02:00 安排，仅推送固定的本次提交到 `origin/master`，不创建 tag 或 GitHub Release，不上传 APK 发布附件。
+- `ae4170c` 的字符串检查与 Standard Release 构建通过；五种 APK 均通过 zipalign、v2/v3/v4 签名、ABI、版本名、版本代码（1300–1304）及包内 Git 版本验证，已放入 `/root/mpvex/release/`。本次仅调整版本参数，沿用上一轮 56 项通过的单元测试结果。
 
 ## WebDAV 播放时间与定位修复（2026-09-06）
 
