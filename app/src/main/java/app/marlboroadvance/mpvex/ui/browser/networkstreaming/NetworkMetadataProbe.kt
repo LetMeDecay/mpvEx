@@ -9,6 +9,7 @@ import android.util.Log
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
+import app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.readCancellable
 import `is`.xyz.mpv.FastThumbnails
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -19,6 +20,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -423,23 +426,25 @@ object NetworkMetadataProbe {
           try {
             val retriever = MediaMetadataRetriever()
             try {
-              retriever.setDataSource(url)
-              val duration =
-                retriever
-                  .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                  ?.toLongOrNull()
-                  ?: 0L
-              val width =
-                retriever
-                  .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
-                  ?.toIntOrNull()
-                  ?: 0
-              val height =
-                retriever
-                  .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
-                  ?.toIntOrNull()
-                  ?: 0
-              ProbeResult(duration, width, height)
+              withProxyCancellation(proxy, streamId) {
+                retriever.setDataSource(url)
+                val duration =
+                  retriever
+                    .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    ?.toLongOrNull()
+                    ?: 0L
+                val width =
+                  retriever
+                    .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+                    ?.toIntOrNull()
+                    ?: 0
+                val height =
+                  retriever
+                    .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+                    ?.toIntOrNull()
+                    ?: 0
+                ProbeResult(duration, width, height)
+              }
             } catch (e: CancellationException) {
               throw e
             } catch (e: Exception) {
@@ -566,7 +571,7 @@ object NetworkMetadataProbe {
               file = file,
             )
           try {
-            generateThumbnailWithFallbacks(url)
+            withProxyCancellation(proxy, streamId) { generateThumbnailWithFallbacks(url) }
           } finally {
             proxy.unregisterStream(streamId)
           }
@@ -597,6 +602,18 @@ object NetworkMetadataProbe {
       }
       runCatching { encode(format) }.getOrDefault(false) || encode(Bitmap.CompressFormat.JPEG)
     }
+  }
+
+  private suspend fun <T> withProxyCancellation(
+    proxy: NetworkStreamingProxy,
+    streamId: String,
+    block: suspend () -> T,
+  ): T = coroutineScope {
+    // A separate suspended child observes cancellation even when JNI is blocking an IO thread.
+    val watcher = launch(start = CoroutineStart.UNDISPATCHED) {
+      try { awaitCancellation() } finally { proxy.cancelStreamRequests(streamId) }
+    }
+    try { block() } finally { watcher.cancel() }
   }
 
   fun cancelBackgroundThumbnailsExcept(
@@ -698,21 +715,22 @@ object NetworkMetadataProbe {
         suspend fun fetch(start: Long, end: Long): Boolean {
           if (start < 0L || end < start || !shouldContinue()) return false
           val request = okhttp3.Request.Builder().url(url).header("Range", "bytes=$start-$end").build()
-          return prefetchHttpClient.newCall(request).execute().use { response ->
-            if (response.code != 206) return@use false
-            val contentRange = response.header("Content-Range") ?: return@use false
+          val context = currentCoroutineContext()
+          return prefetchHttpClient.newCall(request).readCancellable { response ->
+            if (response.code != 206) return@readCancellable false
+            val contentRange = response.header("Content-Range") ?: return@readCancellable false
             val range = contentRange.removePrefix("bytes ").split('-', limit = 2)
             val returnedStart = range.getOrNull(0)?.toLongOrNull()
             val returnedEnd = range.getOrNull(1)?.substringBefore('/')?.toLongOrNull()
-            if (returnedStart != start || returnedEnd == null || returnedEnd !in start..end) return@use false
-            val stream = response.body?.byteStream() ?: return@use false
+            if (returnedStart != start || returnedEnd == null || returnedEnd !in start..end) return@readCancellable false
+            val stream = response.body?.byteStream() ?: return@readCancellable false
             val buffer = ByteArray(32 * 1024)
             var remaining = returnedEnd - start + 1
             while (remaining > 0) {
-              currentCoroutineContext().ensureActive()
-              if (!shouldContinue()) return@use false
+              context.ensureActive()
+              if (!shouldContinue()) return@readCancellable false
               val count = stream.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
-              if (count <= 0) return@use false
+              if (count <= 0) return@readCancellable false
               remaining -= count
             }
             true

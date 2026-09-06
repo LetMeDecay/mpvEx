@@ -69,12 +69,15 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
   // Store active connections and their clients
   private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private val activeStreams = ConcurrentHashMap<String, StreamInfo>()
+  private val sharedRanges = SharedRangeReads()
+  @Volatile private var playingStreamId: String? = null
 
   data class StreamInfo(
     val connection: NetworkConnection,
     val file: NetworkFile,
     val client: NetworkClient,
   ) {
+    internal val requests = ProxyRequestRegistry()
     val filePath: String get() = file.path
     var fileSize: Long = file.size
     val mimeType: String get() = file.mimeType ?: "video/mp4"
@@ -141,11 +144,14 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
    */
   fun getStreamInfo(streamId: String): StreamInfo? = activeStreams[streamId]
 
+  @Synchronized
   fun setPlaybackUrl(path: String?) {
     val uri = path?.let { android.net.Uri.parse(it) }
     val id = uri?.pathSegments?.firstOrNull()?.takeIf {
       uri.host in setOf("127.0.0.1", "localhost") && uri.port == listeningPort && activeStreams.containsKey(it)
     }
+    if (playingStreamId != id) playingStreamId?.let { activeStreams[it]?.requests?.cancelActive() }
+    playingStreamId = id
     NetworkPlaybackPolicy.shared.setPlayback(id)
   }
 
@@ -155,6 +161,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
   fun unregisterStream(streamId: String) {
     NetworkPlaybackPolicy.shared.retire(listOf(streamId))
     activeStreams.remove(streamId)?.let { streamInfo ->
+      streamInfo.requests.close()
       runBlocking {
         try {
           streamInfo.client.disconnect()
@@ -169,6 +176,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
   fun unregisterStreams(streamIds: Collection<String>) {
     NetworkPlaybackPolicy.shared.retire(streamIds)
     val retired = streamIds.mapNotNull { activeStreams.remove(it) }
+    retired.forEach { it.requests.close() }
     if (retired.isEmpty()) return
     cleanupScope.launch {
       retired.forEach { info -> runCatching { info.client.disconnect() } }
@@ -182,6 +190,8 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     val streamIds = activeStreams.keys.toList()
     streamIds.forEach { unregisterStream(it) }
   }
+
+  fun cancelStreamRequests(streamId: String) { activeStreams[streamId]?.requests?.cancelActive() }
 
   override fun serve(session: IHTTPSession): Response {
     val uri = session.uri
@@ -200,22 +210,28 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     // Handle range requests for seeking
     val rangeHeader = session.headers["range"]
 
+    // A new GET from the active single-file player is an actual stream replacement,
+    // unlike finger movement or a cache-only seek. Metadata uses separate stream IDs.
+    val owner = try {
+      streamInfo.requests.open(replaceActive = playingStreamId == streamId && session.method == Method.GET)
+    } catch (_: Exception) {
+      return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Stream retired")
+    }
     return try {
-      if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
-        handleRangeRequest(session, streamInfo, rangeHeader)
+      val response = if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
+        handleRangeRequest(session, streamInfo, rangeHeader, owner)
       } else {
-        handleFullRequest(session, streamInfo)
+        handleFullRequest(session, streamInfo, owner)
       }
+      response.data = owner.own(response.data)
+      response
     } catch (e: Exception) {
-      Log.e(TAG, "Error serving request for stream $streamId: ${streamInfo.filePath}", e)
-      Log.e(
-        TAG,
-        "Connection: ${streamInfo.connection.protocol} ${streamInfo.connection.host}:${streamInfo.connection.port}${streamInfo.connection.path}",
-      )
+      owner.close()
+      Log.e(TAG, "Proxy request failed (${e.javaClass.simpleName})")
       newFixedLengthResponse(
         Response.Status.INTERNAL_ERROR,
         MIME_PLAINTEXT,
-        "Error: ${e.message}",
+        "Unable to read stream",
       )
     }
   }
@@ -224,6 +240,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     session: IHTTPSession,
     streamInfo: StreamInfo,
     rangeHeader: String,
+    owner: ProxyRequestScope,
   ): Response {
     // Get file size if not known
     if (streamInfo.fileSize < 0) {
@@ -274,7 +291,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     val contentLength = rangeEnd - start + 1
 
     // Get stream with offset
-    val inputStream = getStreamWithOffset(streamInfo, start, rangeEnd)
+    val inputStream = getStreamWithOffset(streamInfo, start, rangeEnd, owner)
 
     if (inputStream == null) {
       return newFixedLengthResponse(
@@ -302,13 +319,16 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
   private fun handleFullRequest(
     session: IHTTPSession,
     streamInfo: StreamInfo,
+    owner: ProxyRequestScope,
   ): Response {
     // Get file size if not known
     if (streamInfo.fileSize < 0) {
       streamInfo.fileSize = getFileSize(streamInfo)
     }
 
-    val inputStream = getStream(streamInfo)
+    val inputStream = if (streamInfo.client is app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.WebDavClient) {
+      webDavSource(streamInfo, owner).openFull()
+    } else getStream(streamInfo)
 
     if (inputStream == null) {
       return newFixedLengthResponse(
@@ -573,7 +593,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     }
   }
 
-  private fun getStreamWithOffset(streamInfo: StreamInfo, offset: Long, end: Long): InputStream? {
+  private fun getStreamWithOffset(streamInfo: StreamInfo, offset: Long, end: Long, owner: ProxyRequestScope): InputStream? {
     return runBlocking {
       try {
         when (streamInfo.client) {
@@ -586,7 +606,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
           }
 
           is app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.WebDavClient -> {
-            getStreamWithOffsetWebDAV(streamInfo, offset, end)
+            getStreamWithOffsetWebDAV(streamInfo, offset, end, owner)
           }
 
           else -> {
@@ -732,26 +752,30 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     streamInfo: StreamInfo,
     offset: Long,
     end: Long,
+    owner: ProxyRequestScope,
   ): InputStream? {
     return try {
-      val protocol = if (streamInfo.connection.useHttps) "https" else "http"
-      val cleanBasePath = streamInfo.connection.path.trimEnd('/')
-      val cleanFilePath = if (streamInfo.filePath.startsWith("/")) streamInfo.filePath else "/${streamInfo.filePath}"
-      val request = okhttp3.Request.Builder()
-        .url("$protocol://${streamInfo.connection.host}:${streamInfo.connection.port}$cleanBasePath$cleanFilePath")
-        .get()
-      if (!streamInfo.connection.isAnonymous) {
-        request.header("Authorization", okhttp3.Credentials.basic(streamInfo.connection.username, streamInfo.connection.password))
-      }
-      WebDavRangeSource(
-        webDavHttpClient, request.build(), streamInfo.fileSize,
-        fileCacheKey(streamInfo), streamInfo.file.etag, rangeSegmentCache,
-      ).open(offset, end)
+      webDavSource(streamInfo, owner).open(offset, end)
     } catch (e: Exception) {
-      // Never include the remote URL or credentials in range diagnostics.
       Log.w(TAG, "Unable to open WebDAV range (${e.javaClass.simpleName})")
       null
     }
+  }
+
+  private fun webDavSource(streamInfo: StreamInfo, owner: ProxyRequestScope): WebDavRangeSource {
+    val protocol = if (streamInfo.connection.useHttps) "https" else "http"
+    val cleanBasePath = streamInfo.connection.path.trimEnd('/')
+    val cleanFilePath = if (streamInfo.filePath.startsWith("/")) streamInfo.filePath else "/${streamInfo.filePath}"
+    val request = okhttp3.Request.Builder()
+      .url("$protocol://${streamInfo.connection.host}:${streamInfo.connection.port}$cleanBasePath$cleanFilePath")
+      .get()
+    if (!streamInfo.connection.isAnonymous) {
+      request.header("Authorization", okhttp3.Credentials.basic(streamInfo.connection.username, streamInfo.connection.password))
+    }
+    return WebDavRangeSource(
+      webDavHttpClient, request.build(), streamInfo.fileSize,
+      fileCacheKey(streamInfo), streamInfo.file.etag, rangeSegmentCache, owner, sharedRanges,
+    )
   }
 
   /**

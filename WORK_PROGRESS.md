@@ -23,21 +23,18 @@
 |---|---|---|---|
 | 2 | 大请求复用已缓存区间 | 已完成 | 25e5d7e；66 项测试及字符串检查通过，step2.log（1m11s） |
 | 3 | 播放优先，限制后台探测与预取 | 已完成 | e583a72；69 项测试及字符串检查通过，step3.log（37s） |
-| 4 | 小区间边读取边返回 | 已完成 | 72 项测试及字符串检查通过，step4.log（32s）；提交见 Git 日志 |
-| 5 | 旧请求取消与有界重复区间合并 | 进行中：准备实现 | — |
-| 交付 | 综合验证、Release 签名、文档和清理 | 待开始 | 当前 release 仍为 586edf0 |
+| 4 | 小区间边读取边返回 | 已完成 | 5ff7d55；72 项测试及字符串检查通过，step4.log（32s） |
+| 5 | 旧请求取消与有界重复区间合并 | 已完成 | 79 项测试、字符串检查、Debug 通过，final-validation.log（31s）；提交见 Git 日志 |
+| 交付 | 综合验证、Release 签名、文档和清理 | 进行中：准备 Release | 当前 release 仍为 586edf0 |
 
 ## 当前落点
 
-- 方案 2 已提交 25e5d7e：新增 WebDavRangeSource（HTTP 区间/版本校验）和 CachedRangeInputStream（缓存与缺口顺序输出），RangeSegmentCache 增加 next 切片查找。强 ETag 时以 If-Match 保护缺口；无强标识保留单流。新增 6 项范围测试。
-- 方案 3 已提交 e583a72：NetworkPlaybackPolicy 门控新元数据网络探测，beginFileChange/FILE_LOADED/最终退出关联播放状态；下一集预取要求末尾 20 秒内且缓存 ≥ min(10 秒, 剩余时间)，定位/缓冲时不预取，头尾分别检查。已有正在执行的探测允许结束；后续方案 5 再完善实际取消。
-- 方案 4 已通过验证并准备提交：CachingRangeInputStream 边读边返回，完整消费才入缓存，提前关闭/短读/错误不缓存；prefetchHeader 已改为真正消费有界响应并逐段检查是否仍可预取。
-- 下一步：实施方案 5。每个代理响应有取消作用域并关联远端 Call；注销或替换播放文件取消旧请求，但不在手势开始/缓存内 seek 时盲目取消。相同强版本的有界区间共享渐进读取，消费者独立游标，最后一个离开才取消源下载；限制共享下载数量及内存。预取和 native 探测的取消须传到代理。当前无 Gradle 构建运行。
-- 代码入口：`NetworkStreamingProxy.kt` 的 `getStreamWithOffsetWebDAV`（单个同步 OkHttp Call）；`RangeSegmentCache.kt`（2 MiB/段、16 MiB LRU）。
-- 方案 2：在同一文件版本内按偏移输出缓存与缺口，缺口仍单流读取；避免把整个大文件加载到内存。拼接需要可靠的远端版本条件，缺少可靠标识时保留兼容单流。
-- 方案 3：在实际网络播放期间给当前播放优先权，缓存命中不阻塞；后台探测/预取按统一门控降载，播放器退出恢复，注意 Activity 重建。
-- 方案 4：小区间流式返回，只有完整读取且校验通过才入缓存；下一项预取需真正消费有界响应，不能只读响应头后关闭。
-- 方案 5：请求所有权关联显式 Call.cancel/close；只合并有界相同文件版本/区间，共享请求最后一个消费者离开后才取消。不要在手势开始或缓存内 seek 时盲目中断仍有用的播放流。
+- 方案 2、3、4 已分别提交 25e5d7e、e583a72、5ff7d55。方案 5 已通过最终验证，准备提交。
+- 方案 5 的 ProxyRequestScope/Registry 关联响应与 Call；SharedRangeReads 提供有界渐进共享、独立游标、最后消费者取消和延迟释放资源许可。CancellableHttpRead 覆盖预取整个响应体，native 探测 watcher 将取消传给代理。
+- 同文件定位只有新 GET 真正到达活动播放地址时才替换旧响应；不在手势开始/缓存内 seek 时盲目取消。元数据独立流不触发播放替换规则。
+- 最终 79 项测试、字符串检查及 Standard Debug 通过（31s），日志 `/tmp/mpvex-webdav-final-validation.log`。此前各阶段结果已充分验证，不重复。
+- 下一步：提交方案 5 后运行 Standard Release，日志 `/tmp/mpvex-webdav-final-release.log`；使用 `/tmp/mpvex-webdav-final-sign.py` 签名校验全部五种产物后替换 release，再清理 app/build/.kotlin、更新记录和交付。若该临时签名脚本丢失，按 CONTEXT.md 流程重建，并检查 APK 包内 Git 与本次代码提交一致。
+- 当前 APK 仍为 586edf0，不能声称本批 APK 已交付。没有本批 push。原固定推送任务暂无成功凭证，本任务未改其范围。
 
 ## 验证命令与记录
 
