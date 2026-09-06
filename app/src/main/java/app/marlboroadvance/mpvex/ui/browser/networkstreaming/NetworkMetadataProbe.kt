@@ -19,6 +19,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
@@ -162,7 +163,15 @@ object NetworkMetadataProbe {
                 return@launch
               }
               try {
-                request.result.complete(probeThumbnailNow(request.connection, request.file, request.generation))
+                val bitmap = probeThumbnailNow(request.connection, request.file, request.generation)
+                // Display first. Only this producer can wait for persistence capacity,
+                // so a slow disk cannot create an unbounded set of suspended writers.
+                request.result.complete(bitmap)
+                if (bitmap != null) {
+                  thumbnailWrites.enqueue(
+                    ThumbnailWrite(request.connection, request.file, request.generation, bitmap),
+                  )
+                }
               } catch (e: CancellationException) {
                 request.result.cancel(e)
               } catch (e: Exception) {
@@ -294,6 +303,22 @@ object NetworkMetadataProbe {
     .build()
   private val durationRequests = SharedProbeRequests<String, Long>(
     CoroutineScope(SupervisorJob() + Dispatchers.IO),
+  )
+  private val thumbnailReads = SharedProbeRequests<String, Bitmap?>(
+    CoroutineScope(SupervisorJob() + Dispatchers.IO),
+  )
+
+  private data class ThumbnailWrite(
+    val connection: NetworkConnection,
+    val file: NetworkFile,
+    val generation: Long,
+    val bitmap: Bitmap,
+  )
+
+  private val thumbnailWrites = ThumbnailPersistenceQueue<ThumbnailWrite>(
+    scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    persist = { persistThumbnail(it) },
+    onFailure = { Log.w(TAG, "Unable to persist thumbnail", it) },
   )
 
   @Volatile
@@ -496,12 +521,21 @@ object NetworkMetadataProbe {
       cacheGeneration.token(key) to thumbnailCache[key]
     }
     if (cached != null) return cached
-    return thumbnailDisk.transaction {
-      if (cacheGeneration.token(key) != generation) return@transaction null
-      val bitmap = runCatching {
-        read(connectionId, key) { BitmapFactory.decodeFile(it.absolutePath) }
-      }.getOrNull() ?: return@transaction null
+    return thumbnailReads.run("$key#$generation") {
+      if (cacheGeneration.token(key) != generation) return@run null
+      cacheGeneration.read { thumbnailCache[key] }?.let { return@run it }
+      val bitmap = try {
+        thumbnailDisk.decode(connectionId, key, { cacheGeneration.token(key) == generation }) {
+          BitmapFactory.decodeStream(it)
+        }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        null
+      } ?: return@run null
+      currentCoroutineContext().ensureActive()
       val published = cacheGeneration.publish(key, generation) { thumbnailCache[key] = bitmap }
+      if (!published) bitmap.recycle() // This new decode has never been exposed to a caller.
       bitmap.takeIf { published }
     }
   }
@@ -532,23 +566,29 @@ object NetworkMetadataProbe {
       }
 
     val bitmap = result?.bitmap ?: return null
-    return thumbnailDisk.transaction {
-      if (cacheGeneration.token(key) != generation) return@transaction null
-      runCatching {
-        write(connection.id, key, canPublish = { cacheGeneration.token(key) == generation }) { temporary ->
-          val format = if (Build.VERSION.SDK_INT >= 30) Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.WEBP
-          fun encode(format: Bitmap.CompressFormat): Boolean = FileOutputStream(temporary).use { out ->
-            bitmap.compress(format, THUMBNAIL_JPEG_QUALITY, out)
-          }
-          runCatching { encode(format) }.getOrDefault(false) || encode(Bitmap.CompressFormat.JPEG)
-        }
-      }.onFailure { Log.w(TAG, "Unable to persist thumbnail for ${file.path}", it) }
-      val published = cacheGeneration.publish(key, generation) {
-        thumbnailCache[key] = bitmap
-        versionIndex.add(key, connection.id, file.path)
-        keyIndex["${connection.id}::${file.path}"] = key
+    currentCoroutineContext().ensureActive()
+    val published = cacheGeneration.publish(key, generation) {
+      thumbnailCache[key] = bitmap
+      versionIndex.add(key, connection.id, file.path)
+      keyIndex["${connection.id}::${file.path}"] = key
+    }
+    if (!published) bitmap.recycle()
+    return bitmap.takeIf { published }
+  }
+
+  private suspend fun persistThumbnail(item: ThumbnailWrite) {
+    val key = cacheKey(item.connection, item.file)
+    val indexKey = "${item.connection.id}::${item.file.path}"
+    fun canPublish(): Boolean = cacheGeneration.read {
+      cacheGeneration.token(key) == item.generation && keyIndex[indexKey] == key
+    }
+    // Never republish memory here: clear/invalidation can happen during encoding.
+    thumbnailDisk.write(item.connection.id, key, ::canPublish) { temporary ->
+      val format = if (Build.VERSION.SDK_INT >= 30) Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.WEBP
+      fun encode(format: Bitmap.CompressFormat): Boolean = FileOutputStream(temporary).use { out ->
+        item.bitmap.compress(format, THUMBNAIL_JPEG_QUALITY, out)
       }
-      bitmap.takeIf { published }
+      runCatching { encode(format) }.getOrDefault(false) || encode(Bitmap.CompressFormat.JPEG)
     }
   }
 

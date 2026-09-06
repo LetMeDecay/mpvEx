@@ -1,19 +1,76 @@
 package app.marlboroadvance.mpvex.ui.browser.networkstreaming
 
 import java.io.File
+import java.io.InputStream
 import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
-/** Serializes disk changes on IO without holding the cache's in-memory generation lock. */
+/** Serialize file changes, but decode at most two immutable file snapshots outside the lock. */
 internal class ThumbnailDiskStore(private val root: File) {
   private val mutex = Mutex()
+  private val decoders = Semaphore(2)
 
   suspend fun <T> transaction(block: Transaction.() -> T): T = withContext(Dispatchers.IO) {
     mutex.withLock { Transaction(root).block() }
   }
+
+  suspend fun <T> decode(
+    connectionId: Long,
+    key: String,
+    canRead: () -> Boolean,
+    decode: (InputStream) -> T?,
+  ): T? = withContext(Dispatchers.IO) {
+    decoders.withPermit {
+      var source: InputStream? = null
+      try {
+        transaction {
+          if (canRead()) source = open(connectionId, key)
+        }
+        currentCoroutineContext().ensureActive()
+        // Android keeps an open descriptor readable after unlink/atomic replacement.
+        // Callers must recheck their generation before publishing the decoded result.
+        source?.let(decode)
+      } finally {
+        source?.close()
+      }
+    }
+  }
+
+  suspend fun write(
+    connectionId: Long,
+    key: String,
+    canPublish: () -> Boolean,
+    encode: (File) -> Boolean,
+  ): Boolean = withContext(Dispatchers.IO) {
+    var pending: PendingWrite? = null
+    try {
+      transaction {
+        if (canPublish()) pending = prepare(connectionId, key)
+      }
+      val files = pending ?: return@withContext false
+      currentCoroutineContext().ensureActive()
+      if (!encode(files.temporary)) return@withContext false
+      currentCoroutineContext().ensureActive()
+      transaction {
+        if (!canPublish() || !files.temporary.isFile) false
+        else {
+          check(files.temporary.renameTo(files.target)) { "Unable to publish thumbnail" }
+          true
+        }
+      }
+    } finally {
+      pending?.temporary?.delete()
+    }
+  }
+
+  internal data class PendingWrite(val target: File, val temporary: File)
 
   class Transaction internal constructor(private val root: File) {
     private fun file(connectionId: Long, key: String): File {
@@ -24,30 +81,16 @@ internal class ThumbnailDiskStore(private val root: File) {
 
     fun exists(connectionId: Long, key: String): Boolean = file(connectionId, key).isFile
 
-    fun <T> read(connectionId: Long, key: String, decode: (File) -> T?): T? {
+    internal fun open(connectionId: Long, key: String): InputStream? {
       val source = file(connectionId, key)
-      return if (source.isFile) decode(source) else null
+      return if (source.isFile) source.inputStream() else null
     }
 
-    /** Encode away from the live path; a failed/stale write never replaces a valid image. */
-    fun write(
-      connectionId: Long,
-      key: String,
-      canPublish: () -> Boolean,
-      encode: (File) -> Boolean,
-    ): Boolean {
+    internal fun prepare(connectionId: Long, key: String): PendingWrite {
       val target = file(connectionId, key)
       check(target.parentFile!!.isDirectory || target.parentFile!!.mkdirs())
       val temporary = File.createTempFile("preview-", ".tmp", target.parentFile)
-      return try {
-        if (!encode(temporary) || !canPublish()) false
-        else {
-          check(temporary.renameTo(target)) { "Unable to publish thumbnail" }
-          true
-        }
-      } finally {
-        temporary.delete()
-      }
+      return PendingWrite(target, temporary)
     }
 
     fun remove(connectionId: Long, key: String) {
