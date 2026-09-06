@@ -11,6 +11,7 @@
 - 图片读取、编码、临时文件替换和删除使用独立的 IO 协程互斥锁；内存缓存代次锁仅保护元数据与发布判定。图片先编码到临时文件，失败或失效写入不会替换有效图片；初次偏好加载也移到内存锁外。
 - 缓存失效通知携带累计的连接/路径范围，StateFlow 合并通知后不会遗漏路径；不相关连接直接跳过，当前目录只重读受影响文件的缓存。文件夹刷新先批量失效，再启动探测，只发送一次失效通知。
 - 新增 6 项测试，覆盖文件名前缀冲突、累计/批量通知、IO 编码期间代次读取、失效写入保护、读取与清理交错、编码失败及临时文件清理。48 项单元测试、字符串检查和 Standard Debug 构建通过。
+- 代码提交 `87bfb83` 的 Standard Release 构建通过；五个 APK 及 `.idsig` 已更新到 `/root/mpvex/`，均通过 zipalign、ABI、包内 Git 版本和 v2/v3/v4 签名验证。App 版本保持 `1.2.9-rev0821`。
 - 未连接 Android 设备，分享入口、Compose 界面和实际 WebDAV 场景尚未真机验证；以下 2026-09-05 交付为历史记录。
 
 ## 本轮交付（2026-09-05）
@@ -105,7 +106,7 @@
 
 ## 构建与验证
 
-- `:app:testStandardDebugUnitTest`：42 项测试全部通过
+- `:app:testStandardDebugUnitTest`：48 项测试全部通过
 - `:app:assembleStandardDebug` 与 `:app:assembleStandardRelease` 构建通过
 - universal / arm64-v8a / armeabi-v7a / x86_64 / x86 五个 Release APK 均已完成 zipalign、v2/v3/v4 签名、版本号和 ABI 校验
 - 当前五个已签名 APK 及对应 `.idsig` 位于工作区最外层 `/root/mpvex/`，便于直接获取；Gradle `app/build` 临时产物已清理
