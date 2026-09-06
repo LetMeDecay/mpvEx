@@ -722,124 +722,25 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     offset: Long,
     end: Long,
   ): InputStream? {
-    val requestedLength = end - offset + 1
-    val fileIdentity = fileCacheKey(streamInfo)
-    if (requestedLength in 1..RangeSegmentCache.MAX_SEGMENT_BYTES.toLong()) {
-      rangeSegmentCache.get(fileIdentity, offset, end)?.let { cached ->
-        return java.io.ByteArrayInputStream(cached)
-      }
-    }
-
-    try {
+    return try {
       val protocol = if (streamInfo.connection.useHttps) "https" else "http"
       val cleanBasePath = streamInfo.connection.path.trimEnd('/')
       val cleanFilePath = if (streamInfo.filePath.startsWith("/")) streamInfo.filePath else "/${streamInfo.filePath}"
-      val url = "$protocol://${streamInfo.connection.host}:${streamInfo.connection.port}$cleanBasePath$cleanFilePath"
-
-      // Build the request
-      val requestBuilder = okhttp3.Request.Builder()
-        .url(url)
-        .header("Range", "bytes=$offset-$end")
+      val request = okhttp3.Request.Builder()
+        .url("$protocol://${streamInfo.connection.host}:${streamInfo.connection.port}$cleanBasePath$cleanFilePath")
         .get()
-
-      // Add auth if needed
       if (!streamInfo.connection.isAnonymous) {
-        val credentials = okhttp3.Credentials.basic(streamInfo.connection.username, streamInfo.connection.password)
-        requestBuilder.addHeader("Authorization", credentials)
+        request.header("Authorization", okhttp3.Credentials.basic(streamInfo.connection.username, streamInfo.connection.password))
       }
-
-      val request = requestBuilder.build()
-      val response = webDavHttpClient.newCall(request).execute()
-
-      // Range integrity: a ranged request MUST be answered with 206.
-      // Some servers ignore the Range header and reply 200 with the whole body.
-      // Streaming that body back as a "partial" response would download the
-      // entire file (e.g. 1.76 GB) just to build a 256px thumbnail, so refuse
-      // every 200 response, including offset==0. The caller can still use a
-      // normal (non-Range) request when it genuinely needs the full file.
-      if (response.code != 206) {
-        Log.w(TAG, "WebDAV Range not honored (HTTP ${response.code}) for offset=$offset - aborting to avoid full download")
-        response.close()
-        return null
-      }
-
-      val contentRange = response.header("Content-Range")
-      val expectedPrefix = "bytes $offset-$end/"
-      val reportedTotal = contentRange
-        ?.substringAfter('/', missingDelimiterValue = "")
-        ?.toLongOrNull()
-      if (
-        contentRange == null ||
-        !contentRange.startsWith(expectedPrefix) ||
-        (streamInfo.fileSize > 0 && reportedTotal != streamInfo.fileSize)
-      ) {
-        Log.w(TAG, "WebDAV returned mismatched Content-Range '$contentRange', expected $expectedPrefix")
-        response.close()
-        return null
-      }
-
-      val rawStream = response.body?.byteStream()
-      if (rawStream == null) {
-        response.close()
-        return null
-      }
-
-      // Cache exact bounded segments at arbitrary offsets. readBounded is
-      // deliberately capped by requestedLength, so an incorrect server can
-      // never turn prefetch into an unbounded download.
-      if (requestedLength in 1..RangeSegmentCache.MAX_SEGMENT_BYTES.toLong()) {
-        val expected = requestedLength.toInt()
-        val bytes = try {
-          readBounded(rawStream, expected)
-        } finally {
-          response.close()
-        }
-        if (bytes.size != expected) {
-          Log.w(TAG, "WebDAV short range: ${bytes.size}/$expected bytes for $offset-$end")
-          return null
-        }
-        rangeSegmentCache.put(fileIdentity, offset, end, bytes)
-        return java.io.ByteArrayInputStream(bytes)
-      }
-
-      // Wrap stream to handle cleanup
-      val wrappedStream = object : java.io.InputStream() {
-        override fun read(): Int = rawStream.read()
-        override fun read(b: ByteArray): Int = rawStream.read(b)
-        override fun read(b: ByteArray, off: Int, len: Int): Int = rawStream.read(b, off, len)
-        override fun available(): Int = rawStream.available()
-
-        override fun close() {
-          try {
-            rawStream.close()
-          } catch (e: Exception) {
-            // Ignore
-          }
-          try {
-            response.close()
-          } catch (e: Exception) {
-            // Ignore
-          }
-        }
-      }
-
-      return wrappedStream
-
+      WebDavRangeSource(
+        webDavHttpClient, request.build(), streamInfo.fileSize,
+        fileCacheKey(streamInfo), streamInfo.file.etag, rangeSegmentCache,
+      ).open(offset, end)
     } catch (e: Exception) {
-      return null
+      // Never include the remote URL or credentials in range diagnostics.
+      Log.w(TAG, "Unable to open WebDAV range (${e.javaClass.simpleName})")
+      null
     }
-  }
-
-  /** Read at most [expected] bytes without relying on API-33 InputStream APIs. */
-  private fun readBounded(stream: InputStream, expected: Int): ByteArray {
-    val buffer = ByteArray(expected)
-    var offset = 0
-    while (offset < expected) {
-      val read = stream.read(buffer, offset, expected - offset)
-      if (read <= 0) break
-      offset += read
-    }
-    return if (offset == expected) buffer else buffer.copyOf(offset)
   }
 
   /**

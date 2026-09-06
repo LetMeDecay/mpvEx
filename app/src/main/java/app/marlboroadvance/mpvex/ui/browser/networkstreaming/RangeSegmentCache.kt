@@ -25,6 +25,21 @@ internal class RangeSegmentCache(
   private val cache = LinkedHashMap<SegmentKey, ByteArray>(maxEntries, 0.75f, true)
   private var totalBytes = 0
 
+  data class Slice(val start: Long, val bytes: ByteArray)
+
+  /** Earliest cached part of a larger request; copies at most one bounded segment. */
+  @Synchronized
+  fun next(identity: String, start: Long, end: Long): Slice? {
+    if (start < 0 || end < start) return null
+    val key = cache.keys.filter { it.identity == identity && it.end >= start && it.start <= end }
+      .minWithOrNull(compareBy<SegmentKey> { maxOf(start, it.start) }.thenByDescending { it.end })
+      ?: return null
+    val bytes = cache[key] ?: return null
+    val from = maxOf(start, key.start)
+    val until = minOf(end, key.end)
+    return Slice(from, bytes.copyOfRange((from - key.start).toInt(), (until - key.start + 1).toInt()))
+  }
+
   @Synchronized
   fun get(identity: String, start: Long, end: Long): ByteArray? {
     if (start < 0 || end < start) return null
