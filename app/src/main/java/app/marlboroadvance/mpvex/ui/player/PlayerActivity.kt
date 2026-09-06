@@ -609,6 +609,8 @@ class PlayerActivity :
 
     if (isFinishing && !isManualBackgroundPlayback && !mpvInitialized) {
       app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
+        .existingInstance()?.setPlaybackUrl(null)
+      app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
         .existingInstance()?.unregisterStreams(playbackStreams.releaseAll())
     }
     super.onDestroy()
@@ -1683,6 +1685,8 @@ class PlayerActivity :
     // while a newer intent has already replaced the queue.
     MPVLib.getPropertyString("path")?.takeIf { it.isNotBlank() }?.let { path ->
       val current = playbackProxyStreamId(Uri.parse(path))
+      app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
+        .existingInstance()?.setPlaybackUrl(path)
       app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
         .existingInstance()?.unregisterStreams(playbackStreams.releaseUnused(current))
     }
@@ -3167,7 +3171,7 @@ class PlayerActivity :
         val duration = MPVLib.getPropertyDouble("duration") ?: 0.0
         val pos = MPVLib.getPropertyDouble("time-pos") ?: 0.0
         if (duration > 0) {
-          if (duration - pos <= NEXT_PREFETCH_SECONDS) {
+          if (duration - pos <= NEXT_PREFETCH_SECONDS && canPrefetchNext(watchedIndex)) {
             prefetchNextPlaylistItem(watchedIndex)
             return@launch
           }
@@ -3206,7 +3210,7 @@ class PlayerActivity :
     val file = info.file
     try {
       val prefetched = app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
-        .prefetchHeader(info.connection, file)
+        .prefetchHeader(info.connection, file) { canPrefetchNext(currentIndex) }
       if (prefetched) {
         Log.d(TAG, "Prefetched next item header: ${info.filePath}")
       } else {
@@ -3226,6 +3230,18 @@ class PlayerActivity :
   private fun cancelNextPrefetch() {
     nextPrefetchJob?.cancel()
     nextPrefetchJob = null
+  }
+
+  private fun canPrefetchNext(index: Int): Boolean {
+    if (!isReady || playlistIndex != index) return false
+    val remaining = (MPVLib.getPropertyDouble("duration") ?: return false) -
+      (MPVLib.getPropertyDouble("time-pos") ?: return false)
+    return app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkPlaybackPolicy.shared.canPrefetch(
+      remaining,
+      MPVLib.getPropertyDouble("demuxer-cache-duration") ?: 0.0,
+      MPVLib.getPropertyBoolean("seeking") ?: false,
+      MPVLib.getPropertyBoolean("paused-for-cache") ?: false,
+    )
   }
 
   /**

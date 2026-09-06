@@ -4,6 +4,7 @@ import android.util.Log
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
+import app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkPlaybackPolicy
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.RangeSegmentCache
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.NetworkClient
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.NetworkClientFactory
@@ -140,10 +141,19 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
    */
   fun getStreamInfo(streamId: String): StreamInfo? = activeStreams[streamId]
 
+  fun setPlaybackUrl(path: String?) {
+    val uri = path?.let { android.net.Uri.parse(it) }
+    val id = uri?.pathSegments?.firstOrNull()?.takeIf {
+      uri.host in setOf("127.0.0.1", "localhost") && uri.port == listeningPort && activeStreams.containsKey(it)
+    }
+    NetworkPlaybackPolicy.shared.setPlayback(id)
+  }
+
   /**
    * Unregister a stream
    */
   fun unregisterStream(streamId: String) {
+    NetworkPlaybackPolicy.shared.retire(listOf(streamId))
     activeStreams.remove(streamId)?.let { streamInfo ->
       runBlocking {
         try {
@@ -157,6 +167,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
 
   /** Detach retired playlist entries immediately; close protocol clients off the UI thread. */
   fun unregisterStreams(streamIds: Collection<String>) {
+    NetworkPlaybackPolicy.shared.retire(streamIds)
     val retired = streamIds.mapNotNull { activeStreams.remove(it) }
     if (retired.isEmpty()) return
     cleanupScope.launch {

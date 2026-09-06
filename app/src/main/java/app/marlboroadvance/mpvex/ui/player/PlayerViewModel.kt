@@ -168,6 +168,8 @@ class PlayerViewModel(
   val mediaGeneration = _mediaGeneration.asStateFlow()
 
   fun beginFileChange(path: String) {
+    app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
+      .existingInstance()?.setPlaybackUrl(path)
     playbackSession.begin(path)
     _mediaGeneration.value = playbackSession.generation
     seekCoalesceJob?.cancel()

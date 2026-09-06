@@ -1,0 +1,49 @@
+package app.marlboroadvance.mpvex.ui.browser.networkstreaming
+
+import kotlinx.coroutines.*
+import org.junit.Assert.*
+import org.junit.Test
+
+class NetworkPlaybackPolicyTest {
+  @Test fun playbackDefersNewMetadataUntilItStops() = runBlocking {
+    withTimeout(5000) {
+      val policy = NetworkPlaybackPolicy()
+      policy.setPlayback("a")
+      val pending = async(start = CoroutineStart.UNDISPATCHED) { policy.awaitMetadata(); true }
+      assertFalse(pending.isCompleted)
+      policy.setPlayback(null)
+      assertTrue(pending.await())
+    }
+  }
+
+  @Test fun retiringOldQueueDoesNotReleaseNewPlaybackAndWaitingWorkIsCancellable() = runBlocking {
+    withTimeout(5000) {
+      val policy = NetworkPlaybackPolicy()
+      policy.setPlayback("a")
+      policy.setPlayback("b")
+      policy.retire(listOf("a"))
+      val cancelled = async(start = CoroutineStart.UNDISPATCHED) { policy.awaitMetadata() }
+      assertFalse(cancelled.isCompleted)
+      cancelled.cancelAndJoin()
+      val pending = async(start = CoroutineStart.UNDISPATCHED) { policy.awaitMetadata(); true }
+      assertFalse(pending.isCompleted)
+      policy.retire(listOf("b"))
+      assertTrue(pending.await())
+    }
+  }
+
+  @Test fun nextItemPrefetchRequiresUsefulBufferAndStablePosition() {
+    val policy = NetworkPlaybackPolicy()
+    policy.setPlayback("a")
+    assertTrue(policy.canPrefetch(15.0, 10.0, false, false))
+    assertTrue(policy.canPrefetch(3.0, 3.0, false, false))
+    assertFalse(policy.canPrefetch(15.0, 1.0, false, false))
+    assertFalse(policy.canPrefetch(15.0, 10.0, true, false))
+    assertFalse(policy.canPrefetch(15.0, 10.0, false, true))
+    assertFalse(policy.canPrefetch(0.0, 10.0, false, false))
+    assertFalse(policy.canPrefetch(30.0, 30.0, false, false))
+    assertFalse(policy.canPrefetch(Double.NaN, 10.0, false, false))
+    policy.setPlayback(null)
+    assertFalse(policy.canPrefetch(15.0, 10.0, false, false))
+  }
+}

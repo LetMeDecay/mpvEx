@@ -408,6 +408,10 @@ object NetworkMetadataProbe {
           if (cacheGeneration.token(key) != generation) return@withPermit ProbeResult(0L, 0, 0)
           val cached = getCachedDuration(connection, file)
           if (cached > 0) return@withPermit ProbeResult(cached, 0, 0)
+          NetworkPlaybackPolicy.shared.awaitMetadata()
+          if (cacheGeneration.token(key) != generation) return@withPermit ProbeResult(0L, 0, 0)
+          val afterWait = getCachedDuration(connection, file)
+          if (afterWait > 0) return@withPermit ProbeResult(afterWait, 0, 0)
           val proxy = NetworkStreamingProxy.getInstance()
           val streamId = "probe_${connection.id}_${System.nanoTime()}"
           val url =
@@ -548,6 +552,9 @@ object NetworkMetadataProbe {
     val key = cacheKey(connection, file)
     if (cacheGeneration.token(key) != generation) return null
     cachedThumbnail(key, connection.id)?.let { return it }
+    NetworkPlaybackPolicy.shared.awaitMetadata()
+    if (cacheGeneration.token(key) != generation) return null
+    cachedThumbnail(key, connection.id)?.let { return it }
     val result =
       withContext(Dispatchers.IO) {
           val proxy = NetworkStreamingProxy.getInstance()
@@ -671,6 +678,7 @@ object NetworkMetadataProbe {
   suspend fun prefetchHeader(
     connection: NetworkConnection,
     file: NetworkFile,
+    shouldContinue: () -> Boolean = { true },
   ): Boolean {
     if (file.isDirectory) return false
     val proxy = NetworkStreamingProxy.getInstance()
@@ -688,7 +696,7 @@ object NetworkMetadataProbe {
           2L * 1024 * 1024,
         )
         suspend fun fetch(start: Long, end: Long): Boolean {
-          if (start < 0L || end < start) return false
+          if (start < 0L || end < start || !shouldContinue()) return false
           val request = okhttp3.Request.Builder().url(url).header("Range", "bytes=$start-$end").build()
           return prefetchHttpClient.newCall(request).execute().use { response ->
             if (response.code != 206) return@use false
