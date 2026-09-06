@@ -1,8 +1,14 @@
 # mpvEx 修改记录
 
-> 本文件记录相对上游官方 `v1.2.9` 的功能差异。当前版本：`v1.2.9-rev0821`
+> 本文件记录相对上游官方 `v1.2.9` 的功能差异。当前版本：`v1.2.9-rev0906`
 >
 > 官方版本已经提供网络连接与 SMB / FTP / WebDAV 播放能力；本文仅记录本分支相对官方版本新增的功能。
+
+## 版本更新与待推送（2026-09-06）
+
+- App 更新为 `1.2.9-rev0906`，基础 versionCode 从 129 增至 130；五种输出继续使用原有架构编码规则（1300–1304）。
+- 包含此前 WebDAV 播放时间、进度定位及缓存相关修复；本地签名 APK 统一存放在 `/root/mpvex/release/`。
+- 用户授权推送代码到 GitHub，但要求低峰上传；不创建 tag 或 GitHub Release，不上传 APK 发布附件。
 
 ## WebDAV 播放时间与定位修复（2026-09-06）
 
@@ -117,7 +123,7 @@
 
 ## 版本
 
-- 版本号：官方 `1.2.9` → 本分支 `1.2.9-rev0821`（versionCode 129 不变；arm64 拆分包 versionCode 1292）
+- 版本号：官方 `1.2.9` → 本分支 `1.2.9-rev0906`（基础 versionCode 130；universal 为 1300，arm64 拆分包为 1302）
 - 当前 GitHub Release：`v1.2.9-rev0821`（含 universal / arm64-v8a / armeabi-v7a / x86_64 / x86 五个已签名 APK）
 
 ## 构建与验证
@@ -184,7 +190,7 @@
 
 | 文件 | 说明 |
 |---|---|
-| `app/build.gradle.kts` | 版本号 → 1.2.9-rev0821 |
+| `app/build.gradle.kts` | 版本号 → 1.2.9-rev0906 |
 | `database/MpvExDatabase.kt` | version 11 |
 | `database/dao/NetworkConnectionDao.kt` | 新字段查询 |
 | `di/DatabaseModule.kt` | 迁移链 v8→v11 |
