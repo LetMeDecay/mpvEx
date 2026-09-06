@@ -891,33 +891,40 @@ fun PlayerControls(
         ) {
           val invertDuration by playerPreferences.invertDuration.collectAsState()
           val seekbarStyle by appearancePreferences.seekbarStyle.collectAsState()
-          SeekbarWithTimers(
-            position = precisePosition,
-            duration = if (preciseDuration > 0) preciseDuration else duration?.toFloat() ?: 0f,
-            onValueChange = {
-              isSeeking = true
-              resetControlsTimestamp = System.currentTimeMillis()
-            },
-            onValueChangeFinished = { targetPosition ->
-              // Network streams are Range-backed. Seek once when scrubbing
-              // finishes instead of starting a new request on every drag frame.
-              viewModel.seekTo(targetPosition.toInt())
-              isSeeking = false
-              resetControlsTimestamp = System.currentTimeMillis()
-              viewModel.showControls()
-            },
-            timersInverted = Pair(false, invertDuration),
-            durationTimerOnCLick = {
-              resetControlsTimestamp = System.currentTimeMillis()
-              playerPreferences.invertDuration.set(!invertDuration)
-            },
-            positionTimerOnClick = {},
-            chapters = chapters.toImmutableList(),
-            paused = paused ?: false,
-            seekbarStyle = seekbarStyle,
-            loopStart = abLoopA?.toFloat(),
-            loopEnd = abLoopB?.toFloat(),
-          )
+          val mediaGeneration by viewModel.mediaGeneration.collectAsState()
+          LaunchedEffect(mediaGeneration) { isSeeking = false }
+          androidx.compose.runtime.key(mediaGeneration) {
+            SeekbarWithTimers(
+              mediaGeneration = mediaGeneration,
+              onValueChangeCancelled = { isSeeking = false },
+              position = precisePosition,
+              duration = preciseDuration,
+              onValueChange = {
+                viewModel.onSeekStarted(mediaGeneration)
+                isSeeking = true
+                resetControlsTimestamp = System.currentTimeMillis()
+              },
+              onValueChangeFinished = { targetPosition ->
+                // Network streams are Range-backed. Seek once when scrubbing
+                // finishes instead of starting a new request on every drag frame.
+                viewModel.seekTo(targetPosition.toInt(), mediaGeneration)
+                isSeeking = false
+                resetControlsTimestamp = System.currentTimeMillis()
+                viewModel.showControls()
+              },
+              timersInverted = Pair(false, invertDuration),
+              durationTimerOnCLick = {
+                resetControlsTimestamp = System.currentTimeMillis()
+                playerPreferences.invertDuration.set(!invertDuration)
+              },
+              positionTimerOnClick = {},
+              chapters = chapters.toImmutableList(),
+              paused = paused ?: false,
+              seekbarStyle = seekbarStyle,
+              loopStart = abLoopA?.toFloat(),
+              loopEnd = abLoopB?.toFloat(),
+            )
+          }
         }
 
         AnimatedVisibility(

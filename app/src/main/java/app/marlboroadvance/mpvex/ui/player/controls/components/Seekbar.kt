@@ -33,6 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
@@ -81,27 +82,28 @@ fun SeekbarWithTimers(
   loopStart: Float? = null,
   loopEnd: Float? = null,
   modifier: Modifier = Modifier,
+  mediaGeneration: Long = 0L,
+  onValueChangeCancelled: () -> Unit = {},
 ) {
+  val latestPosition by rememberUpdatedState(position)
+  val changePosition by rememberUpdatedState(onValueChange)
+  val finishChange by rememberUpdatedState(onValueChangeFinished)
+  val cancelChange by rememberUpdatedState(onValueChangeCancelled)
   val clickEvent = LocalPlayerButtonsClickEvent.current
-  var isUserInteracting by remember { mutableStateOf(false) }
-  var userPosition by remember { mutableFloatStateOf(position) }
+  var isUserInteracting by remember(mediaGeneration) { mutableStateOf(false) }
+  var userPosition by remember(mediaGeneration) { mutableFloatStateOf(position) }
 
   // Animated position for smooth transitions
-  val animatedPosition = remember { Animatable(position) }
+  val animatedPosition = remember(mediaGeneration) { Animatable(position) }
   val scope = rememberCoroutineScope()
 
-  // Only animate position updates when user is not interacting
-  LaunchedEffect(position, isUserInteracting) {
-    if (!isUserInteracting && position != animatedPosition.value) {
-      scope.launch {
-        animatedPosition.animateTo(
-          targetValue = position,
-          animationSpec =
-            tween(
-              durationMillis = 200,
-              easing = LinearEasing,
-            ),
-        )
+  // File changes and seeks snap; only ordinary playback ticks are interpolated.
+  LaunchedEffect(position, isUserInteracting, mediaGeneration) {
+    if (!isUserInteracting) {
+      if (kotlin.math.abs(position - animatedPosition.value) > 2f) {
+        animatedPosition.snapTo(position)
+      } else {
+        animatedPosition.animateTo(position, tween(200, easing = LinearEasing))
       }
     }
   }
@@ -135,49 +137,48 @@ fun SeekbarWithTimers(
         modifier = Modifier
           .fillMaxWidth()
           .height(64.dp) // Larger touch area
-          .pointerInput(Unit) {
+          .pointerInput(mediaGeneration, duration) {
             detectTapGestures(
               onTap = { offset ->
+                if (duration <= 0f) return@detectTapGestures
                 val newPosition = (offset.x / size.width) * duration
                 if (!isUserInteracting) isUserInteracting = true
                 userPosition = newPosition.coerceIn(0f, duration)
-                onValueChange(userPosition)
-                scope.launch { 
-                  // Snap to user position immediately to prevent jumping
-                  animatedPosition.snapTo(userPosition)
-                  isUserInteracting = false
-                  onValueChangeFinished(userPosition)
-                }
+                changePosition(userPosition)
+                val target = userPosition
+                isUserInteracting = false
+                finishChange(target)
+                scope.launch { animatedPosition.snapTo(target) }
               }
             )
           }
-          .pointerInput(Unit) {
+          .pointerInput(mediaGeneration, duration) {
             detectDragGestures(
-              onDragStart = { 
-                isUserInteracting = true 
-              },
-              onDragEnd = { 
-                scope.launch { 
-                  // Allow a tiny window for mpv/viewModel to sync back before releasing control
-                  delay(50) 
-                  animatedPosition.snapTo(userPosition)
-                  isUserInteracting = false
-                  onValueChangeFinished(userPosition)
+              onDragStart = {
+                if (duration > 0f) {
+                  isUserInteracting = true
+                  userPosition = latestPosition.coerceIn(0f, duration)
+                  changePosition(userPosition)
                 }
               },
-              onDragCancel = { 
-                scope.launch { 
-                  delay(50)
-                  animatedPosition.snapTo(userPosition)
+              onDragEnd = {
+                if (isUserInteracting) {
+                  val target = userPosition
                   isUserInteracting = false
-                  onValueChangeFinished(userPosition)
+                  finishChange(target)
+                  scope.launch { animatedPosition.snapTo(target) }
                 }
+              },
+              onDragCancel = {
+                isUserInteracting = false
+                cancelChange()
               },
             ) { change, _ ->
+              if (duration <= 0f) return@detectDragGestures
               change.consume()
               val newPosition = (change.position.x / size.width) * duration
               userPosition = newPosition.coerceIn(0f, duration)
-              onValueChange(userPosition)
+              changePosition(userPosition)
             }
           }
       )
@@ -201,12 +202,12 @@ fun SeekbarWithTimers(
             onSeek = { newPosition ->
               if (!isUserInteracting) isUserInteracting = true
               userPosition = newPosition
-              onValueChange(newPosition)
+              changePosition(newPosition)
             },
             onSeekFinished = {
               scope.launch { animatedPosition.snapTo(userPosition) }
               isUserInteracting = false
-              onValueChangeFinished(userPosition)
+              finishChange(userPosition)
             },
             loopStart = loopStart,
             loopEnd = loopEnd,
@@ -238,12 +239,12 @@ fun SeekbarWithTimers(
             onSeek = { newPosition ->
               if (!isUserInteracting) isUserInteracting = true
               userPosition = newPosition
-              onValueChange(newPosition)
+              changePosition(newPosition)
             },
             onSeekFinished = {
               scope.launch { animatedPosition.snapTo(userPosition) }
               isUserInteracting = false
-              onValueChangeFinished(userPosition)
+              finishChange(userPosition)
             },
             loopStart = loopStart,
             loopEnd = loopEnd,
@@ -589,7 +590,8 @@ fun StandardSeekbar(
     val thumbShape = if (isThick) RoundedCornerShape(thumbWidth / 2) else CircleShape
 
     Slider(
-        value = position,
+        value = position.coerceIn(0f, duration.coerceAtLeast(0.1f)),
+        enabled = duration > 0f,
         onValueChange = onSeek,
         onValueChangeFinished = onSeekFinished,
         valueRange = 0f..duration.coerceAtLeast(0.1f),

@@ -94,7 +94,7 @@ class PlayerActivity :
   /**
    * View model for managing player UI state.
    */
-  private val viewModel: PlayerViewModel by viewModels<PlayerViewModel> {
+  internal val viewModel: PlayerViewModel by viewModels<PlayerViewModel> {
     PlayerViewModelProviderFactory(this)
   }
 
@@ -423,7 +423,10 @@ class PlayerActivity :
     // Set HTTP headers (including referer) BEFORE playing the file
     setHttpHeadersFromExtras(intent.extras)
 
-    getPlayableUri(intent)?.let(player::playFile)
+    getPlayableUri(intent)?.let { path ->
+      viewModel.beginFileChange(path)
+      player.playFile(path)
+    }
 
     // Only set orientation immediately if NOT in Video mode
     // For Video mode, wait for video-params/aspect to become available
@@ -1470,16 +1473,22 @@ class PlayerActivity :
   internal fun onObserverEvent(
     property: String,
     value: Boolean,
+    eventGeneration: Long,
+    eventPath: String?,
   ) {
     when (property) {
       "pause" -> {
         handlePauseStateChange(value)
         // Ensure isReady is set when playback starts
-        if (!value && !isReady) {
+        if (!value && !isReady && viewModel.playbackSession.loaded) {
           isReady = true
         }
       }
-      "eof-reached" -> handleEndOfFile(value)
+      "eof-reached" -> {
+        if (viewModel.playbackSession.loaded &&
+          viewModel.playbackSession.acceptsEvent(eventPath, eventGeneration) &&
+          MPVLib.getPropertyBoolean("eof-reached") == true) handleEndOfFile(value)
+      }
     }
   }
 
@@ -1644,14 +1653,18 @@ class PlayerActivity :
    *
    * @param eventId The MPV event ID
    */
-  internal fun event(eventId: Int) {
+  internal fun event(eventId: Int, eventPath: String?, eventGeneration: Long) {
+    if (!viewModel.playbackSession.acceptsEvent(eventPath, eventGeneration)) return
     when (eventId) {
       MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED -> {
-        handleFileLoaded()
+        if (!viewModel.playbackSession.acceptsPath(MPVLib.getPropertyString("path")) ||
+          !viewModel.playbackSession.fileLoaded(eventPath)) return
         isReady = true
+        handleFileLoaded()
       }
 
       MPVLib.MpvEvent.MPV_EVENT_PLAYBACK_RESTART -> {
+        if (!viewModel.playbackSession.loaded || !viewModel.playbackSession.acceptsPath(eventPath)) return
         player.isExiting = false
         if (!isReady) {
           isReady = true
@@ -1695,6 +1708,7 @@ class PlayerActivity :
 
     val loadedMediaIdentifier = mediaIdentifier
     val loadGeneration = ++playbackStateLoadGeneration
+    val restoreTicket = viewModel.playbackSession.ticket()
     val isInitialFileLoad = !initialIntentExtrasApplied
     val intentPosition = if (isInitialFileLoad) getIntentPositionSeconds(intent.extras) else null
 
@@ -1719,13 +1733,11 @@ class PlayerActivity :
       isInitialLoad = isInitialFileLoad,
       intentPosition = intentPosition,
     )?.let { MPVLib.setPropertyInt("time-pos", it) }
-    val positionWithoutSavedState = PlaybackPositionPolicy.positionWithoutSavedState(
-      isInitialLoad = isInitialFileLoad,
-      intentPosition = intentPosition,
-    )
 
     lifecycleScope.launch(Dispatchers.IO) {
       // Load playback state (will skip track restoration if preferred language configured)
+      // A recent switch may still be persisting this file's previous snapshot.
+      savePlaybackStateJob?.join()
       val state = loadVideoPlaybackState(loadedMediaIdentifier)
       if (!isCurrentPlaybackStateLoad(loadGeneration, loadedMediaIdentifier)) return@launch
       val hasState = state != null
@@ -1735,7 +1747,7 @@ class PlayerActivity :
       // item's state after the user has already switched files.
       withContext(Dispatchers.Main) {
         if (isCurrentPlaybackStateLoad(loadGeneration, loadedMediaIdentifier)) {
-          applyPlaybackState(state, positionWithoutSavedState)
+          applyPlaybackState(state, viewModel.playbackSession.isCurrent(restoreTicket))
           applyDefaultSettings(state)
         }
       }
@@ -2046,7 +2058,7 @@ class PlayerActivity :
   /**
    * Saves the current playback state to the database.
    *
-   * Uses lifecycleScope to save state; cancels previous pending saves.
+   * Captures the current file synchronously, then persists snapshots in order.
    *
    * @param mediaTitle The title of the media being played
    */
@@ -2054,79 +2066,44 @@ class PlayerActivity :
     val identifier = mediaIdentifier
     if (identifier.isBlank()) return
 
-    // Cancel any previous pending save operation
-    savePlaybackStateJob?.cancel()
-
-    // Launch new save job and track it
+    if (!viewModel.playbackSession.loaded ||
+      !viewModel.playbackSession.acceptsPath(MPVLib.getPropertyString("path"))) return
+    val pos = MPVLib.getPropertyInt("time-pos") ?: return
+    val duration = MPVLib.getPropertyInt("duration") ?: 0
+    val savePosition = playerPreferences.savePositionOnQuit.get()
+    val watchedThreshold = browserPreferences.watchedThreshold.get() / 100f
+    val snapshot = PlaybackStateEntity(
+      mediaTitle = identifier,
+      lastPosition = if (duration > 0 && pos >= duration - 1) 0 else pos,
+      playbackSpeed = MPVLib.getPropertyDouble("speed") ?: DEFAULT_PLAYBACK_SPEED,
+      videoZoom = MPVLib.getPropertyDouble("video-zoom")?.toFloat() ?: 0f,
+      sid = player.sid,
+      secondarySid = player.secondarySid,
+      subDelay = ((MPVLib.getPropertyDouble("sub-delay") ?: 0.0) * MILLISECONDS_TO_SECONDS).toInt(),
+      subSpeed = MPVLib.getPropertyDouble("sub-speed") ?: DEFAULT_SUB_SPEED,
+      aid = player.aid,
+      audioDelay = ((MPVLib.getPropertyDouble("audio-delay") ?: 0.0) * MILLISECONDS_TO_SECONDS).toInt(),
+      externalSubtitles = viewModel.externalSubtitles.joinToString("|"),
+      hasBeenWatched = duration > 0 && (pos >= duration - 1 || pos.toFloat() / duration >= watchedThreshold),
+    )
+    // Preserve saves for different files and their order; never read mpv after suspension.
+    val previousSave = savePlaybackStateJob
     savePlaybackStateJob = lifecycleScope.launch(Dispatchers.IO) {
-      runCatching {
+      try {
+        previousSave?.join()
         val oldState = playbackStateRepository.getVideoDataByTitle(identifier)
-        Log.d(TAG, "Saving playback state for: $mediaTitle (identifier: $identifier)")
-
-        val lastPosition = calculateSavePosition(oldState)
-        val duration = viewModel.duration ?: 0
-        val timeRemaining = if (duration > lastPosition) duration - lastPosition else 0
-
-        playbackStateRepository.upsert(
-          PlaybackStateEntity(
-            mediaTitle = identifier,
-            lastPosition = lastPosition,
-            playbackSpeed = MPVLib.getPropertyDouble("speed") ?: DEFAULT_PLAYBACK_SPEED,
-            videoZoom = MPVLib.getPropertyDouble("video-zoom")?.toFloat() ?: 0f,
-            sid = player.sid,
-            secondarySid = player.secondarySid,
-            subDelay = ((MPVLib.getPropertyDouble("sub-delay") ?: 0.0) * MILLISECONDS_TO_SECONDS).toInt(),
-            subSpeed = MPVLib.getPropertyDouble("sub-speed") ?: DEFAULT_SUB_SPEED,
-            aid = player.aid,
-            audioDelay =
-              (
-                (MPVLib.getPropertyDouble("audio-delay") ?: 0.0) * MILLISECONDS_TO_SECONDS
-                ).toInt(),
-            timeRemaining = timeRemaining,
-            externalSubtitles = viewModel.externalSubtitles.joinToString("|"),
-            hasBeenWatched = run {
-              val watchedThreshold = browserPreferences.watchedThreshold.get()
-              val durationSeconds = duration.toFloat()
-              val currentPos = viewModel.pos ?: 0
-              
-              // Check if we are at the end (effectively watched)
-              // Using a small buffer (1s) to account for float inaccuracies or near-end stops
-              val isFinished = (durationSeconds > 0) && (currentPos >= durationSeconds - 1)
-
-              val progress = if (durationSeconds > 0) currentPos.toFloat() / durationSeconds else 0f
-              val isCurrentlyWatched = progress >= (watchedThreshold / 100f)
-              
-              // Also check lastPosition in case we are saving partway through (though lastPosition might be 0 if finished)
-              val oldProgress = if (durationSeconds > 0) lastPosition.toFloat() / durationSeconds else 0f
-              val wasWatchedThisSession = oldProgress >= (watchedThreshold / 100f)
-
-              isCurrentlyWatched || isFinished || wasWatchedThisSession || (oldState?.hasBeenWatched == true)
-            },
-          ),
-        )
-      }.onFailure { e ->
-        Log.e(TAG, "Error saving playback state", e)
+        val lastPosition = if (savePosition) snapshot.lastPosition else oldState?.lastPosition ?: 0
+        playbackStateRepository.upsert(snapshot.copy(
+          lastPosition = lastPosition,
+          timeRemaining = (duration - lastPosition).coerceAtLeast(0),
+          hasBeenWatched = snapshot.hasBeenWatched || oldState?.hasBeenWatched == true,
+        ))
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        Log.e(TAG, "Error saving playback state for $mediaTitle", e)
       }
     }
-  }
-
-  /**
-   * Calculates the position to save based on user preferences.
-   *
-   * If "savePositionOnQuit" is not enabled, returns the previous saved position or 0.
-   * If enabled, saves the current playback position unless at end of video.
-   *
-   * @param oldState Previous playback state if it exists
-   * @return Position in seconds to save
-   */
-  private fun calculateSavePosition(oldState: PlaybackStateEntity?): Int {
-    if (!playerPreferences.savePositionOnQuit.get()) {
-      return oldState?.lastPosition ?: 0
-    }
-
-    val pos = viewModel.pos ?: 0
-    val duration = viewModel.duration ?: 0
-    return if (pos < duration - 1) pos else 0
   }
 
   /**
@@ -2163,15 +2140,9 @@ class PlayerActivity :
    */
   private fun applyPlaybackState(
     state: PlaybackStateEntity?,
-    positionWithoutSavedState: Int = 0,
+    restorePosition: Boolean,
   ) {
-    if (state == null) {
-      // MPV can retain time-pos while an asynchronous loadfile is settling.
-      // The policy supplies zero for playlist items, or an explicit initial
-      // launch position when one was provided.
-      MPVLib.setPropertyInt("time-pos", positionWithoutSavedState)
-      return
-    }
+    if (state == null) return
 
     val subDelay = state.subDelay / DELAY_DIVISOR
     val audioDelay = state.audioDelay / DELAY_DIVISOR
@@ -2216,7 +2187,7 @@ class PlayerActivity :
       savePositionOnQuit = playerPreferences.savePositionOnQuit.get(),
       savedPosition = state.lastPosition,
     )
-    savedPosition?.let { MPVLib.setPropertyInt("time-pos", it) }
+    if (restorePosition) savedPosition?.let { MPVLib.setPropertyInt("time-pos", it) }
   }
 
   /**
@@ -2369,6 +2340,11 @@ class PlayerActivity :
     if (mediaPath == null && !intent.hasExtra("playlist") && !intent.hasExtra("playlist_id")) return
     mediaPath?.let(Uri::parse)?.let(::playbackProxyStreamId)?.let(playbackStreams::remember)
 
+    saveVideoPlaybackState(fileName)
+    // Resolve and invalidate old playback before replacing its identity.
+    val playablePath = getPlayableUri(intent) ?: return
+    viewModel.beginFileChange(playablePath)
+    isReady = false
     // Update the intent first so getFileName uses the new intent data
     setIntent(intent)
     initialIntentExtrasApplied = false
@@ -2433,13 +2409,7 @@ class PlayerActivity :
     // Set HTTP headers (including referer) BEFORE loading the new file
     setHttpHeadersFromExtras(intent.extras)
 
-    // Load the new file
-    getPlayableUri(intent)?.let { uri ->
-      // Avoid blocking UI thread while mpv opens network streams (e.g., HLS).
-      lifecycleScope.launch(Dispatchers.Default) {
-        MPVLib.command("loadfile", uri)
-      }
-    }
+    viewModel.loadFile(playablePath)
   }
 
   // ==================== Picture-in-Picture Management ====================
@@ -3101,6 +3071,8 @@ class PlayerActivity :
 
     val uri = playlist[index]
     val playableUri = uri.openContentFd(this) ?: uri.toString()
+    viewModel.beginFileChange(playableUri)
+    isReady = false
 
     // Update playlist index
     playlistIndex = index
@@ -3147,9 +3119,7 @@ class PlayerActivity :
 
     // Load the new video
     // Avoid blocking UI thread while mpv opens network streams (e.g., HLS).
-    lifecycleScope.launch(Dispatchers.Default) {
-      MPVLib.command("loadfile", playableUri)
-    }
+    viewModel.loadFile(playableUri)
 
     // Update media title (this will trigger UI update)
     // Don't force media-title for m3u/m3u8 streams - let MPV provide it

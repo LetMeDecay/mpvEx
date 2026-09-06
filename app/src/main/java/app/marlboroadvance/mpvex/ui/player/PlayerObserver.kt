@@ -24,7 +24,9 @@ class PlayerObserver(
     value: Boolean,
   ) {
     if (activity.player.isExiting) return
-    activity.runOnUiThread { activity.onObserverEvent(property, value) }
+    val generation = activity.viewModel.playbackSession.generation
+    val eventPath = if (property == "eof-reached") MPVLib.getPropertyString("path") else null
+    activity.runOnUiThread { activity.onObserverEvent(property, value, generation, eventPath) }
   }
 
   override fun eventProperty(
@@ -54,6 +56,8 @@ class PlayerObserver(
 
   override fun event(eventId: Int, data: MPVNode) {
     if (activity.player.isExiting) return
-    activity.runOnUiThread { activity.event(eventId) }
+    val generation = activity.viewModel.playbackSession.generation
+    val eventPath = MPVLib.getPropertyString("path")
+    activity.runOnUiThread { activity.event(eventId, eventPath, generation) }
   }
 }

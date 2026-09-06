@@ -86,8 +86,9 @@ fun GestureHandler(
   val panelShown by viewModel.panelShown.collectAsState()
   val allowGesturesInPanels by playerPreferences.allowGesturesInPanels.collectAsState()
   val paused by MPVLib.propBoolean["pause"].collectAsState()
-  val duration by MPVLib.propInt["duration"].collectAsState()
-  val position by MPVLib.propInt["time-pos"].collectAsState()
+  val duration by viewModel.preciseDuration.collectAsState()
+  val mediaGeneration by viewModel.mediaGeneration.collectAsState()
+  val position by viewModel.precisePosition.collectAsState()
   val playbackSpeed by MPVLib.propFloat["speed"].collectAsState()
   val controlsShown by viewModel.controlsShown.collectAsState()
   val areControlsLocked by viewModel.areControlsLocked.collectAsState()
@@ -803,7 +804,7 @@ fun GestureHandler(
           } while (event.changes.any { it.pressed })
         }
       }
-      .pointerInput(horizontalSwipeToSeek, areControlsLocked, gesturePreferences, isVerticalGestureActive) {
+      .pointerInput(horizontalSwipeToSeek, areControlsLocked, gesturePreferences, isVerticalGestureActive, mediaGeneration) {
         if (!horizontalSwipeToSeek || areControlsLocked || isVerticalGestureActive) return@pointerInput
 
         awaitEachGesture {
@@ -840,9 +841,11 @@ fun GestureHandler(
                       !isDynamicSpeedControlActive && // Don't conflict with speed control
                       panelShown == Panels.None) { // Only when no panels are shown
                     
+                    if (!viewModel.playbackSession.loaded || duration <= 0f) return@forEach
+                    viewModel.onSeekStarted(mediaGeneration)
                     gestureType = "horizontal_seek"
                     hasStartedSeeking = true
-                    initialVideoPosition = position?.toFloat() ?: 0f
+                    initialVideoPosition = position
                     finalSeekPosition = initialVideoPosition
                     
                     // Show seekbar and start seeking mode (same as seekbar scrubbing)
@@ -854,7 +857,7 @@ fun GestureHandler(
                     // Calculate seek amount based on horizontal movement
                     val seekAmount = deltaX * seekSensitivity
                     val targetPosition = (initialVideoPosition + seekAmount).coerceAtLeast(0f)
-                    val maxDuration = duration?.toFloat() ?: 0f
+                    val maxDuration = duration
                     val clampedPosition = targetPosition.coerceAtMost(maxDuration)
                     finalSeekPosition = clampedPosition
                     
@@ -894,7 +897,7 @@ fun GestureHandler(
 
           // Apply the final seek when gesture ends
           if (hasStartedSeeking) {
-            viewModel.seekTo(finalSeekPosition.toInt())
+            viewModel.seekTo(finalSeekPosition.toInt(), mediaGeneration)
             
             // Clear the horizontal seek update and hide seekbar after a short delay
             coroutineScope.launch {

@@ -162,6 +162,41 @@ class PlayerViewModel(
   val pos by MPVLib.propInt["time-pos"].collectAsState(viewModelScope)
   val duration by MPVLib.propInt["duration"].collectAsState(viewModelScope)
 
+  internal val playbackSession = PlaybackSession()
+  private val playbackCommandMutex = Mutex()
+  private val _mediaGeneration = MutableStateFlow(0L)
+  val mediaGeneration = _mediaGeneration.asStateFlow()
+
+  fun beginFileChange(path: String) {
+    playbackSession.begin(path)
+    _mediaGeneration.value = playbackSession.generation
+    seekCoalesceJob?.cancel()
+    pendingSeekOffset = 0
+    _precisePosition.value = 0f
+    _preciseDuration.value = 0f
+    _seekText.value = null
+    _doubleTapSeekAmount.value = 0
+    _seekBarShown.value = false
+    playerUpdate.value = PlayerUpdates.None
+  }
+
+  fun loadFile(path: String) {
+    val generation = playbackSession.generation
+    viewModelScope.launch(Dispatchers.IO) {
+      playbackCommandMutex.withLock {
+        if (playbackSession.generation == generation) MPVLib.command("loadfile", path)
+      }
+    }
+  }
+
+  fun onSeekStarted(expectedGeneration: Long = playbackSession.generation) {
+    if (playbackSession.loaded && expectedGeneration == playbackSession.generation) {
+      seekCoalesceJob?.cancel()
+      pendingSeekOffset = 0
+      playbackSession.interact()
+    }
+  }
+
   // High-precision position and duration for smooth seekbar
   private val _precisePosition = MutableStateFlow(0f)
   val precisePosition = _precisePosition.asStateFlow()
@@ -174,27 +209,23 @@ class PlayerViewModel(
   private val volumeBoostCap by MPVLib.propInt["volume-max"].collectAsState(viewModelScope)
 
   init {
-    // Poll precise position only when playing
+    // Read both values for the loaded file. Missing values clear the old timeline.
     viewModelScope.launch {
       while (isActive) {
-        val time = MPVLib.getPropertyDouble("time-pos")
-        if (time != null) {
-          _precisePosition.value = time.toFloat()
+        if (playbackSession.loaded) {
+          val time = MPVLib.getPropertyDouble("time-pos")?.toFloat()
+          val dur = MPVLib.getPropertyDouble("duration")?.toFloat() ?: 0f
+          _preciseDuration.value = dur.takeIf { it.isFinite() && it > 0f } ?: 0f
+          _precisePosition.value = playbackSession.displayPosition(
+            time, MPVLib.getPropertyBoolean("seeking") == true,
+            android.os.SystemClock.elapsedRealtime(),
+          )
         }
-        delay(42) // ~24fps updates
-      }
-    }
-
-    // Update precise duration when the integer duration changes (avoid polling)
-    viewModelScope.launch {
-      MPVLib.propInt["duration"].collect { _ ->
-        val dur = MPVLib.getPropertyDouble("duration")
-        if (dur != null && dur > 0) {
-            _preciseDuration.value = dur.toFloat()
-        }
+        delay(42)
       }
     }
   }
+
   val maxVolume = host.audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
 
   val subtitleTracks: StateFlow<List<TrackNode>> =
@@ -897,56 +928,54 @@ class PlayerViewModel(
     coalesceSeek(offset)
   }
 
-  fun seekTo(position: Int) {
+  fun seekTo(position: Int, expectedGeneration: Long = playbackSession.generation) {
+    if (expectedGeneration != playbackSession.generation) return
+    submitSeek(position, exact = true)
+  }
+
+  private fun submitSeek(position: Int, exact: Boolean) {
+    if (!playbackSession.loaded) return
+    val maxDuration = _preciseDuration.value.toInt()
+    if (maxDuration <= 0) return
+    var target = position.coerceIn(0, maxDuration)
+    val loopA = _abLoopA.value
+    val loopB = _abLoopB.value
+    if (loopA != null && loopB != null) {
+      target = target.coerceIn(minOf(loopA, loopB).toInt(), maxOf(loopA, loopB).toInt())
+        .coerceIn(0, maxDuration)
+    }
+    val ticket = playbackSession.seek(target.toFloat(), android.os.SystemClock.elapsedRealtime(), exact)
+    seekCoalesceJob?.cancel()
+    pendingSeekOffset = 0
+    if (exact) _precisePosition.value = target.toFloat()
     viewModelScope.launch(Dispatchers.IO) {
-      val maxDuration = MPVLib.getPropertyInt("duration") ?: 0
-      var clampedPosition = position.coerceIn(0, maxDuration)
-
-      // Clamp within AB loop if active
-      val loopA = _abLoopA.value
-      val loopB = _abLoopB.value
-      if (loopA != null && loopB != null) {
-        val min = minOf(loopA.toInt(), loopB.toInt())
-        val max = maxOf(loopA.toInt(), loopB.toInt())
-        clampedPosition = clampedPosition.coerceIn(min, max)
+      playbackCommandMutex.withLock {
+        if (playbackSession.isCurrent(ticket)) {
+          MPVLib.command("seek", target.toString(), if (exact) "absolute+exact" else "absolute+keyframes")
+        }
       }
-
-      if (clampedPosition !in 0..maxDuration) return@launch
-
-      // Cancel pending relative seek before absolute seek
-      seekCoalesceJob?.cancel()
-      pendingSeekOffset = 0
-      
-      // Direct timeline/gesture targets must land at the requested timestamp.
-      // Keyframe seeking can visibly jump away from the tapped position.
-      MPVLib.command("seek", clampedPosition.toString(), "absolute+exact")
     }
   }
 
   private fun coalesceSeek(offset: Int) {
+    if (!playbackSession.loaded) return
+    playbackSession.interact()
+    val ticket = playbackSession.ticket()
     pendingSeekOffset += offset
     seekCoalesceJob?.cancel()
-    seekCoalesceJob =
-      viewModelScope.launch(Dispatchers.IO) {
-        delay(SEEK_COALESCE_DELAY_MS)
-        val toApply = pendingSeekOffset
-        pendingSeekOffset = 0
-        
-        if (toApply != 0) {
-          val duration = MPVLib.getPropertyInt("duration") ?: 0
-          val currentPos = MPVLib.getPropertyInt("time-pos") ?: 0
-          
-          if (duration > 0 && currentPos + toApply >= duration) {
-              // If seeking past the end, force seek to 100% absolute to ensure EOF is triggered
-              MPVLib.command("seek", "100", "absolute-percent+exact")
-          } else {
-              // Use precise seeking for videos shorter than 2 minutes (120 seconds) or if preference is enabled
-              val shouldUsePreciseSeeking = playerPreferences.usePreciseSeeking.get() || duration < 120
-              val seekMode = if (shouldUsePreciseSeeking) "relative+exact" else "relative+keyframes"
-              MPVLib.command("seek", toApply.toString(), seekMode)
-          }
-        }
+    seekCoalesceJob = viewModelScope.launch {
+      delay(SEEK_COALESCE_DELAY_MS)
+      if (!playbackSession.isCurrent(ticket)) return@launch
+      val toApply = pendingSeekOffset
+      pendingSeekOffset = 0
+      if (toApply != 0) {
+        // Base repeated input on the latest requested position, including a pending seek.
+        submitSeek(
+          (_precisePosition.value + toApply).toInt(),
+          exact = playerPreferences.usePreciseSeeking.get() || _preciseDuration.value < 120f,
+        )
       }
+    }
   }
 
   fun leftSeek() {
