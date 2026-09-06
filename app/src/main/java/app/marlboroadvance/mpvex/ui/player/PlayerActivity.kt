@@ -2363,9 +2363,11 @@ class PlayerActivity :
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
 
-    // Notification/PiP returns carry no new media. Keep the current intent and queue.
-    if (intent.data == null && !intent.hasExtra("playlist") && !intent.hasExtra("playlist_id")) return
-    intent.data?.let(::playbackProxyStreamId)?.let(playbackStreams::remember)
+    // Use the same parser as playback: SEND carries EXTRA_STREAM/EXTRA_TEXT,
+    // and explicit callers can supply "uri" without Intent.data.
+    val mediaPath = parsePathFromIntent(intent)
+    if (mediaPath == null && !intent.hasExtra("playlist") && !intent.hasExtra("playlist_id")) return
+    mediaPath?.let(Uri::parse)?.let(::playbackProxyStreamId)?.let(playbackStreams::remember)
 
     // Update the intent first so getFileName uses the new intent data
     setIntent(intent)
@@ -2384,9 +2386,9 @@ class PlayerActivity :
       intent.getParcelableArrayListExtra("playlist") ?: emptyList()
     }
 
-    // Only update playlist state if we have new playlist information
-    // This prevents losing the playlist when coming back from notification/PiP
-    if (hasPlaylistExtras || playlistFromIntent.isNotEmpty() || intent.data != null) {
+    // New media replaces the old queue, including SEND intents without data.
+    // Notification/PiP returns were handled above without changing the queue.
+    if (hasPlaylistExtras || playlistFromIntent.isNotEmpty() || mediaPath != null) {
       val newPlaylistId = intent.getIntExtra("playlist_id", -1).takeIf { it != -1 }
       playlistId = newPlaylistId
       playlistIndex = intent.getIntExtra("playlist_index", 0)

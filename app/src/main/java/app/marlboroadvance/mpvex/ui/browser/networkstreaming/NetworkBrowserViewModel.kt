@@ -69,6 +69,7 @@ class NetworkBrowserViewModel(
   private val thumbnailPriorities = ConcurrentHashMap<String, NetworkMetadataProbe.ThumbnailPriority>()
   private val thumbnailLock = Any()
   private var durationProbeJob: Job? = null
+  private var listedFilesByPath: Map<String, NetworkFile> = emptyMap()
   private var retainedThumbnailPaths: Set<String> = emptySet()
   private val thumbnailVersions = ConcurrentHashMap<String, Pair<NetworkFile, Long>>()
   @Volatile
@@ -111,19 +112,35 @@ class NetworkBrowserViewModel(
     NetworkMetadataProbe.init(application)
 
     viewModelScope.launch {
-      NetworkMetadataProbe.cacheChanges.collect {
+      var seenRevision = NetworkMetadataProbe.cacheChanges.value.revision
+      NetworkMetadataProbe.cacheChanges.collect { snapshot ->
+        val affected = snapshot.pathsSince(seenRevision, connectionId)
+        seenRevision = snapshot.revision
         val connection = loadedConnection ?: return@collect
+        if (affected != null && affected.isEmpty()) return@collect
+        val targets = if (affected == null) listedFilesByPath.values.toList()
+          else affected.mapNotNull(listedFilesByPath::get)
+        if (targets.isEmpty()) return@collect
+        val targetPaths = targets.mapTo(mutableSetOf()) { it.path }
         _thumbnails.update { cached ->
           cached.filterKeys { path ->
-            thumbnailVersions[path]?.let { (file, token) ->
+            path !in targetPaths || thumbnailVersions[path]?.let { (file, token) ->
               NetworkMetadataProbe.cacheToken(connection, file) == token
             } == true
           }
         }
+        // Preferences are initialized at startup; only affected files need a memory lookup.
+        val durations = targets.associate { it.path to NetworkMetadataProbe.getCachedDuration(connection, it) }
         _files.update { current ->
-          current.map { file ->
-            file.copy(duration = NetworkMetadataProbe.getCachedDuration(connection, file))
+          var changed = false
+          val updated = current.map { file ->
+            val duration = durations[file.path]
+            if (duration != null && duration != file.duration) {
+              changed = true
+              file.copy(duration = duration)
+            } else file
           }
+          if (changed) updated else current
         }
       }
     }
@@ -157,6 +174,7 @@ class NetworkBrowserViewModel(
 
         repository.listFiles(connection, currentPath)
           .onSuccess { fileList ->
+            listedFilesByPath = fileList.associateBy { it.path }
             // Pre-load cached durations so the list displays instantly without re-probing
             val cachedDurations = NetworkMetadataProbe.getCachedDurations(connection, fileList)
             _files.value = fileList.map { file ->
@@ -430,9 +448,9 @@ class NetworkBrowserViewModel(
 
       val showThumbnails = appearancePreferences.showNetworkThumbnails.get()
 
+      NetworkMetadataProbe.invalidateCaches(connection, videos)
       videos.forEachNetworkItem(NetworkPreloadPolicy.MAX_THREADS) { file ->
         try {
-          NetworkMetadataProbe.invalidateCache(connection, file)
           val generation = NetworkMetadataProbe.cacheToken(connection, file)
           val newDuration = NetworkMetadataProbe.probeDuration(connection, file)
           val bitmap = if (showThumbnails) NetworkMetadataProbe.probeThumbnail(connection, file) else null

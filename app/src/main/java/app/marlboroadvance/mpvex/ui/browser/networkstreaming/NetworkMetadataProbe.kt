@@ -26,7 +26,6 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
-import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -67,7 +66,7 @@ object NetworkMetadataProbe {
   // Access only under cacheGeneration's lock, together with cache writes.
   private val versionIndex = MetadataVersionIndex()
   private var cacheInitialized = false
-  val cacheChanges = cacheGeneration.changes
+  internal val cacheChanges = cacheGeneration.changes
 
   fun cacheToken(connection: NetworkConnection, file: NetworkFile): Long =
     cacheGeneration.token(cacheKey(connection, file))
@@ -302,10 +301,12 @@ object NetworkMetadataProbe {
 
   fun init(context: Context) {
     appContext = context.applicationContext
+    if (cacheGeneration.read { cacheInitialized }) return
+    // SharedPreferences can wait for its initial disk load; do that before taking the memory lock.
+    val snapshot = prefs.all
     cacheGeneration.read {
       if (!cacheInitialized) {
         val obsoleteSuffixes = arrayOf(":itemDate", ":itemDateChecked", ":videoCreationDateCheckedV2")
-        val snapshot = prefs.all
         val editor = prefs.edit()
         snapshot.keys.forEach { key ->
           if (obsoleteSuffixes.any(key::endsWith)) {
@@ -324,15 +325,8 @@ object NetworkMetadataProbe {
     appContext!!.getSharedPreferences("network_metadata_cache", Context.MODE_PRIVATE)
   }
 
-  private val thumbnailDir: File by lazy {
-    File(appContext!!.filesDir, "network_thumbnails").apply { mkdirs() }
-  }
-
-  // Thumbnails are stored per connection under network_thumbnails/<connectionId>/
-  // so the whole set for one connection can be purged without touching others.
-  private fun thumbnailFile(key: String, connection: NetworkConnection): File {
-    val dir = File(thumbnailDir, connection.id.toString()).apply { mkdirs() }
-    return File(dir, keyToFileName(key))
+  private val thumbnailDisk by lazy {
+    ThumbnailDiskStore(File(appContext!!.filesDir, "network_thumbnails"))
   }
 
   // Stable cache key: connection id + path + size + etag + lastModified.
@@ -434,33 +428,38 @@ object NetworkMetadataProbe {
         }
       }
 
-    val published = cacheGeneration.publish(key, generation) {
-      if (result.duration > 0 || (result.width > 0 && result.height > 0)) {
-        keyIndex["${connection.id}::${file.path}"] = key
-        val editor = prefs.edit()
-        // The startup index avoids scanning/copying all preferences for each video.
-        (versionIndex.keysFor(connection.id, file.path) - key).forEach { stale ->
-          editor.remove(stale).remove("${stale}:w").remove("${stale}:h")
-          durationCache.remove(stale)
-          thumbnailCache.remove(stale)
-          resolutionCache.remove(stale)
-          versionIndex.remove(stale)
-          runCatching { thumbnailFile(stale, connection).delete() }
+    return thumbnailDisk.transaction {
+      val retired = mutableListOf<String>()
+      val published = cacheGeneration.publish(key, generation) {
+        if (result.duration > 0 || (result.width > 0 && result.height > 0)) {
+          keyIndex["${connection.id}::${file.path}"] = key
+          val editor = prefs.edit()
+          // The startup index avoids scanning/copying all preferences for each video.
+          (versionIndex.keysFor(connection.id, file.path) - key).forEach { stale ->
+            editor.remove(stale).remove("${stale}:w").remove("${stale}:h")
+            durationCache.remove(stale)
+            thumbnailCache.remove(stale)
+            resolutionCache.remove(stale)
+            versionIndex.remove(stale)
+            retired.add(stale)
+          }
+          versionIndex.add(key, connection.id, file.path)
+          if (result.duration > 0) {
+            durationCache[key] = result.duration
+            editor.putLong(key, result.duration)
+          }
+          if (result.width > 0 && result.height > 0) {
+            resolutionCache[key] = result.width to result.height
+            editor.putLong("${key}:w", result.width.toLong())
+            editor.putLong("${key}:h", result.height.toLong())
+          }
+          editor.apply()
         }
-        versionIndex.add(key)
-        if (result.duration > 0) {
-          durationCache[key] = result.duration
-          editor.putLong(key, result.duration)
-        }
-        if (result.width > 0 && result.height > 0) {
-          resolutionCache[key] = result.width to result.height
-          editor.putLong("${key}:w", result.width.toLong())
-          editor.putLong("${key}:h", result.height.toLong())
-        }
-        editor.apply()
       }
+      // Disk deletion is serialized with image writes, but never holds the memory lock.
+      retired.forEach { stale -> runCatching { remove(connection.id, stale) } }
+      if (published) result.duration else 0L
     }
-    return if (published) result.duration else 0L
   }
 
   private data class ProbeResult(
@@ -488,16 +487,24 @@ object NetworkMetadataProbe {
     val key = cacheKey(connection, file)
 
     val generation = cacheGeneration.token(key)
-    cachedThumbnail(key, connection)?.let { return it }
+    cachedThumbnail(key, connection.id)?.let { return it }
     return ThumbnailDispatcher.submit("$key#$generation", generation, connection, file, priority)
   }
 
-  private fun cachedThumbnail(key: String, connection: NetworkConnection): Bitmap? =
-    cacheGeneration.read {
-      thumbnailCache[key] ?: runCatching {
-        BitmapFactory.decodeFile(thumbnailFile(key, connection).absolutePath)
-      }.getOrNull()?.also { thumbnailCache[key] = it }
+  private suspend fun cachedThumbnail(key: String, connectionId: Long): Bitmap? {
+    val (generation, cached) = cacheGeneration.read {
+      cacheGeneration.token(key) to thumbnailCache[key]
     }
+    if (cached != null) return cached
+    return thumbnailDisk.transaction {
+      if (cacheGeneration.token(key) != generation) return@transaction null
+      val bitmap = runCatching {
+        read(connectionId, key) { BitmapFactory.decodeFile(it.absolutePath) }
+      }.getOrNull() ?: return@transaction null
+      val published = cacheGeneration.publish(key, generation) { thumbnailCache[key] = bitmap }
+      bitmap.takeIf { published }
+    }
+  }
 
   private suspend fun probeThumbnailNow(
     connection: NetworkConnection,
@@ -506,8 +513,7 @@ object NetworkMetadataProbe {
   ): Bitmap? {
     val key = cacheKey(connection, file)
     if (cacheGeneration.token(key) != generation) return null
-    cachedThumbnail(key, connection)?.let { return it }
-    val diskFile = thumbnailFile(key, connection)
+    cachedThumbnail(key, connection.id)?.let { return it }
     val result =
       withContext(Dispatchers.IO) {
           val proxy = NetworkStreamingProxy.getInstance()
@@ -525,37 +531,25 @@ object NetworkMetadataProbe {
           }
       }
 
-    val bitmap = result?.bitmap
-    val published = cacheGeneration.publish(key, generation) {
-      if (bitmap != null) {
-        thumbnailCache[key] = bitmap
-        versionIndex.add(key)
-        keyIndex["${connection.id}::${file.path}"] = key
-        val compressed = runCatching {
-          val format = if (Build.VERSION.SDK_INT >= 30) {
-            Bitmap.CompressFormat.WEBP_LOSSY
-          } else {
-            Bitmap.CompressFormat.WEBP
-          }
-          FileOutputStream(diskFile).use { out ->
+    val bitmap = result?.bitmap ?: return null
+    return thumbnailDisk.transaction {
+      if (cacheGeneration.token(key) != generation) return@transaction null
+      runCatching {
+        write(connection.id, key, canPublish = { cacheGeneration.token(key) == generation }) { temporary ->
+          val format = if (Build.VERSION.SDK_INT >= 30) Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.WEBP
+          fun encode(format: Bitmap.CompressFormat): Boolean = FileOutputStream(temporary).use { out ->
             bitmap.compress(format, THUMBNAIL_JPEG_QUALITY, out)
-            out.flush()
           }
-          true
-        }.getOrDefault(false)
-
-        // Fallback to JPEG if WebP encoding was not possible
-        if (!compressed) {
-          runCatching {
-            FileOutputStream(diskFile).use { out ->
-              bitmap.compress(Bitmap.CompressFormat.JPEG, THUMBNAIL_JPEG_QUALITY, out)
-              out.flush()
-            }
-          }
+          runCatching { encode(format) }.getOrDefault(false) || encode(Bitmap.CompressFormat.JPEG)
         }
+      }.onFailure { Log.w(TAG, "Unable to persist thumbnail for ${file.path}", it) }
+      val published = cacheGeneration.publish(key, generation) {
+        thumbnailCache[key] = bitmap
+        versionIndex.add(key, connection.id, file.path)
+        keyIndex["${connection.id}::${file.path}"] = key
       }
+      bitmap.takeIf { published }
     }
-    return bitmap.takeIf { published }
   }
 
   fun cancelBackgroundThumbnailsExcept(
@@ -687,16 +681,11 @@ object NetworkMetadataProbe {
   /**
    * Check whether a thumbnail already exists in the disk cache.
    */
-  fun isThumbnailCached(
-    connection: NetworkConnection,
-    file: NetworkFile,
-  ): Boolean {
-    return cacheGeneration.read {
-      if (file.isDirectory) return@read false
-      val key = cacheKey(connection, file)
-      if (thumbnailCache.containsKey(key)) return@read true
-      return@read thumbnailFile(key, connection).exists()
-    }
+  suspend fun isThumbnailCached(connection: NetworkConnection, file: NetworkFile): Boolean {
+    if (file.isDirectory) return false
+    val key = cacheKey(connection, file)
+    if (cacheGeneration.read { thumbnailCache.containsKey(key) }) return true
+    return thumbnailDisk.transaction { exists(connection.id, key) }
   }
 
   /**
@@ -704,21 +693,28 @@ object NetworkMetadataProbe {
    * re-generated on the next probe. Used by the manual "refresh cache"
    * long-press action in the network browser.
    */
-  fun invalidateCache(
-    connection: NetworkConnection,
-    file: NetworkFile,
-  ) {
-    val key = cacheKey(connection, file)
-    cacheGeneration.invalidate(key) {
-      versionIndex.remove(key)
-      durationCache.remove(key)
-      thumbnailCache.remove(key)
-      resolutionCache.remove(key)
-      keyIndex.remove("${connection.id}::${file.path}")
-      prefs.edit().remove(key).remove("${key}:w").remove("${key}:h").apply()
-      runCatching {
-        thumbnailFile(key, connection).delete()
+  suspend fun invalidateCache(connection: NetworkConnection, file: NetworkFile) {
+    invalidateCaches(connection, listOf(file))
+  }
+
+  /** One generation change/notification for a folder refresh, before any new probes start. */
+  suspend fun invalidateCaches(connection: NetworkConnection, files: Collection<NetworkFile>) {
+    val keysToPaths = files.associate { cacheKey(connection, it) to it.path }
+    if (keysToPaths.isEmpty()) return
+    thumbnailDisk.transaction {
+      cacheGeneration.invalidate(connection.id, keysToPaths) {
+        val editor = prefs.edit()
+        keysToPaths.forEach { (key, path) ->
+          versionIndex.remove(key)
+          durationCache.remove(key)
+          thumbnailCache.remove(key)
+          resolutionCache.remove(key)
+          keyIndex.remove("${connection.id}::$path")
+          editor.remove(key).remove("${key}:w").remove("${key}:h")
+        }
+        editor.apply()
       }
+      keysToPaths.keys.forEach { remove(connection.id, it) }
     }
   }
 
@@ -735,21 +731,18 @@ object NetworkMetadataProbe {
       file.path to (durationCache[key] ?: prefs.getLong(key, 0L).takeIf { it > 0 } ?: 0L)
     }
 
-  fun clearCache() {
-    if (appContext == null) {
-      Log.e(TAG, "clearCache: NetworkMetadataProbe not initialized (appContext null)")
-      return
-    }
-    cacheGeneration.clear {
-      versionIndex.clear()
-      durationCache.clear()
-      thumbnailCache.clear()
-      resolutionCache.clear()
-      keyIndex.clear()
-      prefs.edit().clear().apply()
-      runCatching {
-        thumbnailDir.deleteRecursively()
+  suspend fun clearCache() {
+    check(appContext != null) { "NetworkMetadataProbe not initialized" }
+    thumbnailDisk.transaction {
+      cacheGeneration.clear {
+        versionIndex.clear()
+        durationCache.clear()
+        thumbnailCache.clear()
+        resolutionCache.clear()
+        keyIndex.clear()
+        prefs.edit().clear().apply()
       }
+      clear()
     }
   }
 
@@ -799,7 +792,9 @@ object NetworkMetadataProbe {
   ): Long {
     return cacheGeneration.read {
       val key = cacheKey(connection, file)
-      return@read durationCache[key] ?: prefs.getLong(key, 0L)
+      val duration = durationCache[key] ?: prefs.getLong(key, 0L)
+      if (duration > 0) versionIndex.add(key, connection.id, file.path)
+      return@read duration
     }
   }
 
@@ -838,21 +833,9 @@ object NetworkMetadataProbe {
    * Cached thumbnail for a network file, matched by connection id + path, or
    * null if the preview was never generated.
    */
-  fun getCachedThumbnailBitmap(
-    connectionId: Long,
-    filePath: String,
-  ): Bitmap? {
-    return cacheGeneration.read {
-      val key = findKey(connectionId, filePath) ?: return@read null
-      thumbnailCache[key]?.let { return@read it }
-      val file = File(File(thumbnailDir, connectionId.toString()), keyToFileName(key))
-      if (file.exists()) {
-        val bmp = runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()
-        if (bmp != null) thumbnailCache[key] = bmp
-        return@read bmp
-      }
-      return@read null
-    }
+  suspend fun getCachedThumbnailBitmap(connectionId: Long, filePath: String): Bitmap? {
+    val key = cacheGeneration.read { findKey(connectionId, filePath) } ?: return null
+    return cachedThumbnail(key, connectionId)
   }
 
   /**
@@ -861,40 +844,31 @@ object NetworkMetadataProbe {
    * Returns true on success; failures (including an uninitialized context)
    * are logged and reported instead of crashing.
    */
-  fun clearConnectionCache(connectionId: Long): Boolean {
+  suspend fun clearConnectionCache(connectionId: Long): Boolean {
     return try {
-      val ctx = appContext
-      if (ctx == null) {
-        Log.e(TAG, "clearConnectionCache: NetworkMetadataProbe not initialized (appContext null)")
-        return false
-      }
-      cacheGeneration.invalidateConnection(connectionId) {
-        val prefix = "$connectionId::"
-        durationCache.keys.removeAll { it.startsWith(prefix) }
-        thumbnailCache.keys.filter { it.startsWith(prefix) }.forEach { thumbnailCache.remove(it) }
-        resolutionCache.keys.removeAll { it.startsWith(prefix) }
-        keyIndex.keys.removeAll { it.startsWith(prefix) }
-        val editor = prefs.edit()
-        versionIndex.keysForConnection(connectionId).forEach { key ->
-          editor.remove(key).remove("${key}:w").remove("${key}:h")
-          versionIndex.remove(key)
+      check(appContext != null) { "NetworkMetadataProbe not initialized" }
+      thumbnailDisk.transaction {
+        cacheGeneration.invalidateConnection(connectionId) {
+          val prefix = "$connectionId::"
+          durationCache.keys.removeAll { it.startsWith(prefix) }
+          thumbnailCache.keys.filter { it.startsWith(prefix) }.forEach { thumbnailCache.remove(it) }
+          resolutionCache.keys.removeAll { it.startsWith(prefix) }
+          keyIndex.keys.removeAll { it.startsWith(prefix) }
+          val editor = prefs.edit()
+          versionIndex.keysForConnection(connectionId).forEach { key ->
+            editor.remove(key).remove("${key}:w").remove("${key}:h")
+            versionIndex.remove(key)
+          }
+          editor.apply()
         }
-        editor.apply()
-        runCatching {
-          File(thumbnailDir, connectionId.toString()).deleteRecursively()
-        }
+        clearConnection(connectionId)
       }
       true
+    } catch (e: CancellationException) {
+      throw e
     } catch (e: Exception) {
       Log.e(TAG, "clearConnectionCache failed for connection $connectionId", e)
       false
     }
-  }
-
-  private fun keyToFileName(key: String): String {
-    val md = MessageDigest.getInstance("MD5")
-    val digest = md.digest(key.toByteArray())
-    val hex = digest.joinToString("") { b -> "%02x".format(b) }
-    return "$hex.webp"
   }
 }
