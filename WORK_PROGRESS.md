@@ -2,59 +2,57 @@
 
 更新时间：2026-09-07（Asia/Shanghai）
 
-## 用户授权与边界
+## 当前落点
 
-- 按顺序实施 WebDAV 草稿方案 **2 → 3 → 4 → 5**，每批验证、更新记录并本地提交；中断后继续未完成项。
-- 不实施方案 6 的并行下载或其他候选方案。已交付的预览图 T1＋T2 和播放时间修复必须保留。
-- 不保存或输出用户提供的内网地址、凭据、文件名；如需远端验证，只读且有读取量上限。
-- 不推送本批代码、tag 或 APK。原低峰任务只推固定 f8d0fdf，不扩大其范围。
-- 不操作相邻 mpvEx_New。Release 编译后签名、校验五种 APK＋idsig，放入 /root/mpvex/release/，再清理 app/build 和 .kotlin。
+- 本次审查修复与本地交付已完成；四项已确认问题全部修复，第五项保留为证据不足的真机风险。任务完成即停，不扩展其他优化。
+- 四批代码已分别提交 fb02b69、4802b56、39bb24c、325ac17；最终代码和已签名 APK 的 Git 版本为 **325ac17**，最终文档提交不改变包内代码。
+- 84 项单元测试全部通过（0 failures、0 errors、0 skipped），字符串检查和 Standard Debug 通过（48s）；Standard Release 通过（3m）。
+- 五种 APK＋idsig 已验证并移入 `/root/mpvex/release/`；移动后十个文件 SHA-256 与清单一致。`app/build` 和 `.kotlin` 已清理。
+- 无 Android 设备；没有访问用户私有 WebDAV。未推送、打 tag、发布或上传本批产物，原低峰任务仍只限固定 f8d0fdf。
 
-## 恢复入口
+## 用户授权与恢复入口
 
-1. 读取本文件、`/root/mpvex/CONTEXT.md`、`modify.md`，执行 `git status --short --branch` 和 `git log -5 --oneline`。
-2. 若有未提交变更，先按本文件“当前落点”检查，不覆盖或重新实现已有工作。
-3. 检查所列构建日志及进程；已有通过证据的检查不重复执行。只有代码变更、失败或缺失证据时再验证。
-4. 每个代码节点、测试完成或阻塞出现时更新本文件。临时日志可能被清理，因此通过数量、提交和关键决策需写入此文件。
+- 用户授权仅本次使用 gpt-6-astra medium，按下面顺序修复和保存进度；本次已按该范围完成。
+- 开始或恢复时先读本文件、`/root/mpvex/CONTEXT.md`、`modify.md`，核对 `git status --short --branch` 和 `git log -5 --oneline`。
+- 已完成验证不重复运行；未提交变化按最新记录处理，不覆盖或重做。每批更新记录并本地提交。
+- 不访问、输出或保存用户私有网络连接信息、凭据或远端文件名；不操作相邻 mpvEx_New。
+- 本地 Release 签名校验完成后将五种 APK/idsig 移到 release，再清理编译临时目录；没有新推送/tag/发布/上传授权。
 
-## 批次进度
+## 本次修复与证据
 
-| 顺序 | 内容 | 状态 | 验证 / 提交 |
-|---|---|---|---|
-| 2 | 大请求复用已缓存区间 | 已完成 | 25e5d7e；66 项测试及字符串检查通过，step2.log（1m11s） |
-| 3 | 播放优先，限制后台探测与预取 | 已完成 | e583a72；69 项测试及字符串检查通过，step3.log（37s） |
-| 4 | 小区间边读取边返回 | 已完成 | 5ff7d55；72 项测试及字符串检查通过，step4.log（32s） |
-| 5 | 旧请求取消与有界重复区间合并 | 已完成 | a4a195c；79 项测试、字符串检查、Debug 通过，final-validation.log（31s） |
-| 交付 | 综合验证、Release 签名、文档和清理 | 已完成 | Release 3m7s；五种签名 APK 为 a4a195c；构建目录已清理 |
+| 顺序 | 内容 | 结果 |
+|---|---|---|
+| 1 | WebDAV 基础路径没有前导 / | fb02b69；客户端、直接 URI 和代理共用路径拼接。WebDavPathTest 1 项覆盖空/root/dav 前后斜杠和连接根路径，通过 |
+| 2 | native 探测取消后的迟到 GET/重试 | 4802b56；仅永久退休独立探测请求注册表，watcher 不执行阻塞客户端清理；普通播放仍能重开。ProxyRequestScopeTest 4 项通过（32s），包含取消回调未完成时重试被拒绝 |
+| 3 | 片尾停留未释放元数据门控 | 39bb24c；终点释放、eof=false/有效重启恢复，保留当前流身份，自动切集/循环不放行。NetworkPlaybackPolicyTest 4 项通过（34s） |
+| 4 | 已显示图片等待入队时被取消丢失 | 325ac17；发布与入队不可被生成取消打断，生产者仍等待容量。ThumbnailPersistenceQueueTest 4 项通过（32s），含取消后保存/有界背压及 writer 关闭释放交接 |
+| 5 | 新 GET 无条件替换可能取消合法重叠读 | **未验证风险，未据猜测修改**。MPVView 配置、现有 JNI 反汇编、AAR libavformat 的 multiple_requests/reconnect 字符串不足以确认播放 GET 时序；需真机请求轨迹 |
 
-## 当前落点（本次审查修复进行中）
+保存侧最多持有三张图片（保存中、排队、生产者等待入队）；没有新增无界发送任务。此上限不是应用总内存上限。
 
-- 最新授权：仅本次使用 gpt-6-astra medium，按 URL → 探测取消 → EOF 门控 → 图片保存交接 → 重叠 GET 风险顺序修复，不访问私有 WebDAV。
-- 第 1 项已统一 WebDAV 客户端与代理路径拼接，WebDavPathTest 通过（1 项）；后续四项待处理。
-- 第 1 项已提交 fb02b69。第 2 项改为退休独立探测请求入口，客户端仍由原 finally 清理；ProxyRequestScopeTest 4 项通过（32s）。第 2 项已提交 4802b56。第 3 项终点/重播门控已实现，NetworkPlaybackPolicyTest 4 项通过（34s）；第 3 项已提交 39bb24c。第 4 项显示/有界保存交接修复已完成，ThumbnailPersistenceQueueTest 4 项通过（32s）。
-- 第 5 项仅审查风险：当前 MPVView 配置、AAR JNI 桥接与 libavformat multiple_requests/reconnect 字符串不能证明同播放 URL GET 串行，也没有真机请求时序；保留现有替换策略，不声称已修复合法重叠 GET 风险。
-- 下一步：一次全套单测、字符串/Debug 检查，然后 Release 编译、五种 APK/idsig 签名校验、更新 release 和清理。
-- 以下为上一轮交付证据：
+## 最终验证与产物
 
-- 方案 2、3、4 已分别提交 25e5d7e、e583a72、5ff7d55。方案 5 已提交 a4a195c。
-- 方案 5 的 ProxyRequestScope/Registry 关联响应与 Call；SharedRangeReads 提供有界渐进共享、独立游标、最后消费者取消和延迟释放资源许可。CancellableHttpRead 覆盖预取整个响应体，native 探测 watcher 将取消传给代理。
-- 同文件定位只有新 GET 真正到达活动播放地址时才替换旧响应；不在手势开始/缓存内 seek 时盲目取消。元数据独立流不触发播放替换规则。
-- 最终 79 项测试、字符串检查及 Standard Debug 通过（31s），日志 `/tmp/mpvex-webdav-final-validation.log`。此前各阶段结果已充分验证，不重复。
-- Standard Release 通过（3m7s），日志 `/tmp/mpvex-webdav-final-release.log`。五种 APK 和 idsig 已通过 zipalign、v2/v3/v4 签名、版本、ABI 及包内 Git 校验，移入 `/root/mpvex/release/`。
-- 当前 APK：代码 a4a195c，版本 1.2.9-rev0906，基础 versionCode 130；签名生成时间为北京时间 2026-09-07 01:08:34–01:08:39。签名日志与清单：`/tmp/mpvex-webdav-final-signing.log`、`/tmp/mpvex-webdav-final-artifacts.json`。
-- app/build 和 .kotlin 已清理。本批没有 push；原固定推送任务范围保持不变，上传结果须另查成功凭证。
-- 当前任务已全部完成，无阻塞。下次启动读取本文件后等待用户新任务，不重复实施 2–5 或重复已通过的验证。
+- 综合日志：`/tmp/mpvex-review-final-validation.log`（84 项单测、字符串、Debug）。
+- Release 日志：`/tmp/mpvex-review-final-release.log`（3m）。
+- 签名脚本、日志与 SHA-256 清单：`/tmp/mpvex-review-final-sign.py`、`/tmp/mpvex-review-final-signing.log`、`/tmp/mpvex-review-final-artifacts.json`。
+- 五种 APK 均通过 zipalign、v2/v3/v4（显式 idsig）、ABI、版本名 `1.2.9-rev0906`、versionCode 1300–1304、DEX 内 Git **325ac17** 校验。
+- 签名生成时间（北京时间）：2026-09-07 08:39:54–2026-09-07 08:40:00。
 
-## 验证命令与记录
+| APK（均有同名 .idsig） | 字节 | SHA-256 |
+|---|---:|---|
+| app-standard-arm64-v8a-release.apk | 36574427 | `b1e033b718032fc56c9c47342db5890fee353ff716982593e41cc8ca9cc25114` |
+| app-standard-armeabi-v7a-release.apk | 35042549 | `9d473eaca5f8bb5c417bb3c698e09cad798901a9114b5e7e45789e260c79d055` |
+| app-standard-universal-release.apk | 99893199 | `613c82e3750ff3653f8a02a80b4028071baa29abd562364c82cb744d7ba39d22` |
+| app-standard-x86-release.apk | 38069389 | `e483e68c8196617c5688e7631353dacb9a16f9be8559eae20a69ca650b9e4804` |
+| app-standard-x86_64-release.apk | 38188212 | `69c11a07990a48972776a3560874b6e7902af173eff95f864ea84164961ca789` |
 
-不要并行运行 Gradle：
+## 前批结果（历史，不重复）
 
-```bash
-./gradlew --no-daemon --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process :app:testStandardDebugUnitTest :app:checkUserVisibleStrings
-./gradlew --no-daemon --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process :app:assembleStandardDebug
-./gradlew --no-daemon --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process :app:assembleStandardRelease
-```
+- WebDAV 方案 2–5 已分别提交 25e5d7e、e583a72、5ff7d55、a4a195c，前批 79 项测试及 Debug/Release 通过；旧 APK 已被本次 325ac17 产物替换。
+- 已交付 T1＋T2、播放时间修复保持不变；其他草稿方案没有新增实施授权。
 
-- 本批日志使用 `/tmp/mpvex-webdav-step2.log`、`step3.log`、`step4.log`、`step5.log`（同前缀）及最终验证日志。
-- 无 Android 设备；JVM 测试可验证区间字节、版本校验、取消、调度及资源边界，但不能承诺真机吞吐和功耗。
-- 无法读取实时 Codex 配额；不等待配额耗尽才保存进度，也不假设会话能自动重启。
+## 限制
+
+- 无真机 WebDAV、seek/重播/自动切集、预览图和生命周期回归；不能承诺吞吐、功耗或实际内存峰值。
+- 第五项重叠 GET 风险仍需设备证据，不将它描述为已修复。
+- 无法读取实时 Codex 配额；本次可恢复记录已完成保存，不以配额耗尽为由扩大任务。

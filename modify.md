@@ -1,3 +1,10 @@
+## 本次审查修复交付（2026-09-07）
+
+- 四项已确认问题已按顺序本地提交：fb02b69（路径）、4802b56（探测取消）、39bb24c（片尾门控）、325ac17（保存交接）。第五项合法重叠 GET 风险证据不足，保留真机验证限制，未推测改动。
+- 最终 84 项单元测试全部通过，字符串检查、Standard Debug（48s）和 Standard Release（3m）通过。
+- 五种 APK＋idsig 已通过 zipalign、v2/v3/v4、版本、ABI 和包内 Git 325ac17 校验并更新到 `/root/mpvex/release/`；移动后十个文件 SHA-256 一致，`app/build` 和 `.kotlin` 已清理。
+- 当前版本仍为 1.2.9-rev0906，versionCode 1300–1304；没有访问私有 WebDAV，没有新增推送、tag、发布或上传。详细清单和恢复入口见 WORK_PROGRESS.md。
+
 ## 审查修复：图片保存交接及 GET 风险（2026-09-07）
 
 - 已生成图片的界面发布与等待保存队列容量使用不可取消交接；后台取消跳过已完成结果。单一生产者仍等待交接完成才生成下一张，保持保存中、已排队、等待入队最多三张图片。
@@ -177,7 +184,7 @@
 
 ## 构建与验证
 
-- `:app:testStandardDebugUnitTest`：79 项测试全部通过
+- `:app:testStandardDebugUnitTest`：84 项测试全部通过
 - `:app:assembleStandardDebug` 与 `:app:assembleStandardRelease` 构建通过
 - universal / arm64-v8a / armeabi-v7a / x86_64 / x86 五个 Release APK 均已完成 zipalign、v2/v3/v4 签名、版本号和 ABI 校验
 - 当前五个已签名 APK 及对应 `.idsig` 位于 `/root/mpvex/release/`；Gradle `app/build` 临时产物已清理
