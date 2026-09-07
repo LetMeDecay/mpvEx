@@ -46,4 +46,26 @@ class NetworkPlaybackPolicyTest {
     policy.setPlayback(null)
     assertFalse(policy.canPrefetch(15.0, 10.0, false, false))
   }
+  @Test fun retainedEofReleasesMetadataAndReplayRestoresGateWithoutRevivingOldFiles() = runBlocking {
+    withTimeout(5000) {
+      val policy = NetworkPlaybackPolicy()
+      policy.setPlayback("a")
+      policy.setEnded("a", true)
+      policy.awaitMetadata()
+      assertFalse(policy.canPrefetch(3.0, 3.0, false, false))
+      policy.setEnded("a", false)
+      val replay = async(start = CoroutineStart.UNDISPATCHED) { policy.awaitMetadata() }
+      assertFalse(replay.isCompleted)
+      policy.setPlayback("b") // Autoplay changes identity without releasing the gate.
+      policy.setEnded("a", true)
+      policy.setEnded("a", false)
+      assertFalse(replay.isCompleted)
+      policy.setEnded("b", true)
+      replay.await()
+      policy.retire(listOf("b"))
+      policy.setEnded("b", false)
+      policy.awaitMetadata()
+    }
+  }
+
 }

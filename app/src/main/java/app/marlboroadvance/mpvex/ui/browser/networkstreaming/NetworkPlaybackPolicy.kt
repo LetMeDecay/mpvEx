@@ -11,11 +11,26 @@ internal class NetworkPlaybackPolicy {
 
   private val playing = MutableStateFlow<String?>(null)
 
-  fun setPlayback(streamId: String?) { playing.value = streamId }
+  private var selected: String? = null
 
+  @Synchronized
+  fun setPlayback(streamId: String?) {
+    selected = streamId
+    playing.value = streamId
+  }
+
+  /** EOF releases bandwidth while retaining the identity needed for replay. */
+  @Synchronized
+  fun setEnded(streamId: String, ended: Boolean) {
+    if (selected == streamId) playing.value = if (ended) null else streamId
+  }
+
+  @Synchronized
   fun retire(streamIds: Collection<String>) {
-    val current = playing.value
-    if (current != null && current in streamIds) playing.compareAndSet(current, null)
+    if (selected in streamIds) {
+      selected = null
+      playing.value = null
+    }
   }
 
   suspend fun awaitMetadata() { playing.first { it == null } }

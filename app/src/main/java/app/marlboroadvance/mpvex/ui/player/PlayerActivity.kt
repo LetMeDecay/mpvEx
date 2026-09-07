@@ -1489,7 +1489,7 @@ class PlayerActivity :
       "eof-reached" -> {
         if (viewModel.playbackSession.loaded &&
           viewModel.playbackSession.acceptsEvent(eventPath, eventGeneration) &&
-          MPVLib.getPropertyBoolean("eof-reached") == true) handleEndOfFile(value)
+          MPVLib.getPropertyBoolean("eof-reached") == value) handleEndOfFile(value)
       }
     }
   }
@@ -1544,6 +1544,7 @@ class PlayerActivity :
         if (hasNextItem && (autoplayEnabled || viewModel.shouldRepeatPlaylist())) {
           // Play next item in playlist
           playNext()
+          return
         } else if (viewModel.shouldRepeatPlaylist()) {
           // At end of playlist with repeat ALL: restart from beginning
           if (viewModel.shuffleEnabled.value) {
@@ -1557,6 +1558,7 @@ class PlayerActivity :
             playlistIndex = 0
             loadPlaylistItem(0)
           }
+          return
         } else if (playerPreferences.closeAfterReachingEndOfVideo.get()) {
           // No autoplay or no next item, end of playlist: close if setting is enabled
           finishAndRemoveTask()
@@ -1569,6 +1571,10 @@ class PlayerActivity :
         }
       }
     }
+    // Reaching a retained endpoint releases metadata work. Replays and seeks
+    // restore the gate when mpv reports eof=false; automatic transitions return above.
+    app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
+      .existingInstance()?.setPlaybackEnded(MPVLib.getPropertyString("path"), isEof)
   }
 
   /**
@@ -1667,6 +1673,10 @@ class PlayerActivity :
 
       MPVLib.MpvEvent.MPV_EVENT_PLAYBACK_RESTART -> {
         if (!viewModel.playbackSession.loaded || !viewModel.playbackSession.acceptsPath(eventPath)) return
+        if (MPVLib.getPropertyBoolean("eof-reached") == false) {
+          app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
+            .existingInstance()?.setPlaybackEnded(eventPath, false)
+        }
         player.isExiting = false
         if (!isReady) {
           isReady = true

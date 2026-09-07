@@ -144,12 +144,22 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
    */
   fun getStreamInfo(streamId: String): StreamInfo? = activeStreams[streamId]
 
-  @Synchronized
-  fun setPlaybackUrl(path: String?) {
+  private fun playbackStreamId(path: String?): String? {
     val uri = path?.let { android.net.Uri.parse(it) }
-    val id = uri?.pathSegments?.firstOrNull()?.takeIf {
+    return uri?.pathSegments?.firstOrNull()?.takeIf {
       uri.host in setOf("127.0.0.1", "localhost") && uri.port == listeningPort && activeStreams.containsKey(it)
     }
+  }
+
+  @Synchronized
+  fun setPlaybackEnded(path: String?, ended: Boolean) {
+    val id = playbackStreamId(path) ?: return
+    if (playingStreamId == id) NetworkPlaybackPolicy.shared.setEnded(id, ended)
+  }
+
+  @Synchronized
+  fun setPlaybackUrl(path: String?) {
+    val id = playbackStreamId(path)
     if (playingStreamId != id) playingStreamId?.let { activeStreams[it]?.requests?.cancelActive() }
     playingStreamId = id
     NetworkPlaybackPolicy.shared.setPlayback(id)
