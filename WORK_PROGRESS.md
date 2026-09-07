@@ -27,7 +27,11 @@
 | 5 | 旧请求取消与有界重复区间合并 | 已完成 | a4a195c；79 项测试、字符串检查、Debug 通过，final-validation.log（31s） |
 | 交付 | 综合验证、Release 签名、文档和清理 | 已完成 | Release 3m7s；五种签名 APK 为 a4a195c；构建目录已清理 |
 
-## 当前落点
+## 当前落点（本次审查修复进行中）
+
+- 最新授权：仅本次使用 gpt-6-astra medium，按 URL → 探测取消 → EOF 门控 → 图片保存交接 → 重叠 GET 风险顺序修复，不访问私有 WebDAV。
+- 第 1 项已统一 WebDAV 客户端与代理路径拼接，WebDavPathTest 通过（1 项）；后续四项待处理。
+- 以下为上一轮交付证据：
 
 - 方案 2、3、4 已分别提交 25e5d7e、e583a72、5ff7d55。方案 5 已提交 a4a195c。
 - 方案 5 的 ProxyRequestScope/Registry 关联响应与 Call；SharedRangeReads 提供有界渐进共享、独立游标、最后消费者取消和延迟释放资源许可。CancellableHttpRead 覆盖预取整个响应体，native 探测 watcher 将取消传给代理。

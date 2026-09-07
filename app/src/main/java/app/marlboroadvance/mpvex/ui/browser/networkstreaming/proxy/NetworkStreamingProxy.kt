@@ -764,10 +764,11 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
 
   private fun webDavSource(streamInfo: StreamInfo, owner: ProxyRequestScope): WebDavRangeSource {
     val protocol = if (streamInfo.connection.useHttps) "https" else "http"
-    val cleanBasePath = streamInfo.connection.path.trimEnd('/')
-    val cleanFilePath = if (streamInfo.filePath.startsWith("/")) streamInfo.filePath else "/${streamInfo.filePath}"
+    val path = app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.webDavPath(
+      streamInfo.connection.path, streamInfo.filePath,
+    )
     val request = okhttp3.Request.Builder()
-      .url("$protocol://${streamInfo.connection.host}:${streamInfo.connection.port}$cleanBasePath$cleanFilePath")
+      .url("$protocol://${streamInfo.connection.host}:${streamInfo.connection.port}$path")
       .get()
     if (!streamInfo.connection.isAnonymous) {
       request.header("Authorization", okhttp3.Credentials.basic(streamInfo.connection.username, streamInfo.connection.password))

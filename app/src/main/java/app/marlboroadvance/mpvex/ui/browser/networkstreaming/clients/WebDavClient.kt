@@ -26,22 +26,7 @@ class WebDavClient(private val connection: NetworkConnection) : NetworkClient {
    */
   private fun buildUrl(relativePath: String): String {
     val protocol = if (connection.useHttps) "https" else "http"
-    val basePath = connection.path.trim('/')
-    val cleanPath = relativePath.trim('/')
-    
-    // If relativePath is "/" or empty, it means we're at the root of the connection
-    // In that case, just use the basePath (connection.path)
-    return when {
-      cleanPath.isEmpty() || cleanPath == "/" -> {
-        if (basePath.isEmpty()) {
-          "$protocol://${connection.host}:${connection.port}/"
-        } else {
-          "$protocol://${connection.host}:${connection.port}/$basePath"
-        }
-      }
-      basePath.isEmpty() -> "$protocol://${connection.host}:${connection.port}/$cleanPath"
-      else -> "$protocol://${connection.host}:${connection.port}/$basePath/$cleanPath"
-    }
+    return "$protocol://${connection.host}:${connection.port}${webDavPath(connection.path, relativePath)}"
   }
 
   override suspend fun connect(): Result<Unit> =
@@ -181,20 +166,13 @@ class WebDavClient(private val connection: NetworkConnection) : NetworkClient {
     withContext(Dispatchers.IO) {
       try {
         val protocol = if (connection.useHttps) "https" else "http"
-        val basePath = connection.path.trim('/')
-        val cleanPath = path.trim('/')
-        
-        val fullPath = when {
-          cleanPath.isEmpty() -> basePath
-          basePath.isEmpty() -> cleanPath
-          else -> "$basePath/$cleanPath"
-        }
+        val fullPath = webDavPath(connection.path, path)
 
         // Build WebDAV URI with credentials embedded for mpv
         val uriString = if (connection.isAnonymous) {
-          "$protocol://${connection.host}:${connection.port}/$fullPath"
+          "$protocol://${connection.host}:${connection.port}$fullPath"
         } else {
-          "$protocol://${connection.username}:${connection.password}@${connection.host}:${connection.port}/$fullPath"
+          "$protocol://${connection.username}:${connection.password}@${connection.host}:${connection.port}$fullPath"
         }
 
         Result.success(Uri.parse(uriString))
