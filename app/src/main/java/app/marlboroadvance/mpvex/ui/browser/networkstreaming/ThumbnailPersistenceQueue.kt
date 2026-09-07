@@ -1,6 +1,10 @@
 package app.marlboroadvance.mpvex.ui.browser.networkstreaming
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
@@ -29,6 +33,20 @@ internal class ThumbnailPersistenceQueue<T>(
         }
       }
     }.invokeOnCompletion { queue.cancel() }
+  }
+
+  /**
+   * Once displayed, an image belongs to persistence, not to generation cancellation.
+   * Keep the sole producer waiting for capacity even if its screen goes away; do
+   * not launch a detached sender, which would bypass the three-image bound.
+   * Cancelling the writer closes the channel and still releases this handoff.
+   */
+  suspend fun publishAndEnqueue(item: T, publish: () -> Unit) {
+    currentCoroutineContext().ensureActive()
+    withContext(NonCancellable) {
+      publish()
+      queue.send(item)
+    }
   }
 
   suspend fun enqueue(item: T) {

@@ -65,4 +65,60 @@ class ThumbnailPersistenceQueueTest {
       }
     }
   }
+  @Test fun cancellingDisplayedProducerPreservesPendingSaveAndBackpressure() = runBlocking {
+    withTimeout(5000) {
+      val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+      val started = CompletableDeferred<Unit>()
+      val release = CompletableDeferred<Unit>()
+      val saved = CompletableDeferred<Unit>()
+      val displayed = CompletableDeferred<Unit>()
+      val written = mutableListOf<Int>()
+      val queue = ThumbnailPersistenceQueue<Int>(scope, persist = {
+        if (it == 1) { started.complete(Unit); release.await() }
+        written.add(it)
+        if (it == 3) saved.complete(Unit)
+      }, onFailure = { throw AssertionError(it) })
+      try {
+        queue.enqueue(1)
+        started.await()
+        queue.enqueue(2)
+        val generation = launch(start = CoroutineStart.UNDISPATCHED) {
+          queue.publishAndEnqueue(3) { displayed.complete(Unit) }
+        }
+        displayed.await()
+        generation.cancel() // Screen cancellation races completion / blocked send.
+        assertFalse(generation.isCompleted) // Dispatcher join cannot start image four.
+        release.complete(Unit)
+        generation.join()
+        saved.await()
+        assertEquals(listOf(1, 2, 3), written)
+      } finally {
+        scope.cancel()
+      }
+    }
+  }
+
+  @Test fun writerShutdownReleasesPublishedHandoffDespiteGenerationCancellation() = runBlocking {
+    withTimeout(5000) {
+      val writer = SupervisorJob()
+      val started = CompletableDeferred<Unit>()
+      val queue = ThumbnailPersistenceQueue<Int>(CoroutineScope(writer + Dispatchers.Default), persist = {
+        started.complete(Unit)
+        awaitCancellation()
+      }, onFailure = { throw AssertionError(it) })
+      queue.enqueue(1)
+      started.await()
+      queue.enqueue(2)
+      val displayed = CompletableDeferred<Unit>()
+      val generation = launch(start = CoroutineStart.UNDISPATCHED) {
+        queue.publishAndEnqueue(3) { displayed.complete(Unit) }
+      }
+      displayed.await()
+      generation.cancel()
+      writer.cancelAndJoin()
+      generation.join()
+      assertTrue(generation.isCompleted)
+    }
+  }
+
 }

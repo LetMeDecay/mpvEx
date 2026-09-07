@@ -169,11 +169,12 @@ object NetworkMetadataProbe {
                 val bitmap = probeThumbnailNow(request.connection, request.file, request.generation)
                 // Display first. Only this producer can wait for persistence capacity,
                 // so a slow disk cannot create an unbounded set of suspended writers.
-                request.result.complete(bitmap)
                 if (bitmap != null) {
-                  thumbnailWrites.enqueue(
+                  thumbnailWrites.publishAndEnqueue(
                     ThumbnailWrite(request.connection, request.file, request.generation, bitmap),
-                  )
+                  ) { request.result.complete(bitmap) }
+                } else {
+                  request.result.complete(null)
                 }
               } catch (e: CancellationException) {
                 request.result.cancel(e)
@@ -292,7 +293,8 @@ object NetworkMetadataProbe {
             byKey.remove(entry.key)?.result?.cancel()
           }
         val active = running
-        if (active != null && active.priority.ordinal >= ThumbnailPriority.PREFETCH.ordinal && active.key !in retainedKeys) {
+        if (active != null && !active.result.isCompleted &&
+          active.priority.ordinal >= ThumbnailPriority.PREFETCH.ordinal && active.key !in retainedKeys) {
           runningJob?.cancel() ?: active.result.cancel()
         }
       }

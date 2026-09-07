@@ -31,7 +31,9 @@
 
 - 最新授权：仅本次使用 gpt-6-astra medium，按 URL → 探测取消 → EOF 门控 → 图片保存交接 → 重叠 GET 风险顺序修复，不访问私有 WebDAV。
 - 第 1 项已统一 WebDAV 客户端与代理路径拼接，WebDavPathTest 通过（1 项）；后续四项待处理。
-- 第 1 项已提交 fb02b69。第 2 项改为退休独立探测请求入口，客户端仍由原 finally 清理；ProxyRequestScopeTest 4 项通过（32s）。第 2 项已提交 4802b56。第 3 项终点/重播门控已实现，NetworkPlaybackPolicyTest 4 项通过（34s）；第 4 项待处理。
+- 第 1 项已提交 fb02b69。第 2 项改为退休独立探测请求入口，客户端仍由原 finally 清理；ProxyRequestScopeTest 4 项通过（32s）。第 2 项已提交 4802b56。第 3 项终点/重播门控已实现，NetworkPlaybackPolicyTest 4 项通过（34s）；第 3 项已提交 39bb24c。第 4 项显示/有界保存交接修复已完成，ThumbnailPersistenceQueueTest 4 项通过（32s）。
+- 第 5 项仅审查风险：当前 MPVView 配置、AAR JNI 桥接与 libavformat multiple_requests/reconnect 字符串不能证明同播放 URL GET 串行，也没有真机请求时序；保留现有替换策略，不声称已修复合法重叠 GET 风险。
+- 下一步：一次全套单测、字符串/Debug 检查，然后 Release 编译、五种 APK/idsig 签名校验、更新 release 和清理。
 - 以下为上一轮交付证据：
 
 - 方案 2、3、4 已分别提交 25e5d7e、e583a72、5ff7d55。方案 5 已提交 a4a195c。
