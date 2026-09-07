@@ -47,4 +47,24 @@ class ProxyRequestScopeTest {
     replacement.checkActive()
     registry.close()
   }
+  @Test fun retirementRejectsRetriesBeforeCancellationCallbacksFinish() {
+    val registry = ProxyRequestRegistry()
+    val active = registry.open()
+    val entered = java.util.concurrent.CountDownLatch(1)
+    val release = java.util.concurrent.CountDownLatch(1)
+    active.onCancel { entered.countDown(); check(release.await(5, java.util.concurrent.TimeUnit.SECONDS)) }
+    val retire = Thread { registry.close() }.also { it.start() }
+    try {
+      assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+      repeat(3) {
+        try { registry.open(); fail("Late native retry reopened a cancelled probe") } catch (_: IOException) { }
+      }
+    } finally {
+      release.countDown()
+      retire.join(5000)
+    }
+    assertFalse(retire.isAlive)
+    registry.close()
+  }
+
 }

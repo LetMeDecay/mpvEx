@@ -191,7 +191,8 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     streamIds.forEach { unregisterStream(it) }
   }
 
-  fun cancelStreamRequests(streamId: String) { activeStreams[streamId]?.requests?.cancelActive() }
+  /** Permanently reject late JNI retries without waiting for protocol-client cleanup. */
+  fun retireProbeRequests(streamId: String) { activeStreams[streamId]?.requests?.close() }
 
   override fun serve(session: IHTTPSession): Response {
     val uri = session.uri

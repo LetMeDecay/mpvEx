@@ -611,7 +611,7 @@ object NetworkMetadataProbe {
   ): T = coroutineScope {
     // A separate suspended child observes cancellation even when JNI is blocking an IO thread.
     val watcher = launch(start = CoroutineStart.UNDISPATCHED) {
-      try { awaitCancellation() } finally { proxy.cancelStreamRequests(streamId) }
+      try { awaitCancellation() } finally { proxy.retireProbeRequests(streamId) }
     }
     try { block() } finally { watcher.cancel() }
   }

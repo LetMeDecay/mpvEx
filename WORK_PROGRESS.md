@@ -31,6 +31,7 @@
 
 - 最新授权：仅本次使用 gpt-6-astra medium，按 URL → 探测取消 → EOF 门控 → 图片保存交接 → 重叠 GET 风险顺序修复，不访问私有 WebDAV。
 - 第 1 项已统一 WebDAV 客户端与代理路径拼接，WebDavPathTest 通过（1 项）；后续四项待处理。
+- 第 1 项已提交 fb02b69。第 2 项改为退休独立探测请求入口，客户端仍由原 finally 清理；ProxyRequestScopeTest 4 项通过（32s）。第 3 项待处理。
 - 以下为上一轮交付证据：
 
 - 方案 2、3、4 已分别提交 25e5d7e、e583a72、5ff7d55。方案 5 已提交 a4a195c。
