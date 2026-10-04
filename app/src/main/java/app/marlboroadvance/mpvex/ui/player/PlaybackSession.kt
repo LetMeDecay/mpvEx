@@ -33,6 +33,12 @@ internal class PlaybackSession {
     return true
   }
 
+  /** FILE_LOADED and PLAYBACK_RESTART may both confirm the same load. */
+  fun confirmLoaded(path: String?, eventGeneration: Long, currentPath: String?): Boolean {
+    if (loaded || !acceptsEvent(path, eventGeneration) || !acceptsPath(currentPath)) return false
+    return fileLoaded(path)
+  }
+
   fun interact() {
     interaction++
     pendingPosition = null

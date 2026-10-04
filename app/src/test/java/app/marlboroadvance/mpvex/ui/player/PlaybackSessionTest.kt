@@ -7,6 +7,37 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PlaybackSessionTest {
+  @Test
+  fun restartRecoversMissingLoadOnlyOnce() {
+    val session = PlaybackSession()
+    session.begin("video")
+    val generation = session.generation
+    assertFalse(session.confirmLoaded(null, generation, "video"))
+    assertFalse(session.loaded)
+    assertTrue(session.confirmLoaded("video", generation, "video"))
+    assertTrue(session.loaded)
+    assertEquals(12f, session.displayPosition(12f, false, 0), 0f)
+    val ticket = session.seek(30f, 1)
+    // A late FILE_LOADED or a seek restart must not reinitialize playback.
+    assertFalse(session.confirmLoaded("video", generation, "video"))
+    assertTrue(session.isCurrent(ticket))
+  }
+
+  @Test
+  fun recoveryRejectsStaleEventsAndMismatchedNativePath() {
+    val session = PlaybackSession()
+    session.begin("a")
+    val oldGeneration = session.generation
+    session.begin("b")
+    assertFalse(session.confirmLoaded("a", oldGeneration, "b"))
+    session.begin("a")
+    assertFalse(session.confirmLoaded("a", oldGeneration, "a"))
+    assertFalse(session.confirmLoaded("a", session.generation, "b"))
+    assertFalse(session.confirmLoaded("a", session.generation, null))
+    assertFalse(session.loaded)
+    assertTrue(session.confirmLoaded("a", session.generation, "a"))
+  }
+
   private fun loaded(path: String = "http://127.0.0.1:8080/stream/a.mp4") = PlaybackSession().apply {
     begin(path)
     assertTrue(fileLoaded(path))

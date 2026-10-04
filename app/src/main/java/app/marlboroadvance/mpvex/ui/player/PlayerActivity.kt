@@ -1665,14 +1665,25 @@ class PlayerActivity :
     if (!viewModel.playbackSession.acceptsEvent(eventPath, eventGeneration)) return
     when (eventId) {
       MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED -> {
-        if (!viewModel.playbackSession.acceptsPath(MPVLib.getPropertyString("path")) ||
-          !viewModel.playbackSession.fileLoaded(eventPath)) return
+        if (!viewModel.playbackSession.confirmLoaded(
+            eventPath, eventGeneration, MPVLib.getPropertyString("path"),
+          )) return
         isReady = true
         handleFileLoaded()
       }
 
       MPVLib.MpvEvent.MPV_EVENT_PLAYBACK_RESTART -> {
-        if (!viewModel.playbackSession.loaded || !viewModel.playbackSession.acceptsPath(eventPath)) return
+        // Playback can already be running after a missed/rejected FILE_LOADED.
+        // Confirm the current file before opening the timeline gate, and run
+        // load initialization only once (ordinary seeks also emit RESTART).
+        if (!viewModel.playbackSession.acceptsPath(MPVLib.getPropertyString("path"))) return
+        if (viewModel.playbackSession.confirmLoaded(
+            eventPath, eventGeneration, MPVLib.getPropertyString("path"),
+          )) {
+          isReady = true
+          handleFileLoaded()
+        }
+        if (!viewModel.playbackSession.loaded) return
         if (MPVLib.getPropertyBoolean("eof-reached") == false) {
           app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
             .existingInstance()?.setPlaybackEnded(eventPath, false)
