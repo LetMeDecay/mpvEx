@@ -1,7 +1,7 @@
 ## 当前修复与编译（2026-10-05）
 
 - 最新指令：修复 WebDAV 播放进度两侧为 0 并编译。
-- 已实现当前会话 RESTART 加载状态恢复及幂等确认，防止旧事件串入；10 项 PlaybackSessionTest 全部通过，待编译 Standard Debug APK。尚未设备验证，不把推断的触发条件写成已复现。
+- 已实现当前会话 RESTART 加载状态恢复及幂等确认，防止旧事件串入；10 项 PlaybackSessionTest 全部通过，Standard Debug 编译及五种 APK 签名校验通过；代码提交 `b031b1d`，交付 `/root/mpvex/release/webdav-progress-b031b1d-debug/`，未设备安装或推送。尚未设备验证，不把推断的触发条件写成已复现。
 - 下面记录为历史；此前审查问题不在本次修复范围。
 
 # 当前任务恢复记录
