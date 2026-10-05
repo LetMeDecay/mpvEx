@@ -3,8 +3,8 @@
 更新：2026-10-05（Asia/Shanghai）
 
 - 项目：mpvEx，基于 libmpv 的 Android 视频播放器；Kotlin、Compose、Room、Koin，网络文件通过本地 NanoHTTPD 代理播放。主仓库 `/root/mpvex/mpvEx`；不操作相邻 mpvEx_New。
-- 当前任务：WebDAV 视频进度两侧为 0、关闭视频再播放恢复；已按用户要求修复并编译。代码提交 `b031b1d`。
-- 修复：当前会话 PLAYBACK_RESTART 可补齐遗漏的加载确认；保留事件代次、事件路径及 MPV 当前路径校验，与 FILE_LOADED 共用一次性确认，避免重复恢复历史进度。
+- 当前任务：分析并尝试优化视频打开缓慢；已修复代理 HEAD 多余视频 GET，Kotlin 编译通过，待构建交付 Debug APK。具体收益取决于实际是否使用 HEAD，尚无真机耗时数据。
+- 前批进度修复（`b031b1d`）：当前会话 PLAYBACK_RESTART 可补齐遗漏的加载确认；保留事件代次、事件路径及 MPV 当前路径校验，与 FILE_LOADED 共用一次性确认，避免重复恢复历史进度。
 - 证据边界：静态代码确认原加载门控没有恢复入口，但没有设备日志证明用户首次加载具体失败条件；仍待用户实际验收。
 - 验证：10 项 PlaybackSessionTest 全部通过（0 failures/errors/skipped）；Standard Debug 编译成功；5 种 APK 签名校验均通过。没有功能/设备/私有网络测试。
 - 交付：`/root/mpvex/release/webdav-progress-b031b1d-debug/` 包含五种 Debug APK、SHA256SUMS、check.log、build.log。包名带 `.debug`，可与原 Release 并存；未覆盖既有包。未设备安装或服务重启、未推送。

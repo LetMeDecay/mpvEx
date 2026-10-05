@@ -24,6 +24,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.io.InputStream
+import java.io.ByteArrayInputStream
 import java.util.EnumSet
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -229,7 +230,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
       return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Stream retired")
     }
     return try {
-      val response = if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
+      val response = if (session.method != Method.HEAD && rangeHeader != null && rangeHeader.startsWith("bytes=")) {
         handleRangeRequest(session, streamInfo, rangeHeader, owner)
       } else {
         handleFullRequest(session, streamInfo, owner)
@@ -337,7 +338,11 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
       streamInfo.fileSize = getFileSize(streamInfo)
     }
 
-    val inputStream = if (streamInfo.client is app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.WebDavClient) {
+    // HEAD only needs metadata: opening a remote GET here adds a round trip
+    // and may start downloading a video body that NanoHTTPD will never send.
+    val inputStream = if (session.method == Method.HEAD) {
+      ByteArrayInputStream(ByteArray(0))
+    } else if (streamInfo.client is app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.WebDavClient) {
       webDavSource(streamInfo, owner).openFull()
     } else getStream(streamInfo)
 
