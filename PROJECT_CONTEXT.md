@@ -3,7 +3,7 @@
 更新：2026-10-05（Asia/Shanghai）
 
 - 项目：mpvEx，基于 libmpv 的 Android 视频播放器；Kotlin、Compose、Room、Koin，网络文件通过本地 NanoHTTPD 代理播放。主仓库 `/root/mpvex/mpvEx`；不操作相邻 mpvEx_New。
-- 当前任务：分析并尝试优化视频打开缓慢；已修复代理 HEAD 多余视频 GET，Kotlin 编译通过，待构建交付 Debug APK。具体收益取决于实际是否使用 HEAD，尚无真机耗时数据。
+- 当前任务：用户明确 WebDAV 点击后界面出现前等待 1–2 秒，并要求静态逆向对照本地 reex。已完成报告 REEX_STARTUP_REVIEW.md；后台预加载 MPV native 库并加入阶段耗时日志，Kotlin 编译通过，待 APK 交付。此前 HEAD 优化 `9084f51` 不作为界面前等待的根因解释。
 - 前批进度修复（`b031b1d`）：当前会话 PLAYBACK_RESTART 可补齐遗漏的加载确认；保留事件代次、事件路径及 MPV 当前路径校验，与 FILE_LOADED 共用一次性确认，避免重复恢复历史进度。
 - 证据边界：静态代码确认原加载门控没有恢复入口，但没有设备日志证明用户首次加载具体失败条件；仍待用户实际验收。
 - 验证：10 项 PlaybackSessionTest 全部通过（0 failures/errors/skipped）；Standard Debug 编译成功；5 种 APK 签名校验均通过。没有功能/设备/私有网络测试。

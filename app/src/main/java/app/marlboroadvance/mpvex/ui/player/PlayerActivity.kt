@@ -344,6 +344,9 @@ class PlayerActivity :
 
   @RequiresApi(Build.VERSION_CODES.P)
   override fun onCreate(savedInstanceState: Bundle?) {
+    val createdAt = android.os.SystemClock.elapsedRealtime()
+    val clickedAt = intent.getLongExtra("player_launch_elapsed_ms", -1L)
+    if (clickedAt in 0..createdAt) Log.d("PlayerStartup", "clickToActivityMs=${createdAt - clickedAt}")
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
     setContentView(binding.root)
@@ -439,6 +442,17 @@ class PlayerActivity :
 
     window.attributes.layoutInDisplayCutoutMode =
       WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+    Log.d("PlayerStartup", "activitySetupMs=${android.os.SystemClock.elapsedRealtime() - createdAt}")
+    binding.root.viewTreeObserver.addOnDrawListener(object : android.view.ViewTreeObserver.OnDrawListener {
+      private var reported = false
+      override fun onDraw() {
+        if (reported) return
+        reported = true
+        val now = android.os.SystemClock.elapsedRealtime()
+        Log.d("PlayerStartup", "activityToFirstDrawMs=${now - createdAt}")
+        binding.root.post { binding.root.viewTreeObserver.removeOnDrawListener(this) }
+      }
+    })
   }
 
   override fun attachBaseContext(newBase: Context?) {
@@ -871,6 +885,7 @@ class PlayerActivity :
    * Initializes the MPV player with the necessary paths and observers.
    */
   private fun setupMPV() {
+    val prepareStarted = android.os.SystemClock.elapsedRealtime()
     // Copy essential files FIRST, before MPV initialization
     runCatching {
       Utils.copyAssets(this@PlayerActivity)
@@ -881,7 +896,10 @@ class PlayerActivity :
     }
 
     // NOW initialize MPV - it will find and load the scripts we just copied
+    val initializeStarted = android.os.SystemClock.elapsedRealtime()
+    Log.d("PlayerStartup", "configPreparationMs=${initializeStarted - prepareStarted}")
     player.initialize(filesDir.path, cacheDir.path)
+    Log.d("PlayerStartup", "mpvInitializationMs=${android.os.SystemClock.elapsedRealtime() - initializeStarted}")
     mpvInitialized = true
     Log.d(TAG, "MPV initialized")
 

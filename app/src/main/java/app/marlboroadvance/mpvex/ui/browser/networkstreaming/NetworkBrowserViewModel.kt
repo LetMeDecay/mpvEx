@@ -503,6 +503,7 @@ class NetworkBrowserViewModel(
    * automatically; playback starts at the clicked video.
    */
   fun playVideo(file: NetworkFile) {
+    val clickedAt = android.os.SystemClock.elapsedRealtime()
     viewModelScope.launch {
       val registeredStreams = mutableListOf<String>()
       try {
@@ -545,6 +546,7 @@ class NetworkBrowserViewModel(
         val intent = Intent(Intent.ACTION_VIEW, startUri)
         intent.setClass(application, app.marlboroadvance.mpvex.ui.player.PlayerActivity::class.java)
         intent.putExtra("internal_launch", true)
+        intent.putExtra("player_launch_elapsed_ms", clickedAt)
         intent.putExtra("launch_source", "network_stream")
         intent.putExtra("title", file.name)
         intent.putExtra("filename", file.name)
@@ -560,6 +562,7 @@ class NetworkBrowserViewModel(
           intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
 
+        Log.d("PlayerStartup", "queuePreparationMs=${android.os.SystemClock.elapsedRealtime() - clickedAt}, items=${uris.size}")
         application.startActivity(intent)
       } catch (e: Exception) {
         app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy

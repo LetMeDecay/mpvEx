@@ -13,6 +13,7 @@ import app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProb
 import app.marlboroadvance.mpvex.utils.LocaleManager
 import app.marlboroadvance.mpvex.utils.media.MediaLibraryEvents
 import `is`.xyz.mpv.FastThumbnails
+import `is`.xyz.mpv.MPVLib
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -49,6 +50,20 @@ class App : Application() {
     }
 
     Thread.setDefaultUncaughtExceptionHandler(GlobalExceptionHandler(applicationContext, CrashActivity::class.java))
+
+    // Resolve native libraries while browsing, rather than on the first player
+    // Activity's UI thread. This does not create or initialize an mpv instance.
+    applicationScope.launch(Dispatchers.IO) {
+      val started = android.os.SystemClock.elapsedRealtime()
+      runCatching {
+        val type = MPVLib::class.java
+        Class.forName(type.name, true, type.classLoader)
+      }.onSuccess {
+        android.util.Log.d("PlayerStartup", "nativeLibrariesMs=${android.os.SystemClock.elapsedRealtime() - started}")
+      }.onFailure {
+        android.util.Log.w("PlayerStartup", "Native library preparation failed: ${it.javaClass.simpleName}")
+      }
+    }
 
     FastThumbnails.initialize(this)
 
