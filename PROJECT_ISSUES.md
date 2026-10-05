@@ -11,7 +11,7 @@
 - 静态分析、APK 哈希及可确认/不可确认的区别见 REEX_STARTUP_REVIEW.md。
 - 处理：应用后台提前加载 MPVLib native 库（不创建播放实例）；增加无敏感数据的 PlayerStartup 阶段日志。仅可能改善冷启动；每次等待的具体耗时仍待设备证据。
 - 代价：仅浏览时也会载入 native 库，增加常驻内存。未改变播放器实例生命周期、Surface 或配置语义。
-- Kotlin 编译通过，待生成 APK；保留原进度恢复与 HEAD 优化。本次未功能测试。
+- Kotlin 编译、最终 Standard Debug 构建及五种 APK 签名校验通过；代码 `8ad7b17`，交付路径见 PROJECT_CONTEXT.md；保留原进度恢复与 HEAD 优化。本次未功能测试。
 
 ## 视频打开缓慢：代理 HEAD 多余建流（2026-10-05）
 
@@ -19,7 +19,7 @@
 - 修复：HEAD 忽略 Range，返回原有 MIME、完整文件大小和 Accept-Ranges，但不打开视频体；大小未知时仍保留文件大小查询。GET 路径不变。
 - 收益边界：消除 HEAD 的多余视频 GET；未采集实际 MPV 请求轨迹，不能保证用户慢加载必定经过此分支，也没有实测速率/首帧数据。
 - 其他观察：PlayerActivity.setupMPV 在主线程同步准备资源与用户配置；若配置目录是慢 SAF 提供方，可能拖慢播放器启动。本次未测到该条件，不改配置同步语义。原有重叠 GET 风险仍未证实，不扩大修复。
-- 验证/交付：Standard Debug Kotlin 编译通过，随后按上一批方式交付独立 Debug APK；无功能或私有网络测试。
+- 验证/交付：Standard Debug Kotlin 编译通过，已合入最终 `8ad7b17` Debug 交付；无功能或私有网络测试。
 
 ## WebDAV 进度两侧为 0（2026-10-05）
 

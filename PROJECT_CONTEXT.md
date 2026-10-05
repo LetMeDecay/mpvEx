@@ -2,12 +2,13 @@
 
 更新：2026-10-05（Asia/Shanghai）
 
-- 项目：mpvEx，基于 libmpv 的 Android 视频播放器；Kotlin、Compose、Room、Koin，网络文件通过本地 NanoHTTPD 代理播放。主仓库 `/root/mpvex/mpvEx`；不操作相邻 mpvEx_New。
-- 当前任务：用户明确 WebDAV 点击后界面出现前等待 1–2 秒，并要求静态逆向对照本地 reex。已完成报告 REEX_STARTUP_REVIEW.md；后台预加载 MPV native 库并加入阶段耗时日志，Kotlin 编译通过，待 APK 交付。此前 HEAD 优化 `9084f51` 不作为界面前等待的根因解释。
-- 前批进度修复（`b031b1d`）：当前会话 PLAYBACK_RESTART 可补齐遗漏的加载确认；保留事件代次、事件路径及 MPV 当前路径校验，与 FILE_LOADED 共用一次性确认，避免重复恢复历史进度。
-- 证据边界：静态代码确认原加载门控没有恢复入口，但没有设备日志证明用户首次加载具体失败条件；仍待用户实际验收。
-- 验证：10 项 PlaybackSessionTest 全部通过（0 failures/errors/skipped）；Standard Debug 编译成功；5 种 APK 签名校验均通过。没有功能/设备/私有网络测试。
-- 交付：`/root/mpvex/release/webdav-progress-b031b1d-debug/` 包含五种 Debug APK、SHA256SUMS、check.log、build.log。包名带 `.debug`，可与原 Release 并存；未覆盖既有包。未设备安装或服务重启、未推送。
-- 检查使用 `--no-daemon --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process`；测试任务 `:app:testStandardDebugUnitTest --tests app.marlboroadvance.mpvex.ui.player.PlaybackSessionTest`，编译任务 `:app:assembleStandardDebug`。
-- 后续：用户验收首次打开 WebDAV 视频的两侧时间；若仍异常，采集加载/重启事件、代次、路径匹配结果及原始 MPV 时间值。既有 R1–R4、5 项原版遗留问题和重叠 GET 风险保持未修复，详见 PROJECT_ISSUES.md。
-- 历史 Release 代码为 `325ac17`；之前审查和验证见 Git、WORK_PROGRESS.md、modify.md，不替代本轮设备验收。
+- 主仓库 `/root/mpvex/mpvEx`，Android/Kotlin/Compose/libmpv 播放器；不操作相邻 mpvEx_New。
+- 当前任务：用户报告 WebDAV 点击后播放器界面出现前等待 1–2 秒，要求分析优化并逆向对照本地 reex。已完成静态对照、有限优化与 Debug 交付；实测效果待用户验收。
+- 代码提交：`9084f51` 消除 HEAD 多余远端视频 GET；`8ad7b17` 后台预加载 MPVLib native 库（不创建播放实例），增加 PlayerStartup 分阶段日志。
+- 分析报告：REEX_STARTUP_REVIEW.md。reex 使用 Flutter/libmpv，Java 层可确认 Activity 内 Flutter 引擎复用；不能证实 MPV 预热/复用或完整 Dart AOT 播放链。mpvEx 在主线程准备配置及初始化 MPV，真正 loadfile 等待 Surface 创建。
+- 边界：HEAD 优化发生于后续建流，不解释界面前的等待。native 预加载主要针对每进程首次打开，同时增加仅浏览时的 native 内存占用；没有证据证明每次 1–2 秒延迟已消失。
+- 验证：两批 Kotlin 编译通过；最终 Standard Debug 构建通过；五种 APK 的 apksigner verify 全部通过。本次未新增或运行单测/功能/设备/网络测试。前批进度恢复的 10 项测试属于 `b031b1d` 验证，不混作性能测量。
+- 交付：`/root/mpvex/release/webdav-startup-8ad7b17-debug/`，含五种 Debug APK、SHA256SUMS、编译/构建日志及对照报告；可与 Release 并存，包含前批进度恢复。没有设备安装或服务部署，未覆盖既有包，未推送。
+- 原始 APK 保持不变；本次 task scratch 在交付后清理。对照结论和 APK 哈希已保留于报告。
+- 下一步：用户验收冷/热打开。若仍慢，用 `adb logcat -s PlayerStartup:D` 查看 queuePreparationMs、clickToActivityMs、configPreparationMs、mpvInitializationMs、activitySetupMs、activityToFirstDrawMs。日志没有路径/凭据；firstDraw 不是视频首帧完成的证据。
+- 前批：`b031b1d` 修复当前文件 RESTART 补齐加载确认；首次事件为何未被接受仍缺设备证据。既有 R1–R4、5 项原版遗留和重叠 GET 风险保持未修复，见 PROJECT_ISSUES.md。
