@@ -3,7 +3,7 @@
 更新：2026-10-05（Asia/Shanghai）
 
 - 主仓库 `/root/mpvex/mpvEx`，Android/Kotlin/Compose/libmpv 播放器；不操作相邻 mpvEx_New。
-- 当前任务：用户报告 WebDAV 点击后播放器界面出现前等待 1–2 秒，要求分析优化并逆向对照本地 reex。已完成静态对照、有限优化与 Debug 交付；实测效果待用户验收。
+- 当前任务：用户要求可覆盖更新的 Release，版本提升至 1.2.9-rev1005 / 131，保留正式包名及既有签名。待构建和签名交付；前批功能代码保持不变。
 - 代码提交：`9084f51` 消除 HEAD 多余远端视频 GET；`8ad7b17` 后台预加载 MPVLib native 库（不创建播放实例），增加 PlayerStartup 分阶段日志。
 - 分析报告：REEX_STARTUP_REVIEW.md。reex 使用 Flutter/libmpv，Java 层可确认 Activity 内 Flutter 引擎复用；不能证实 MPV 预热/复用或完整 Dart AOT 播放链。mpvEx 在主线程准备配置及初始化 MPV，真正 loadfile 等待 Surface 创建。
 - 边界：HEAD 优化发生于后续建流，不解释界面前的等待。native 预加载主要针对每进程首次打开，同时增加仅浏览时的 native 内存占用；没有证据证明每次 1–2 秒延迟已消失。
