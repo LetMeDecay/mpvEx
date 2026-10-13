@@ -93,4 +93,34 @@ class PlaybackEventIdentityTest {
     identities.end(20, null, 0)
     assertNull(identities.capture())
   }
+  @Test(timeout = 5000)
+  fun failedEndBeforeLoadReplyCanBeAttributedAfterEntryBecomesInactive() = runBlocking {
+    val identities = PlaybackEventIdentity()
+    val request = identities.begin(1)
+    identities.start(9)
+    val event = identities.capture()!!
+    identities.end(9, null, 0)
+    val result = async { identities.resolveEnded(event) }
+    yield()
+    assertFalse(result.isCompleted)
+    identities.bind(request, 9)
+    assertTrue(result.await())
+    assertFalse(identities.resolve(event))
+  }
+
+  @Test(timeout = 5000)
+  fun failedEndCannotReplaceStateOfNewEntryOrNewRequest() = runBlocking {
+    val identities = PlaybackEventIdentity()
+    identities.bind(identities.begin(1), 9)
+    identities.start(9)
+    val event = identities.capture()!!
+    identities.end(9, 10, 2)
+    identities.start(10)
+    assertFalse(identities.resolveEnded(event))
+    identities.end(10, null, 0)
+    assertFalse(identities.resolveEnded(event))
+    identities.bind(identities.begin(2), 12)
+    assertFalse(identities.resolveEnded(event))
+  }
+
 }

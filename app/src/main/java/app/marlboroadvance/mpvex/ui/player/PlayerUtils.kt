@@ -1,6 +1,5 @@
 package app.marlboroadvance.mpvex.ui.player
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
@@ -33,24 +32,40 @@ private object StoragePaths {
  *
  * Falls back to file descriptor if real path cannot be determined.
  */
-internal fun Uri.openContentFd(context: Context): String? =
-  tryFileDescriptorPath(context)
-    ?: tryMediaStoreQuery(context)
-    ?: tryDocumentUriParsing(context)
-    ?: tryFileDescriptorFallback(context)
+internal fun Uri.openContentFd(context: Context): String? {
+  if (scheme != "content") return null
+  val source = openPlayableSource(context) ?: return null
+  return source.path.takeIf { MpvGateway.retainExtraSource(source) }
+}
 
-/**
- * Method 1: Extract real filesystem path from file descriptor.
- * Works best for most content URIs on modern Android.
- */
-private fun Uri.tryFileDescriptorPath(context: Context): String? =
-  runCatching {
-    context.contentResolver.openFileDescriptor(this, "r")?.use { pfd ->
-      Utils.findRealPath(pfd.fd)?.also {
-        Log.d(TAG, "Resolved via file descriptor: $it")
-      }
+/** Open a content provider once, retaining that descriptor if a path is unavailable. */
+internal fun Uri.openPlayableSource(context: Context): PlayableSource? {
+  if (scheme != "content") {
+    val path = when (scheme) {
+      null -> toString().takeIf { it.startsWith("/") }
+      "file" -> path
+      "data" -> "data://$schemeSpecificPart"
+      in Utils.PROTOCOLS -> toString()
+      else -> null
     }
-  }.getOrNull()
+    return path?.let { PlayableSource(it) }
+  }
+  val descriptor = runCatching { context.contentResolver.openFileDescriptor(this, "r") }.getOrNull()
+  try {
+    val realPath = descriptor?.let { runCatching { Utils.findRealPath(it.fd) }.getOrNull() }
+      ?: tryMediaStoreQuery(context)
+      ?: tryDocumentUriParsing(context)
+    if (realPath != null) {
+      descriptor?.close()
+      return PlayableSource(realPath)
+    }
+    if (descriptor != null) return PlayableSource("fd://${descriptor.fd}") { descriptor.close() }
+    return null
+  } catch (failure: Exception) {
+    runCatching { descriptor?.close() }
+    throw failure
+  }
+}
 
 /**
  * Method 2: Query MediaStore for direct file path.
@@ -149,21 +164,6 @@ private fun tryExternalStoragePaths(docId: String): String? {
     Log.d(TAG, "Resolved document URI to: $it")
   }
 }
-
-/**
- * Fallback: Return file descriptor URI.
- * MPV can play directly from fd:// when filesystem path is unavailable.
- * Common with scoped storage on Android 11+.
- */
-@SuppressLint("Recycle")
-private fun Uri.tryFileDescriptorFallback(context: Context): String? =
-  runCatching {
-    context.contentResolver.openFileDescriptor(this, "r")?.detachFd()?.let { fd ->
-      "fd://$fd".also {
-        Log.d(TAG, "Using file descriptor fallback: $it")
-      }
-    }
-  }.getOrNull()
 
 /**
  * Resolves any URI to a format MPV can play.

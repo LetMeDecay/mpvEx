@@ -169,8 +169,8 @@ class PlayerViewModel(
     execute = { MpvGateway.command(*it.toTypedArray()) },
     onFailure = { Log.e("PlayerViewModel", "Playback command failed") },
   )
-  private val _mediaGeneration = MutableStateFlow(0L)
-  val mediaGeneration = _mediaGeneration.asStateFlow()
+  private val playbackStateStore = PlaybackStateStore()
+  internal val playbackState = playbackStateStore.state
 
   fun beginFileChange(path: String) {
     if (stopPlaybackJob != null) return
@@ -179,11 +179,9 @@ class PlayerViewModel(
     playbackSession.begin(path)
     playbackRequest = playbackEvents.begin(playbackSession.generation)
     playbackCommands.clearPending()
-    _mediaGeneration.value = playbackSession.generation
+    playbackStateStore.begin(playbackSession.generation)
     seekCoalesceJob?.cancel()
     pendingSeekOffset = 0
-    _precisePosition.value = 0f
-    _preciseDuration.value = 0f
     _seekText.value = null
     _doubleTapSeekAmount.value = 0
     _seekBarShown.value = false
@@ -200,10 +198,38 @@ class PlayerViewModel(
     ) {
       var entryId: Long? = null
       try {
-        entryId = MpvGateway.loadFile(path)
+        val source = Uri.parse(path).openPlayableSource(host.context.applicationContext)
+          ?: error("Unable to open playback source")
+        // Provider I/O may finish after another file was selected or exit began.
+        if (playbackSession.generation != request.generation) {
+          source.close()
+          return@loadAction
+        }
+        playbackStateStore.opening(request.generation)
+        entryId = MpvGateway.loadSource(source)
+        if (entryId == null) playbackStateStore.failed(request.generation)
+      } catch (failure: Exception) {
+        playbackStateStore.failed(request.generation)
+        if (playbackSession.generation == request.generation) MpvGateway.command("stop")
+        throw failure
       } finally {
         playbackEvents.bind(request, entryId)
       }
+    }
+  }
+
+  internal fun nativeFileReady() = playbackStateStore.ready(playbackSession.generation)
+
+  internal fun nativeFileFailed(generation: Long) {
+    playbackSession.failed(generation)
+    playbackStateStore.failed(generation)
+  }
+
+  internal fun failPreparation(generation: Long) {
+    playbackStateStore.failed(generation)
+    if (playbackSession.generation != generation) return
+    playbackCommands.loadAction({ playbackSession.generation == generation }) {
+      MpvGateway.command("stop")
     }
   }
 
@@ -211,6 +237,8 @@ class PlayerViewModel(
   fun stopPlayback() {
     if (stopPlaybackJob != null) return
     playbackSession.retire()
+    val retiredGeneration = playbackSession.generation
+    playbackStateStore.stopping(retiredGeneration)
     playbackEvents.retire()
     playbackRequest = null
     seekCoalesceJob?.cancel()
@@ -220,6 +248,7 @@ class PlayerViewModel(
       playbackCommands.awaitRetired()
       runCatching { MpvGateway.command("stop") }
         .onFailure { Log.e("PlayerViewModel", "Playback stop failed") }
+      playbackStateStore.stopped(retiredGeneration)
     }
   }
 
@@ -235,13 +264,6 @@ class PlayerViewModel(
     }
   }
 
-  // High-precision position and duration for smooth seekbar
-  private val _precisePosition = MutableStateFlow(0f)
-  val precisePosition = _precisePosition.asStateFlow()
-
-  private val _preciseDuration = MutableStateFlow(0f)
-  val preciseDuration = _preciseDuration.asStateFlow()
-
   // Audio state
   val currentVolume = MutableStateFlow(host.audioManager.getStreamVolume(AudioManager.STREAM_MUSIC))
   private val volumeBoostCap by MpvGateway.propInt["volume-max"].collectAsState(viewModelScope)
@@ -251,12 +273,17 @@ class PlayerViewModel(
     viewModelScope.launch {
       while (isActive) {
         if (playbackSession.loaded) {
+          val generation = playbackSession.generation
           val time = MpvGateway.getPropertyDouble("time-pos")?.toFloat()
-          val dur = MpvGateway.getPropertyDouble("duration")?.toFloat() ?: 0f
-          _preciseDuration.value = dur.takeIf { it.isFinite() && it > 0f } ?: 0f
-          _precisePosition.value = playbackSession.displayPosition(
-            time, MpvGateway.getPropertyBoolean("seeking") == true,
-            android.os.SystemClock.elapsedRealtime(),
+          val duration = MpvGateway.getPropertyDouble("duration")?.toFloat()
+          val seeking = MpvGateway.getPropertyBoolean("seeking") == true
+          playbackStateStore.sample(
+            generation,
+            playbackSession.displayPosition(time, seeking, android.os.SystemClock.elapsedRealtime()),
+            duration,
+            MpvGateway.getPropertyBoolean("pause") != false,
+            seeking,
+            MpvGateway.getPropertyBoolean("paused-for-cache") == true,
           )
         }
         delay(42)
@@ -973,7 +1000,7 @@ class PlayerViewModel(
 
   private fun submitSeek(position: Int, exact: Boolean) {
     if (!playbackSession.loaded) return
-    val maxDuration = _preciseDuration.value.toInt()
+    val maxDuration = (playbackState.value.duration ?: 0f).toInt()
     if (maxDuration <= 0) return
     var target = position.coerceIn(0, maxDuration)
     val loopA = _abLoopA.value
@@ -985,7 +1012,7 @@ class PlayerViewModel(
     val ticket = playbackSession.seek(target.toFloat(), android.os.SystemClock.elapsedRealtime(), exact)
     seekCoalesceJob?.cancel()
     pendingSeekOffset = 0
-    if (exact) _precisePosition.value = target.toFloat()
+    if (exact) playbackStateStore.seek(ticket.generation, target.toFloat())
     playbackCommands.seek(
       listOf("seek", target.toString(), if (exact) "absolute+exact" else "absolute+keyframes"),
     ) { playbackSession.isCurrent(ticket) }
@@ -1005,8 +1032,8 @@ class PlayerViewModel(
       if (toApply != 0) {
         // Base repeated input on the latest requested position, including a pending seek.
         submitSeek(
-          (_precisePosition.value + toApply).toInt(),
-          exact = playerPreferences.usePreciseSeeking.get() || _preciseDuration.value < 120f,
+          (playbackState.value.position + toApply).toInt(),
+          exact = playerPreferences.usePreciseSeeking.get() || (playbackState.value.duration ?: 0f) < 120f,
         )
       }
     }

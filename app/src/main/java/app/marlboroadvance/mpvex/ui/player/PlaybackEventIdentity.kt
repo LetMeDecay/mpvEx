@@ -17,11 +17,13 @@ internal class PlaybackEventIdentity {
   private data class Redirect(val first: Long, val count: Long, val root: Long)
   private var request: Request? = null
   private var activeEntry: Long? = null
+  private var lastEndedEntry: Long? = null
   private val redirects = mutableListOf<Redirect>()
 
   @Synchronized fun begin(generation: Long): Request {
     request?.entry?.complete(null)
     redirects.clear()
+    lastEndedEntry = null
     return Request(generation).also { request = it }
   }
 
@@ -31,6 +33,7 @@ internal class PlaybackEventIdentity {
 
   @Synchronized fun start(entryId: Long?) {
     activeEntry = entryId
+    lastEndedEntry = null
   }
 
   @Synchronized fun end(entryId: Long?, insertId: Long?, insertCount: Long) {
@@ -39,7 +42,10 @@ internal class PlaybackEventIdentity {
     if (insertId != null && insertId >= 0 && insertCount > 0) {
       redirects.add(Redirect(insertId, insertCount, rootOf(entryId)))
     }
-    if (activeEntry == entryId) activeEntry = null
+    if (activeEntry == entryId) {
+      activeEntry = null
+      lastEndedEntry = entryId
+    }
   }
 
   private fun rootOf(id: Long): Long =
@@ -54,6 +60,13 @@ internal class PlaybackEventIdentity {
   suspend fun resolve(event: Event): Boolean =
     event.request.entry.await() == event.rootId && isCurrent(event)
 
+  suspend fun resolveEnded(event: Event): Boolean {
+    if (event.request.entry.await() != event.rootId) return false
+    return synchronized(this) {
+      request === event.request && activeEntry == null && lastEndedEntry == event.entryId
+    }
+  }
+
   @Synchronized fun isCurrent(event: Event): Boolean =
     request === event.request && activeEntry == event.entryId
 
@@ -61,6 +74,7 @@ internal class PlaybackEventIdentity {
     request?.entry?.complete(null)
     request = null
     activeEntry = null
+    lastEndedEntry = null
     redirects.clear()
   }
 }

@@ -103,6 +103,7 @@ import app.marlboroadvance.mpvex.ui.player.Decoder.Companion.getDecoderFromValue
 import app.marlboroadvance.mpvex.ui.player.Panels
 import app.marlboroadvance.mpvex.ui.player.PlayerActivity
 import app.marlboroadvance.mpvex.ui.player.PlayerUpdates
+import app.marlboroadvance.mpvex.ui.player.PlaybackPhase
 import app.marlboroadvance.mpvex.ui.player.PlayerViewModel
 import app.marlboroadvance.mpvex.ui.player.Sheets
 import app.marlboroadvance.mpvex.ui.player.VideoAspect
@@ -164,15 +165,18 @@ fun PlayerControls(
   val showSystemStatusBar by playerPreferences.showSystemStatusBar.collectAsState()
   val showSystemNavigationBar by playerPreferences.showSystemNavigationBar.collectAsState()
   val interactionSource = remember { MutableInteractionSource() }
+  val showLoadingCircle by playerPreferences.showLoadingCircle.collectAsState()
   val controlsShown by viewModel.controlsShown.collectAsState()
   val areControlsLocked by viewModel.areControlsLocked.collectAsState()
   val seekBarShown by viewModel.seekBarShown.collectAsState()
-  val pausedForCache by MpvGateway.propBoolean["paused-for-cache"].collectAsState()
-  val paused by MpvGateway.propBoolean["pause"].collectAsState()
-  val duration by MpvGateway.propInt["duration"].collectAsState()
-  val position by MpvGateway.propInt["time-pos"].collectAsState()
-  val precisePosition by viewModel.precisePosition.collectAsState()
-  val preciseDuration by viewModel.preciseDuration.collectAsState()
+  val playback by viewModel.playbackState.collectAsState()
+  val pausedForCache = playback.buffering || playback.phase == PlaybackPhase.Preparing ||
+    playback.phase == PlaybackPhase.Opening
+  val paused = playback.paused
+  val duration = playback.duration?.toInt()
+  val position = playback.position.toInt().takeIf { playback.phase == PlaybackPhase.Ready }
+  val precisePosition = playback.position
+  val preciseDuration = playback.duration ?: 0f
   val playbackSpeed by MpvGateway.propFloat["speed"].collectAsState()
   val doubleTapSeekAmount by viewModel.doubleTapSeekAmount.collectAsState()
   val showDoubleTapOvals by playerPreferences.showDoubleTapOvals.collectAsState()
@@ -611,7 +615,8 @@ fun PlayerControls(
         }
 
         AnimatedVisibility(
-          visible = controlsShown && !areControlsLocked,
+          visible = (controlsShown && !areControlsLocked) || playback.phase == PlaybackPhase.Failed ||
+            (showLoadingCircle && (playback.phase == PlaybackPhase.Preparing || playback.phase == PlaybackPhase.Opening)),
           enter = fadeIn(playerControlsEnterAnimationSpec()),
           exit = fadeOut(playerControlsExitAnimationSpec()),
           modifier =
@@ -626,11 +631,13 @@ fun PlayerControls(
               }
             },
         ) {
-          val showLoadingCircle by playerPreferences.showLoadingCircle.collectAsState()
           val icon = AnimatedImageVector.animatedVectorResource(R.drawable.anim_play_to_pause)
           val interaction = remember { MutableInteractionSource() }
 
           when {
+            playback.phase == PlaybackPhase.Failed -> {
+              Text(stringResource(R.string.playback_load_failed), color = Color.White)
+            }
             pausedForCache == true && showLoadingCircle -> {
               LoadingIndicator(
                 modifier = Modifier.size(96.dp),
@@ -892,7 +899,7 @@ fun PlayerControls(
         ) {
           val invertDuration by playerPreferences.invertDuration.collectAsState()
           val seekbarStyle by appearancePreferences.seekbarStyle.collectAsState()
-          val mediaGeneration by viewModel.mediaGeneration.collectAsState()
+          val mediaGeneration = playback.generation
           LaunchedEffect(mediaGeneration) { isSeeking = false }
           androidx.compose.runtime.key(mediaGeneration) {
             SeekbarWithTimers(
@@ -920,7 +927,7 @@ fun PlayerControls(
               },
               positionTimerOnClick = {},
               chapters = chapters.toImmutableList(),
-              paused = paused ?: false,
+              paused = paused,
               seekbarStyle = seekbarStyle,
               loopStart = abLoopA?.toFloat(),
               loopEnd = abLoopB?.toFloat(),

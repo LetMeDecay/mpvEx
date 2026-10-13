@@ -837,4 +837,5 @@
   <string name="view_mode">视图模式</string>
   <string name="why_do_i_see_this">我为什么会看到此提示？</string>
   <string name="why_this_permission_is_needed">需要此权限的原因</string>
+  <string name="playback_load_failed">无法打开此视频</string>
 </resources>

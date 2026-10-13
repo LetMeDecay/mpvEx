@@ -41,15 +41,29 @@ class PlayerObserver(
     dispatch { activity.onObserverEvent(property, value) }
 
   override fun event(eventId: Int, data: MPVNode) {
+    if (eventId == MPVLib.MpvEvent.MPV_EVENT_START_FILE) {
+      data["playlist_entry_id"]?.asInt()?.let(MpvGateway::fileStarted)
+    }
+    if (eventId == MPVLib.MpvEvent.MPV_EVENT_END_FILE) {
+      data["playlist_entry_id"]?.asInt()?.let(MpvGateway::fileEnded)
+    }
     if (activity.player.isExiting) return
     when (eventId) {
       MPVLib.MpvEvent.MPV_EVENT_START_FILE ->
         identities.start(data["playlist_entry_id"]?.asInt())
-      MPVLib.MpvEvent.MPV_EVENT_END_FILE -> identities.end(
-        data["playlist_entry_id"]?.asInt(),
-        data["playlist_insert_id"]?.asInt(),
-        data["playlist_insert_num_entries"]?.asInt() ?: 0L,
-      )
+      MPVLib.MpvEvent.MPV_EVENT_END_FILE -> {
+        val id = data["playlist_entry_id"]?.asInt()
+        val ended = identities.capture()?.takeIf { it.entryId == id }
+        identities.end(id, data["playlist_insert_id"]?.asInt(),
+          data["playlist_insert_num_entries"]?.asInt() ?: 0L)
+        if (ended != null && data["reason"]?.asString() == "error") {
+          activity.lifecycleScope.launch {
+            if (identities.resolveEnded(ended) && !activity.player.isExiting) {
+              activity.onPlaybackFailure(ended.generation)
+            }
+          }
+        }
+      }
       MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED,
       MPVLib.MpvEvent.MPV_EVENT_PLAYBACK_RESTART -> dispatch(verifyNative = true) { event ->
         val path = MpvGateway.getPropertyString("path") ?: return@dispatch

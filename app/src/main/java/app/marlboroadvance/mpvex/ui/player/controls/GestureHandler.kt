@@ -86,10 +86,11 @@ fun GestureHandler(
   val gesturePreferences = koinInject<GesturePreferences>()
   val panelShown by viewModel.panelShown.collectAsState()
   val allowGesturesInPanels by playerPreferences.allowGesturesInPanels.collectAsState()
-  val paused by MpvGateway.propBoolean["pause"].collectAsState()
-  val duration by viewModel.preciseDuration.collectAsState()
-  val mediaGeneration by viewModel.mediaGeneration.collectAsState()
-  val position by viewModel.precisePosition.collectAsState()
+  val playback by viewModel.playbackState.collectAsState()
+  val paused = playback.paused
+  val duration = playback.duration ?: 0f
+  val mediaGeneration = playback.generation
+  val position = playback.position
   val playbackSpeed by MpvGateway.propFloat["speed"].collectAsState()
   val controlsShown by viewModel.controlsShown.collectAsState()
   val areControlsLocked by viewModel.areControlsLocked.collectAsState()

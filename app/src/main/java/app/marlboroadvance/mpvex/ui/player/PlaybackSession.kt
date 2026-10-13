@@ -21,6 +21,12 @@ internal class PlaybackSession {
     expectedPath = path.removePrefix("file://")
   }
 
+  fun failed(eventGeneration: Long) {
+    if (generation != eventGeneration) return
+    loaded = false
+    interact()
+  }
+
   fun retire() {
     loaded = false
     expectedPath = null

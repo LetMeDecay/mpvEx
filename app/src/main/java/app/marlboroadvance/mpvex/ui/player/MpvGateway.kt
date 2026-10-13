@@ -5,6 +5,7 @@ import `is`.xyz.mpv.MPVLib
 /** Native entry boundary. Destruction waits for leases without blocking callbacks. */
 internal object MpvGateway {
   private val access = NativePlaybackAccess()
+  private val sources = PlaybackSourceLeases()
   fun open() = access.open()
   val propBoolean get() = MPVLib.propBoolean
   val propInt get() = MPVLib.propInt
@@ -13,10 +14,30 @@ internal object MpvGateway {
   val propDouble get() = MPVLib.propDouble
   val propString get() = MPVLib.propString
 
-  fun loadFile(path: String): Long? = access.call {
-    checkNotNull(MPVLib.commandNode("loadfile", path)?.get("playlist_entry_id")?.asInt()) {
-      "Native load did not return a playlist entry identity"
+  fun loadSource(source: PlayableSource): Long? {
+    var accepted = false
+    try {
+      return access.call {
+        accepted = true
+        sources.load(source) { path ->
+          checkNotNull(MPVLib.commandNode("loadfile", path)?.get("playlist_entry_id")?.asInt()) {
+            "Native load did not return a playlist entry identity"
+          }
+        }
+      }
+    } finally {
+      if (!accepted) source.close()
     }
+  }
+
+  fun fileStarted(entryId: Long) = sources.started(entryId)
+  fun fileEnded(entryId: Long) = sources.ended(entryId)
+
+  // Subtitle/audio streams remain borrowed until the engine has stopped reading.
+  fun retainExtraSource(source: PlayableSource): Boolean {
+    val retained = access.call { sources.retainExtra(source) } == true
+    if (!retained) source.close()
+    return retained
   }
 
   fun playingEntryId(): Long? = access.call {
@@ -45,5 +66,8 @@ internal object MpvGateway {
   fun addObserver(observer: MPVLib.EventObserver) = MPVLib.addObserver(observer)
   fun removeObserver(observer: MPVLib.EventObserver) = MPVLib.removeObserver(observer)
   fun grabThumbnail(size: Int) = access.call { MPVLib.grabThumbnail(size) }
-  fun destroy() = access.close { MPVLib.destroy() }
+  fun destroy() = access.close {
+    MPVLib.destroy()
+    sources.closeAll()
+  }
 }

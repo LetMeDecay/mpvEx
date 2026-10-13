@@ -159,6 +159,11 @@ P0/P1a 已完成，P1b 核心加载/事件/退出链已收口：
 
 适配依据：本机 AAR `mpv v0.41.0-224-gd54bad563`，JNI event_thread 使用 mpv_event_to_node；[对应 cmd_loadfile](https://github.com/mpv-player/mpv/blob/d54bad563/player/command.c) 返回 playlist_entry_id。[mpv 属性约定](https://mpv.io/manual/stable/#properties)中 playlist-playing-pos 与 playlist/N/id 用于校验实际在播条目。BaseMPVView 的文件槽保持为空，由原回调只负责 Surface 挂接/恢复 VO。
 
-下一步：推进完整 PlaybackUiState/控件意图汇聚及 P2 的当前文件优先、配置快照、URI 租约；P3–P6 仍未完成。不把本轮算作引擎复用或启动耗时优化已验收。实例初始化、手动后台/重建行为仍保留原框架，需按阶段验证后替换。
+本批继续落地：
+- 核心 PlaybackUiState 原子发布代次、时间线、暂停/缓冲和准备/失败状态；进度条及手势共用同一快照，失败事件按实际结束条目隔离。
+- Intent 地址解析不再打开资源；当前文件名称/身份查询及资源打开在 IO 执行，旧代次结果丢弃并关闭。目录/数据库队列移到当前文件就绪之后；移除换片后固定 100ms 探测。
+- content URI 使用可关闭资源租约；按 native START/END 及销毁释放，覆盖跳过条目和早于命令返回的回调。依据固定版本 [stream_file.c](https://github.com/mpv-player/mpv/blob/d54bad563/stream/stream_file.c) 的 fd:// 借用语义及 [loadfile.c](https://github.com/mpv-player/mpv/blob/d54bad563/player/loadfile.c) 在 END_FILE 前关闭 demuxer 的顺序；附加字幕/音轨资源随引擎释放。
+
+下一步：P2 配置/字体快照和真正按需队列；其余控件意图及 Service/PiP 收口，P3–P6 仍未完成。当前队列只是延后全量读取，native 初始化仍在主线程；不把本轮算作实例复用或启动耗时优化已验收。
 
 验证和交付状态仅记于 PROJECT_CONTEXT.md；功能/性能与设备验收不由单元测试替代。

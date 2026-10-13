@@ -10,15 +10,6 @@
 
 ## 本分支问题
 
-### R2 / P2：onNewIntent 的媒体探测重复打开并遗失文件描述符
-
-- 位置：`app/src/main/java/app/marlboroadvance/mpvex/ui/player/PlayerActivity.kt:2353-2359`；关联 `:1240-1244`、`:1402-1409` 和 `ui/player/PlayerUtils.kt:159-165`。
-- 触发：已打开的播放器收到新的 content URI，提供方无法返回真实文件路径，走 `tryFileDescriptorFallback`。
-- 证据：新增的 `parsePathFromIntent` 并非纯解析，会调用 `resolveUri` → `openContentFd` → `openFileDescriptor(...).detachFd()`，返回第一个 fd URI；随后 `getPlayableUri(intent)` 再次调用同一个解析器并打开第二个 fd。第一个结果仅用于判断有无媒体和代理识别，没有交给播放器，也没有关闭。
-- 后果：每次命中此分支至少遗失一个原始描述符，反复打开文件会累积；本地路径解析成功的 content URI 不受此项影响。
-- 来源：本分支 `87bfb83` 新增了前一次解析；不把原有 fd 生命周期问题混作本项。
-- 下一步：复用一次解析的结果，或使用不打开文件的媒体存在性判断；为所有打开的 fd 明确移交/关闭路径。
-
 ### R3 / P2：目录刷新后，同路径新版本继续显示旧缩略图
 
 - 位置：`app/src/main/java/app/marlboroadvance/mpvex/ui/browser/networkstreaming/NetworkBrowserViewModel.kt:175-185`、`:274-275`；关联 `NetworkBrowserScreen.kt:497-504`。
@@ -55,5 +46,5 @@
 - reex Dart AOT 播放链未完整还原；已确认架构和推测必须区分。
 - MPV AAR 仍将实例初始化与 Surface 生命周期耦合；本轮只统一 Surface 就绪后的加载入口和退出顺序，未启用实例复用或将初始化移出主线程。
 - 原生事件已按 loadfile 返回的条目 ID 绑定并校验在播 ID；应用代次测试和 JNI 静态核对不替代设备上的 Surface 重建、M3U/重定向和后台切换验收。
-- 销毁需等待不可取消的同步 JNI 调用结束；数据库最终快照也需等待 IO 完成，尚无耗时上界。完整 PlaybackUiState/所有控件意图的统一仍需后续迁移，不等同于本轮生命周期收口。
+- 销毁需等待不可取消的同步 JNI 调用结束；数据库最终快照和同步 ContentProvider 打开也需等待 IO 完成，尚无耗时上界。核心时间线/暂停/缓冲已统一状态，其余控件意图及 Service/PiP 仍需迁移；数据库队列只是延后加载，尚未分页。
 - 无当前设备验收或私有服务器数据；未执行功能测试。旧测试结果不能替代新架构验证。
