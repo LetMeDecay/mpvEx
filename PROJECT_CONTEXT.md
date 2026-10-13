@@ -8,6 +8,5 @@
 - 本批：通知/PiP 暂停与定位接入同一控制通道，通知读取核心状态；暂停队列有界且校验代次。配置/字体/脚本后台生成按内容寻址的完整快照，失败回退上一版本，活跃引擎持有租约；先绘制准备界面再初始化 native。配置编辑器移除临时文件并可靠关闭输入流。
 - 尚未完成：其他控件意图及元数据汇聚、native 初始化线程/实例生命周期调整、真正分页队列及 P3–P6。没有设备启动耗时，不能宣称 WebDAV 1–2 秒等待已解决。
 - 本批验证：33 项针对性单元测试与最终 Standard Debug 编译通过；日志 `.tmp/playback-source-20261013/`。Standard Release/R8/lintVital 构建通过（2m35s）；签名、原证书一致、版本递增、16KB ZIP 对齐及交付哈希全部通过。ADB 无设备，未执行安装、启动健康或功能/性能验收。
-- 最新交付代码 `cb99287`：Release 1.2.9-rev1013.1，基础 versionCode 133（ABI 1330–1334），`../release/` 五种 APK + idsig 已覆盖旧包；构建/检查日志和 delivery-manifest.json 保留在本批 scratch 中。
-- 本批检查：7 项命令队列测试、4 项配置快照测试及最终 Standard Debug 编译通过；日志 `.tmp/remaining-20261013/`。Release 1.2.9-rev1013.2 / 基础 versionCode 134 待交付。
+- 本批检查：7 项命令队列测试、4 项配置快照测试及最终 Standard Debug 编译通过；日志 `.tmp/remaining-20261013/`。Release/R8/lintVital 构建通过（2m34s）。代码 `d40f12b` 的 1.2.9-rev1013.2 / versionCode 134（ABI 1340–1344）五种 APK + idsig 已覆盖 `../release/`；原证书、版本递增、16KB ZIP 对齐、签名与交付哈希均通过。无设备安装/功能验收。
 - 下一步：继续按需队列和稳定历史身份，然后推进后续阶段。未解决问题仅见 PROJECT_ISSUES.md，reex 静态证据见 REEX_STARTUP_REVIEW.md；历史查 Git，不恢复已删除的重复流水。
