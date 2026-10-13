@@ -1607,7 +1607,9 @@ class PlayerActivity :
 
     val loadedMediaIdentifier = mediaIdentifier
     val loadGeneration = ++playbackStateLoadGeneration
-    val restoreTicket = viewModel.playbackSession.ticket()
+    val restoreTicket = viewModel.playbackSession.restoreTicket()
+    fun canRestore() = isCurrentPlaybackStateLoad(loadGeneration, loadedMediaIdentifier) &&
+      viewModel.playbackSession.canRestore(restoreTicket)
     val isInitialFileLoad = !initialIntentExtrasApplied
     val intentPosition = if (isInitialFileLoad) getIntentPositionSeconds(intent.extras) else null
 
@@ -1645,21 +1647,29 @@ class PlayerActivity :
       // database lookup is asynchronous and can otherwise restore an older
       // item's state after the user has already switched files.
       withContext(Dispatchers.Main) {
-        if (isCurrentPlaybackStateLoad(loadGeneration, loadedMediaIdentifier)) {
-          applyPlaybackState(state, viewModel.playbackSession.isCurrent(restoreTicket))
+        if (canRestore()) {
+          applyPlaybackState(state, ::canRestore)
           applyDefaultSettings(state)
         }
       }
-      if (!isCurrentPlaybackStateLoad(loadGeneration, loadedMediaIdentifier)) return@launch
+      if (!canRestore()) return@launch
 
       // Apply track selection logic (defaults only apply when no saved state)
-      trackSelector.onFileLoaded(hasState)
-      if (!isCurrentPlaybackStateLoad(loadGeneration, loadedMediaIdentifier)) return@launch
+      trackSelector.onFileLoaded(
+        preserveAudio = playerPreferences.restoreTracks.get() && state?.audioTrackKey?.let {
+          TrackIdentity.resolve(it, MpvGateway.trackIdentities("audio")) != null
+        } == true,
+        preserveSubtitles = playerPreferences.restoreTracks.get() && state?.subtitleTrackKey?.let {
+          TrackIdentity.resolve(it, MpvGateway.trackIdentities("sub")) != null
+        } == true,
+        isCurrent = ::canRestore,
+      )
+      if (!canRestore()) return@launch
 
       // Apply default zoom only if there's no saved state
-      if (!hasState) {
+      if (!hasState || !playerPreferences.restoreZoom.get()) {
         withContext(Dispatchers.Main) {
-          if (!isCurrentPlaybackStateLoad(loadGeneration, loadedMediaIdentifier)) return@withContext
+          if (!canRestore()) return@withContext
           val zoomPreference = playerPreferences.defaultVideoZoom.get()
           MpvGateway.setPropertyDouble("video-zoom", zoomPreference.toDouble())
           viewModel.setVideoZoom(zoomPreference)
@@ -1668,7 +1678,7 @@ class PlayerActivity :
 
       // Apply saved aspect ratio setting
       withContext(Dispatchers.Main) {
-        if (!isCurrentPlaybackStateLoad(loadGeneration, loadedMediaIdentifier)) return@withContext
+        if (!canRestore()) return@withContext
         val savedAspect = playerPreferences.defaultVideoAspect.get()
         val savedCustomRatio = playerPreferences.defaultCustomAspectRatio.get()
         
@@ -1973,6 +1983,9 @@ class PlayerActivity :
     val watchedThreshold = browserPreferences.watchedThreshold.get() / 100f
     val snapshot = PlaybackStateEntity(
       mediaTitle = identifier,
+      audioTrackKey = TrackIdentity.capture(player.aid, MpvGateway.trackIdentities("audio")),
+      subtitleTrackKey = TrackIdentity.capture(player.sid, MpvGateway.trackIdentities("sub")),
+      secondarySubtitleTrackKey = TrackIdentity.capture(player.secondarySid, MpvGateway.trackIdentities("sub")),
       lastPosition = if (duration > 0 && pos >= duration - 1) 0 else pos,
       playbackSpeed = MpvGateway.getPropertyDouble("speed") ?: DEFAULT_PLAYBACK_SPEED,
       videoZoom = MpvGateway.getPropertyDouble("video-zoom")?.toFloat() ?: 0f,
@@ -2039,7 +2052,7 @@ class PlayerActivity :
    */
   private fun applyPlaybackState(
     state: PlaybackStateEntity?,
-    restorePosition: Boolean,
+    canRestore: () -> Boolean,
   ) {
     if (state == null) return
 
@@ -2047,46 +2060,41 @@ class PlayerActivity :
     val audioDelay = state.audioDelay / DELAY_DIVISOR
 
     // Restore external subtitles first
-    if (state.externalSubtitles.isNotBlank()) {
+    if (playerPreferences.restoreTracks.get() && state.externalSubtitles.isNotBlank()) {
       val externalSubUris = state.externalSubtitles.split("|").filter { it.isNotBlank() }
       Log.d(TAG, "Restoring ${externalSubUris.size} external subtitle(s)")
 
       for (subUri in externalSubUris) {
-        viewModel.addSubtitle(Uri.parse(subUri), select = false, silent = true)
+        viewModel.addSubtitle(Uri.parse(subUri), select = false, silent = true, canApply = canRestore)
       }
     }
 
-    // Always restore subtitle and audio tracks from saved state
-    // User's manual selection has highest priority
-    if (state.sid > 0) {
-      player.sid = state.sid
-      Log.d(TAG, "Restored primary subtitle track: ${state.sid} (user selection)")
+    if (playerPreferences.restoreTracks.get()) {
+      val audioTracks = MpvGateway.trackIdentities("audio")
+      val subtitleTracks = MpvGateway.trackIdentities("sub")
+      TrackIdentity.resolve(state.audioTrackKey, audioTracks)?.let { player.aid = it }
+      TrackIdentity.resolve(state.subtitleTrackKey, subtitleTracks)?.let { player.sid = it }
+      TrackIdentity.resolve(state.secondarySubtitleTrackKey, subtitleTracks)?.let { player.secondarySid = it }
     }
 
-    if (state.secondarySid > 0) {
-      player.secondarySid = state.secondarySid
-      Log.d(TAG, "Restored secondary subtitle track: ${state.secondarySid} (user selection)")
+    if (playerPreferences.restoreDelays.get()) {
+      MpvGateway.setPropertyDouble("sub-delay", subDelay)
+      MpvGateway.setPropertyDouble("audio-delay", audioDelay)
+      MpvGateway.setPropertyDouble("sub-speed", state.subSpeed)
     }
-
-    if (state.aid > 0) {
-      player.aid = state.aid
-      Log.d(TAG, "Restored audio track: ${state.aid} (user selection)")
+    if (playerPreferences.restoreSpeed.get()) {
+      MpvGateway.setPropertyDouble("speed", state.playbackSpeed)
     }
-
-    MpvGateway.setPropertyDouble("sub-delay", subDelay)
-    MpvGateway.setPropertyDouble("speed", state.playbackSpeed)
-    MpvGateway.setPropertyDouble("audio-delay", audioDelay)
-    MpvGateway.setPropertyDouble("sub-speed", state.subSpeed)
-
-    // Restore video zoom from saved state
-    MpvGateway.setPropertyDouble("video-zoom", state.videoZoom.toDouble())
-    viewModel.setVideoZoom(state.videoZoom)
+    if (playerPreferences.restoreZoom.get()) {
+      MpvGateway.setPropertyDouble("video-zoom", state.videoZoom.toDouble())
+      viewModel.setVideoZoom(state.videoZoom)
+    }
 
     val savedPosition = PlaybackPositionPolicy.positionToRestore(
       savePositionOnQuit = playerPreferences.savePositionOnQuit.get(),
       savedPosition = state.lastPosition,
     )
-    if (restorePosition) savedPosition?.let { MpvGateway.setPropertyInt("time-pos", it) }
+    savedPosition?.let { MpvGateway.setPropertyInt("time-pos", it) }
   }
 
   /**
@@ -2097,9 +2105,13 @@ class PlayerActivity :
    * @param state The saved playback state entity (null if no saved state)
    */
   private fun applyDefaultSettings(state: PlaybackStateEntity?) {
-    if (state == null) {
-      val defaultSubSpeed = subtitlesPreferences.defaultSubSpeed.get().toDouble()
-      MpvGateway.setPropertyDouble("sub-speed", defaultSubSpeed)
+    if (state == null || !playerPreferences.restoreSpeed.get()) {
+      MpvGateway.setPropertyDouble("speed", playerPreferences.defaultSpeed.get().toDouble())
+    }
+    if (state == null || !playerPreferences.restoreDelays.get()) {
+      MpvGateway.setPropertyDouble("sub-delay", subtitlesPreferences.defaultSubDelay.get() / DELAY_DIVISOR)
+      MpvGateway.setPropertyDouble("audio-delay", audioPreferences.defaultAudioDelay.get() / DELAY_DIVISOR)
+      MpvGateway.setPropertyDouble("sub-speed", subtitlesPreferences.defaultSubSpeed.get().toDouble())
     }
   }
 
@@ -2426,6 +2438,12 @@ class PlayerActivity :
    * @param event The key event
    * @return true if event was handled, false otherwise
    */
+  override fun onUserInteraction() {
+    super.onUserInteraction()
+    // Retire delayed defaults/history without cancelling an in-flight seek.
+    if (mpvInitialized) viewModel.playbackSession.cancelRestoration()
+  }
+
   @Suppress("ReturnCount", "CyclomaticComplexMethod", "LongMethod")
   override fun onKeyDown(
     keyCode: Int,

@@ -2,6 +2,8 @@ package app.marlboroadvance.mpvex.ui.player
 
 /** File and user-interaction identity shared by delayed playback operations. */
 internal class PlaybackSession {
+  data class RestoreTicket(val generation: Long, val revision: Long)
+
   data class Ticket(val generation: Long, val interaction: Long)
 
   @Volatile var generation = 0L
@@ -10,6 +12,7 @@ internal class PlaybackSession {
     private set
   @Volatile private var expectedPath: String? = null
   @Volatile private var interaction = 0L
+  @Volatile private var restoreRevision = 0L
   private var pendingPosition: Float? = null
   private var pendingSince = 0L
 
@@ -63,7 +66,14 @@ internal class PlaybackSession {
     return fileLoaded(path)
   }
 
+  fun cancelRestoration() { restoreRevision++ }
+
+  fun restoreTicket() = RestoreTicket(generation, restoreRevision)
+  fun canRestore(ticket: RestoreTicket): Boolean =
+    loaded && ticket.generation == generation && ticket.revision == restoreRevision
+
   fun interact() {
+    cancelRestoration()
     interaction++
     pendingPosition = null
   }

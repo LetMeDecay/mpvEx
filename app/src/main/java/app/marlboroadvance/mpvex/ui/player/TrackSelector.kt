@@ -3,6 +3,8 @@ package app.marlboroadvance.mpvex.ui.player
 import android.util.Log
 import app.marlboroadvance.mpvex.preferences.AudioPreferences
 import app.marlboroadvance.mpvex.preferences.SubtitlesPreferences
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 
 /**
@@ -59,30 +61,32 @@ class TrackSelector(
     val image: Boolean
   )
 
-  suspend fun onFileLoaded(hasState: Boolean = false) {
+  suspend fun onFileLoaded(preserveAudio: Boolean, preserveSubtitles: Boolean, isCurrent: () -> Boolean) = withContext(Dispatchers.Main.immediate) {
     var attempts = 0
     val maxAttempts = 20
     
     while (attempts < maxAttempts) {
+      if (!isCurrent()) return@withContext
       val count = MpvGateway.getPropertyInt("track-list/count") ?: 0
       if (count > 0) break
       delay(50)
       attempts++
     }
 
+    if (!isCurrent()) return@withContext
     val trackCount = MpvGateway.getPropertyInt("track-list/count") ?: 0
-    if (trackCount == 0) return
+    if (trackCount == 0) return@withContext
 
     // Read all tracks once
     val tracks = readTracks(trackCount)
 
     if (!isVideoFile(tracks)) {
       Log.d(TAG, "Smart Tracks: Audio/Image file detected. Script disabled.")
-      return
+      return@withContext
     }
   
-    ensureAudioTrackSelected(tracks, hasState)
-    ensureSubtitleTrackSelected(tracks, hasState)
+    ensureAudioTrackSelected(tracks, preserveAudio)
+    ensureSubtitleTrackSelected(tracks, preserveSubtitles)
   }
 
   private fun readTracks(count: Int): List<Track> {
@@ -158,10 +162,9 @@ class TrackSelector(
   // 1. AUDIO SELECTION LOGIC (Multi-Pass Preserved)
   // ==================================================
 
-  private suspend fun ensureAudioTrackSelected(tracks: List<Track>, hasState: Boolean) {
+  private fun ensureAudioTrackSelected(tracks: List<Track>, hasState: Boolean) {
     try {
-      val currentAid = MpvGateway.getPropertyInt("aid")
-      if (hasState && currentAid != null && currentAid > 0) return
+      if (hasState) return
 
       val preferredLangs = audioPreferences.preferredLanguages.get()
         .split(",")
@@ -214,7 +217,7 @@ class TrackSelector(
   // 2. SUBTITLE SELECTION LOGIC (Multi-Pass Preserved)
   // ==================================================
 
-  private suspend fun ensureSubtitleTrackSelected(tracks: List<Track>, hasState: Boolean) {
+  private fun ensureSubtitleTrackSelected(tracks: List<Track>, hasState: Boolean) {
     try {
       val currentSid = MpvGateway.getPropertyInt("sid") ?: 0
 

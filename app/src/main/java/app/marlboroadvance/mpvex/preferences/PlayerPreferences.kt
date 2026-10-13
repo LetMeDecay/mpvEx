@@ -37,6 +37,11 @@ class PlayerPreferences(
   val showLoadingCircle = preferenceStore.getBoolean("show_loading_circle", true)
   val savePositionOnQuit = preferenceStore.getBoolean("save_position", true)
 
+  val restoreSpeed = preferenceStore.getBoolean("restore_speed", true)
+  val restoreTracks = preferenceStore.getBoolean("restore_tracks", true)
+  val restoreDelays = preferenceStore.getBoolean("restore_delays", true)
+  val restoreZoom = preferenceStore.getBoolean("restore_zoom", true)
+
   val closeAfterReachingEndOfVideo = preferenceStore.getBoolean("close_after_eof", true)
 
   val rememberBrightness = preferenceStore.getBoolean("remember_brightness")

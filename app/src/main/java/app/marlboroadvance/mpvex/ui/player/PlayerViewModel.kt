@@ -174,7 +174,10 @@ class PlayerViewModel(
   private var requestedPause: Pair<Long, Boolean>? = null
   internal val controls = object : PlaybackControls {
     override val state = playbackState
-    override fun setPaused(paused: Boolean) = requestPause(paused)
+    override fun setPaused(paused: Boolean) {
+      playbackSession.cancelRestoration()
+      requestPause(paused)
+    }
     override fun seekBy(seconds: Int) = this@PlayerViewModel.seekBy(seconds)
     override fun seekTo(seconds: Int) = this@PlayerViewModel.seekTo(seconds)
     override fun stop() { (host as? PlayerActivity)?.stopFromSystem() }
@@ -556,7 +559,13 @@ class PlayerViewModel(
     }
   }
 
-  fun addSubtitle(uri: Uri, select: Boolean = true, silent: Boolean = false) {
+  fun addSubtitle(
+    uri: Uri,
+    select: Boolean = true,
+    silent: Boolean = false,
+    canApply: () -> Boolean = { true },
+  ) {
+    val generation = playbackSession.generation
     viewModelScope.launch(Dispatchers.IO) {
       val uriString = uri.toString()
       if (_externalSubtitles.contains(uriString)) {
@@ -589,20 +598,14 @@ class PlayerViewModel(
         val mpvPath = uri.resolveUri(host.context) ?: uri.toString()
         val mode = if (select) "select" else "auto"
         
-        // Store mapping for reliable physical deletion later
-        mpvPathToUriMap[mpvPath] = uri.toString()
-        
-        MpvGateway.command("sub-add", mpvPath, mode)
-
-        // Track external subtitle URI for persistence
-        val uriString = uri.toString()
-        if (!_externalSubtitles.contains(uriString)) {
-          _externalSubtitles.add(uriString)
-        }
-
-        val displayName = fileName.take(30).let { if (fileName.length > 30) "$it..." else it }
-        if (!silent) {
-          withContext(Dispatchers.Main) {
+        // IO may complete after a new file or user choice has superseded this request.
+        withContext(Dispatchers.Main.immediate) {
+          if (generation != playbackSession.generation || !canApply()) return@withContext
+          mpvPathToUriMap[mpvPath] = uriString
+          MpvGateway.command("sub-add", mpvPath, mode)
+          if (!_externalSubtitles.contains(uriString)) _externalSubtitles.add(uriString)
+          if (!silent) {
+            val displayName = fileName.take(30).let { if (fileName.length > 30) "$it..." else it }
             showToast(host.context.getString(R.string.subtitle_added, displayName))
           }
         }

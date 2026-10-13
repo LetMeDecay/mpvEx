@@ -147,4 +147,28 @@ class PlaybackSessionTest {
     assertFalse(session.acceptsEvent("redirected", generation))
   }
 
+  @Test
+  fun unrelatedInputRetiresHistoryWithoutCancellingPendingSeek() {
+    val session = loaded()
+    val seek = session.seek(30f, 0)
+    val restore = session.restoreTicket()
+    session.cancelRestoration()
+    assertFalse(session.canRestore(restore))
+    assertTrue(session.isCurrent(seek))
+    assertEquals(30f, session.displayPosition(10f, true, 1), 0f)
+  }
+
+  @Test
+  fun restoreTicketRejectsSeekAndLaterVisitToSameFile() {
+    val session = loaded("a")
+    val beforeSeek = session.restoreTicket()
+    session.seek(50f, 0)
+    assertFalse(session.canRestore(beforeSeek))
+    val oldFile = session.restoreTicket()
+    session.begin("a")
+    session.fileLoaded("a")
+    assertFalse(session.canRestore(oldFile))
+    assertTrue(session.canRestore(session.restoreTicket()))
+  }
+
 }

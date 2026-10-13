@@ -853,4 +853,8 @@
     <string name="playlist_previous_page">Previous</string>
     <string name="playlist_next_page">Next</string>
     <string name="playlist_changed">Playlist changed or unavailable; reopen it to refresh</string>
+    <string name="pref_restore_speed">Restore playback speed</string>
+    <string name="pref_restore_tracks">Restore audio and subtitle tracks</string>
+    <string name="pref_restore_delays">Restore audio and subtitle timing</string>
+    <string name="pref_restore_zoom">Restore video zoom</string>
 </resources>

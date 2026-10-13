@@ -843,4 +843,8 @@
     <string name="playlist_previous_page">上一页</string>
     <string name="playlist_next_page">下一页</string>
     <string name="playlist_changed">播放列表已变更或无法读取，请重新打开列表</string>
+    <string name="pref_restore_speed">恢复播放倍速</string>
+    <string name="pref_restore_tracks">恢复音轨和字幕轨道</string>
+    <string name="pref_restore_delays">恢复音频和字幕同步设置</string>
+    <string name="pref_restore_zoom">恢复视频缩放</string>
 </resources>

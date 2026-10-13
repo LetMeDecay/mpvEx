@@ -105,6 +105,38 @@ object PlayerPreferencesScreen : Screen {
               
               PreferenceDivider()
               
+              val restoreSpeed by preferences.restoreSpeed.collectAsState()
+              SwitchPreference(
+                value = restoreSpeed,
+                onValueChange = preferences.restoreSpeed::set,
+                title = { Text(stringResource(R.string.pref_restore_speed)) },
+              )
+              PreferenceDivider()
+
+              val restoreTracks by preferences.restoreTracks.collectAsState()
+              SwitchPreference(
+                value = restoreTracks,
+                onValueChange = preferences.restoreTracks::set,
+                title = { Text(stringResource(R.string.pref_restore_tracks)) },
+              )
+              PreferenceDivider()
+
+              val restoreDelays by preferences.restoreDelays.collectAsState()
+              SwitchPreference(
+                value = restoreDelays,
+                onValueChange = preferences.restoreDelays::set,
+                title = { Text(stringResource(R.string.pref_restore_delays)) },
+              )
+              PreferenceDivider()
+
+              val restoreZoom by preferences.restoreZoom.collectAsState()
+              SwitchPreference(
+                value = restoreZoom,
+                onValueChange = preferences.restoreZoom::set,
+                title = { Text(stringResource(R.string.pref_restore_zoom)) },
+              )
+              PreferenceDivider()
+
               val closeAfterEndOfVideo by preferences.closeAfterReachingEndOfVideo.collectAsState()
               SwitchPreference(
                 value = closeAfterEndOfVideo,

@@ -1,11 +1,16 @@
 package app.marlboroadvance.mpvex.database.entities
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
 @Entity
 data class PlaybackStateEntity(
   @PrimaryKey val mediaTitle: String,
+  @ColumnInfo(defaultValue = "''") val audioTrackKey: String = "",
+  @ColumnInfo(defaultValue = "''") val subtitleTrackKey: String = "",
+  @ColumnInfo(defaultValue = "''") val secondarySubtitleTrackKey: String = "",
+
   val lastPosition: Int, // in seconds
   val playbackSpeed: Double,
   val videoZoom: Float = 0f,

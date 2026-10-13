@@ -47,6 +47,21 @@ internal object MpvGateway {
     entry["id"]?.asInt().takeIf { entry["playing"]?.asBoolean() == true }
   }
 
+  fun trackIdentities(type: String): List<TrackIdentity.Track> = access.call {
+    val count = MPVLib.getPropertyInt("track-list/count") ?: 0
+    (0 until count).mapNotNull { index ->
+      val prefix = "track-list/$index"
+      if (MPVLib.getPropertyString("$prefix/type") != type ||
+        MPVLib.getPropertyBoolean("$prefix/external") == true) return@mapNotNull null
+      val id = MPVLib.getPropertyInt("$prefix/id") ?: return@mapNotNull null
+      val fields = listOf("type", "lang", "title", "codec", "demux-channel-count", "demux-samplerate")
+        .map { MPVLib.getPropertyString("$prefix/$it").orEmpty() } +
+        listOf("default", "forced", "hearing-impaired", "visual-impaired")
+          .map { (MPVLib.getPropertyBoolean("$prefix/$it") ?: false).toString() }
+      TrackIdentity.Track(id, TrackIdentity.key(fields))
+    }
+  }.orEmpty()
+
   fun command(vararg arguments: String) = access.call { MPVLib.command(*arguments) }
   fun setOptionString(name: String, value: String) = access.call { MPVLib.setOptionString(name, value) }
 
