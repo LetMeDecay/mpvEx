@@ -324,9 +324,9 @@ class PlayerActivity :
 
         AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
           // Lower volume temporarily
-          MPVLib.command("multiply", "volume", "0.5")
+          MpvGateway.command("multiply", "volume", "0.5")
           restoreAudioFocus = {
-            MPVLib.command("multiply", "volume", "2")
+            MpvGateway.command("multiply", "volume", "2")
           }
         }
 
@@ -522,7 +522,7 @@ class PlayerActivity :
   private fun setupAudio() {
     audioPreferences.audioChannels.get().let {
       runCatching {
-        MPVLib.setPropertyString(it.property, it.value)
+        MpvGateway.setPropertyString(it.property, it.value)
       }.onFailure { e ->
         Log.e(TAG, "Error setting audio channels: ${it.property}=${it.value}", e)
       }
@@ -600,7 +600,7 @@ class PlayerActivity :
 
       // Wait for any pending save operation to complete before destroying MPV
       // This prevents the race condition where the save coroutine tries to access
-      // MPV properties after MPVLib.destroy() has been called
+      // MPV properties after MpvGateway.destroy() has been called
       savePlaybackStateJob?.let { job ->
         Log.d(TAG, "Waiting for save playback state job to complete...")
         runCatching {
@@ -642,25 +642,25 @@ class PlayerActivity :
     if (!isFinishing || isManualBackgroundPlayback) return
 
     runCatching {
-      MPVLib.removeObserver(playerObserver)
+      MpvGateway.removeObserver(playerObserver)
 
       if (isReady) {
         // Pause playback first to reduce thread activity
-        MPVLib.setPropertyBoolean("pause", true)
+        MpvGateway.setPropertyBoolean("pause", true)
 
         // Send quit command to gracefully shut down MPV
-        MPVLib.command("quit")
+        MpvGateway.command("quit")
 
         // Wait briefly for MPV to process quit and clean up internal threads
         // This prevents race conditions where hardware UI threads try to access
-        // mutexes/queues that are destroyed by MPVLib.destroy()
+        // mutexes/queues that are destroyed by MpvGateway.destroy()
         // We use a short blocking wait here as onDestroy is already on the main thread
         // and this ensures proper cleanup before activity destruction
         Thread.sleep(100)
       }
 
       // Now safe to destroy MPV as internal threads have had time to shut down
-      MPVLib.destroy()
+      MpvGateway.destroy()
       mpvInitialized = false
     }.onFailure { e ->
       Log.e(TAG, "Error cleaning up MPV", e)
@@ -698,7 +698,7 @@ class PlayerActivity :
       if (isFinishing && !isManualBackgroundPlayback) {
         viewModel.pause()
         // Tell MPV to stop processing to reduce busywork during cleanup
-        MPVLib.command("stop")
+        MpvGateway.command("stop")
       } else if (!isInPip && shouldPause) {
         wasPlayingBeforePause = !(viewModel.paused ?: true)
         viewModel.pause()
@@ -904,7 +904,7 @@ class PlayerActivity :
     Log.d(TAG, "MPV initialized")
 
     // Add observer after initialization
-    MPVLib.addObserver(playerObserver)
+    MpvGateway.addObserver(playerObserver)
   }
 
   /**
@@ -1113,7 +1113,7 @@ class PlayerActivity :
     if (extras == null) return
 
     getIntentPositionSeconds(extras)?.let {
-      MPVLib.setPropertyInt("time-pos", it)
+      MpvGateway.setPropertyInt("time-pos", it)
     }
 
     addSubtitlesFromExtras(extras)
@@ -1146,7 +1146,7 @@ class PlayerActivity :
         val flag = if (subsToEnable.any { it == suburi }) "select" else "auto"
 
         Log.v(TAG, "Adding subtitles from intent extras: $subfile")
-        MPVLib.command("sub-add", subfile, flag)
+        MpvGateway.command("sub-add", subfile, flag)
       }
     }
   }
@@ -1180,7 +1180,7 @@ class PlayerActivity :
       if (headers.isEmpty()) return@let
 
       if (headers[0].startsWith("User-Agent", ignoreCase = true)) {
-        MPVLib.setPropertyString("user-agent", headers[1])
+        MpvGateway.setPropertyString("user-agent", headers[1])
       }
 
       if (headers.size > 2) {
@@ -1201,7 +1201,7 @@ class PlayerActivity :
         .map { "${it.key}: ${it.value.replace(",", "\\,")}" }
         .joinToString(",")
 
-      MPVLib.setPropertyString("http-header-fields", headersString)
+      MpvGateway.setPropertyString("http-header-fields", headersString)
       Log.d(TAG, "Set HTTP headers: $headersString")
     }
   }
@@ -1229,7 +1229,7 @@ class PlayerActivity :
         .map { "${it.key}: ${it.value.replace(",", "\\,")}" }
         .joinToString(",")
 
-      MPVLib.setPropertyString("http-header-fields", headersString)
+      MpvGateway.setPropertyString("http-header-fields", headersString)
       Log.d(TAG, "Set HTTP headers for playlist item: $headersString")
     }
   }
@@ -1507,7 +1507,7 @@ class PlayerActivity :
       "eof-reached" -> {
         if (viewModel.playbackSession.loaded &&
           viewModel.playbackSession.acceptsEvent(eventPath, eventGeneration) &&
-          MPVLib.getPropertyBoolean("eof-reached") == value) handleEndOfFile(value)
+          MpvGateway.getPropertyBoolean("eof-reached") == value) handleEndOfFile(value)
       }
     }
   }
@@ -1543,7 +1543,7 @@ class PlayerActivity :
     if (isEof) {
       // Check if we should repeat the current file
       if (viewModel.shouldRepeatCurrentFile()) {
-        MPVLib.command("seek", "0", "absolute")
+        MpvGateway.command("seek", "0", "absolute")
         viewModel.unpause()
         return
       }
@@ -1592,7 +1592,7 @@ class PlayerActivity :
     // Reaching a retained endpoint releases metadata work. Replays and seeks
     // restore the gate when mpv reports eof=false; automatic transitions return above.
     app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
-      .existingInstance()?.setPlaybackEnded(MPVLib.getPropertyString("path"), isEof)
+      .existingInstance()?.setPlaybackEnded(MpvGateway.getPropertyString("path"), isEof)
   }
 
   /**
@@ -1636,7 +1636,7 @@ class PlayerActivity :
         // Update orientation when video aspect ratio changes (fixes Video orientation mode)
         // BUT: Don't update if aspect is being overridden (stretch/custom aspect mode)
         // to prevent infinite orientation switching loop
-        val aspectOverride = MPVLib.getPropertyDouble("video-aspect-override") ?: -1.0
+        val aspectOverride = MpvGateway.getPropertyDouble("video-aspect-override") ?: -1.0
         if (playerPreferences.orientation.get() == PlayerOrientation.Video && 
             aspect != null && 
             aspectOverride <= 0.0) {
@@ -1684,7 +1684,7 @@ class PlayerActivity :
     when (eventId) {
       MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED -> {
         if (!viewModel.playbackSession.confirmLoaded(
-            eventPath, eventGeneration, MPVLib.getPropertyString("path"),
+            eventPath, eventGeneration, MpvGateway.getPropertyString("path"),
           )) return
         isReady = true
         handleFileLoaded()
@@ -1694,15 +1694,15 @@ class PlayerActivity :
         // Playback can already be running after a missed/rejected FILE_LOADED.
         // Confirm the current file before opening the timeline gate, and run
         // load initialization only once (ordinary seeks also emit RESTART).
-        if (!viewModel.playbackSession.acceptsPath(MPVLib.getPropertyString("path"))) return
+        if (!viewModel.playbackSession.acceptsPath(MpvGateway.getPropertyString("path"))) return
         if (viewModel.playbackSession.confirmLoaded(
-            eventPath, eventGeneration, MPVLib.getPropertyString("path"),
+            eventPath, eventGeneration, MpvGateway.getPropertyString("path"),
           )) {
           isReady = true
           handleFileLoaded()
         }
         if (!viewModel.playbackSession.loaded) return
-        if (MPVLib.getPropertyBoolean("eof-reached") == false) {
+        if (MpvGateway.getPropertyBoolean("eof-reached") == false) {
           app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
             .existingInstance()?.setPlaybackEnded(eventPath, false)
         }
@@ -1722,7 +1722,7 @@ class PlayerActivity :
   private fun handleFileLoaded() {
     // Consult mpv, not playlistIndex: an older FILE_LOADED callback can arrive
     // while a newer intent has already replaced the queue.
-    MPVLib.getPropertyString("path")?.takeIf { it.isNotBlank() }?.let { path ->
+    MpvGateway.getPropertyString("path")?.takeIf { it.isNotBlank() }?.let { path ->
       val current = playbackProxyStreamId(Uri.parse(path))
       app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
         .existingInstance()?.setPlaybackUrl(path)
@@ -1775,7 +1775,7 @@ class PlayerActivity :
     PlaybackPositionPolicy.positionBeforeStateLookup(
       isInitialLoad = isInitialFileLoad,
       intentPosition = intentPosition,
-    )?.let { MPVLib.setPropertyInt("time-pos", it) }
+    )?.let { MpvGateway.setPropertyInt("time-pos", it) }
 
     lifecycleScope.launch(Dispatchers.IO) {
       // Load playback state (will skip track restoration if preferred language configured)
@@ -1805,7 +1805,7 @@ class PlayerActivity :
         withContext(Dispatchers.Main) {
           if (!isCurrentPlaybackStateLoad(loadGeneration, loadedMediaIdentifier)) return@withContext
           val zoomPreference = playerPreferences.defaultVideoZoom.get()
-          MPVLib.setPropertyDouble("video-zoom", zoomPreference.toDouble())
+          MpvGateway.setPropertyDouble("video-zoom", zoomPreference.toDouble())
           viewModel.setVideoZoom(zoomPreference)
         }
       }
@@ -1869,7 +1869,7 @@ class PlayerActivity :
 
     // Don't force media-title for m3u/m3u8 streams - let MPV provide it
     if (!isCurrentStreamM3U()) {
-      MPVLib.setPropertyString("force-media-title", fileName)
+      MpvGateway.setPropertyString("force-media-title", fileName)
       viewModel.setMediaTitle(fileName)
     }
 
@@ -1910,7 +1910,7 @@ class PlayerActivity :
 
     updateMediaSessionMetadata(
       title = fileName,
-      durationMs = (MPVLib.getPropertyDouble("duration")?.times(1000))?.toLong() ?: 0L,
+      durationMs = (MpvGateway.getPropertyDouble("duration")?.times(1000))?.toLong() ?: 0L,
     )
     updateMediaSessionPlaybackState(isPlaying = true)
 
@@ -1971,11 +1971,11 @@ class PlayerActivity :
 
           // Update MPV title
           withContext(Dispatchers.Main) {
-            MPVLib.setPropertyString("force-media-title", fileName)
+            MpvGateway.setPropertyString("force-media-title", fileName)
             viewModel.setMediaTitle(fileName)
 
             // Update media session
-            val durationMs = (MPVLib.getPropertyDouble("duration")?.times(1000))?.toLong() ?: 0L
+            val durationMs = (MpvGateway.getPropertyDouble("duration")?.times(1000))?.toLong() ?: 0L
             updateMediaSessionMetadata(
               title = fileName,
               durationMs = durationMs,
@@ -1983,8 +1983,8 @@ class PlayerActivity :
 
             // Update background service if connected
             if (serviceBound && mediaPlaybackService != null) {
-              val artist = runCatching { MPVLib.getPropertyString("metadata/artist") }.getOrNull() ?: ""
-              val thumbnail = runCatching { MPVLib.grabThumbnail(1080) }.getOrNull()
+              val artist = runCatching { MpvGateway.getPropertyString("metadata/artist") }.getOrNull() ?: ""
+              val thumbnail = runCatching { MpvGateway.grabThumbnail(1080) }.getOrNull()
               mediaPlaybackService?.setMediaInfo(title = fileName, artist = artist, thumbnail = thumbnail)
             }
           }
@@ -2012,23 +2012,23 @@ class PlayerActivity :
 
           // Get duration and file size from MPV
           val updatedDuration = runCatching {
-            (MPVLib.getPropertyDouble("duration") ?: 0.0).times(1000).toLong()
+            (MpvGateway.getPropertyDouble("duration") ?: 0.0).times(1000).toLong()
           }.getOrDefault(0L)
 
           val updatedFileSize = runCatching {
             // Try multiple properties to get file size
-            MPVLib.getPropertyDouble("file-size")?.toLong()
-              ?: MPVLib.getPropertyDouble("stream-end")?.toLong()
+            MpvGateway.getPropertyDouble("file-size")?.toLong()
+              ?: MpvGateway.getPropertyDouble("stream-end")?.toLong()
               ?: 0L
           }.getOrDefault(0L)
 
           // Get video resolution from MPV
           val updatedWidth = runCatching {
-            MPVLib.getPropertyInt("width") ?: MPVLib.getPropertyInt("video-params/w") ?: 0
+            MpvGateway.getPropertyInt("width") ?: MpvGateway.getPropertyInt("video-params/w") ?: 0
           }.getOrDefault(0)
 
           val updatedHeight = runCatching {
-            MPVLib.getPropertyInt("height") ?: MPVLib.getPropertyInt("video-params/h") ?: 0
+            MpvGateway.getPropertyInt("height") ?: MpvGateway.getPropertyInt("video-params/h") ?: 0
           }.getOrDefault(0)
 
           // Update metadata without thumbnail
@@ -2061,33 +2061,33 @@ class PlayerActivity :
    */
   private fun applySubtitlePreferences() {
     // Typography settings
-    MPVLib.setPropertyString("sub-font", subtitlesPreferences.font.get())
-    MPVLib.setPropertyString("secondary-sub-font", subtitlesPreferences.font.get())
-    MPVLib.setPropertyInt("sub-font-size", subtitlesPreferences.fontSize.get())
-    MPVLib.setPropertyBoolean("sub-bold", subtitlesPreferences.bold.get())
-    MPVLib.setPropertyBoolean("sub-italic", subtitlesPreferences.italic.get())
-    MPVLib.setPropertyString("sub-justify", subtitlesPreferences.justification.get().value)
-    MPVLib.setPropertyString("sub-border-style", subtitlesPreferences.borderStyle.get().value)
-    MPVLib.setPropertyInt("sub-outline-size", subtitlesPreferences.borderSize.get())
-    MPVLib.setPropertyInt("sub-shadow-offset", subtitlesPreferences.shadowOffset.get())
+    MpvGateway.setPropertyString("sub-font", subtitlesPreferences.font.get())
+    MpvGateway.setPropertyString("secondary-sub-font", subtitlesPreferences.font.get())
+    MpvGateway.setPropertyInt("sub-font-size", subtitlesPreferences.fontSize.get())
+    MpvGateway.setPropertyBoolean("sub-bold", subtitlesPreferences.bold.get())
+    MpvGateway.setPropertyBoolean("sub-italic", subtitlesPreferences.italic.get())
+    MpvGateway.setPropertyString("sub-justify", subtitlesPreferences.justification.get().value)
+    MpvGateway.setPropertyString("sub-border-style", subtitlesPreferences.borderStyle.get().value)
+    MpvGateway.setPropertyInt("sub-outline-size", subtitlesPreferences.borderSize.get())
+    MpvGateway.setPropertyInt("sub-shadow-offset", subtitlesPreferences.shadowOffset.get())
 
     // Color settings
-    MPVLib.setPropertyString("sub-color", subtitlesPreferences.textColor.get().toColorHexString())
-    MPVLib.setPropertyString("sub-border-color", subtitlesPreferences.borderColor.get().toColorHexString())
-    MPVLib.setPropertyString("sub-back-color", subtitlesPreferences.backgroundColor.get().toColorHexString())
+    MpvGateway.setPropertyString("sub-color", subtitlesPreferences.textColor.get().toColorHexString())
+    MpvGateway.setPropertyString("sub-border-color", subtitlesPreferences.borderColor.get().toColorHexString())
+    MpvGateway.setPropertyString("sub-back-color", subtitlesPreferences.backgroundColor.get().toColorHexString())
 
     // Miscellaneous settings
     val overrideAssSubs = subtitlesPreferences.overrideAssSubs.get()
-    MPVLib.setPropertyString("sub-ass-override", if (overrideAssSubs) "force" else "scale")
-    MPVLib.setPropertyString("secondary-sub-ass-override", if (overrideAssSubs) "force" else "scale")
+    MpvGateway.setPropertyString("sub-ass-override", if (overrideAssSubs) "force" else "scale")
+    MpvGateway.setPropertyString("secondary-sub-ass-override", if (overrideAssSubs) "force" else "scale")
 
     val scaleByWindow = subtitlesPreferences.scaleByWindow.get()
     val scaleValue = if (scaleByWindow) "yes" else "no"
-    MPVLib.setPropertyString("sub-scale-by-window", scaleValue)
-    MPVLib.setPropertyString("sub-use-margins", scaleValue)
+    MpvGateway.setPropertyString("sub-scale-by-window", scaleValue)
+    MpvGateway.setPropertyString("sub-use-margins", scaleValue)
 
-    MPVLib.setPropertyFloat("sub-scale", subtitlesPreferences.subScale.get())
-    MPVLib.setPropertyInt("sub-pos", subtitlesPreferences.subPos.get())
+    MpvGateway.setPropertyFloat("sub-scale", subtitlesPreferences.subScale.get())
+    MpvGateway.setPropertyInt("sub-pos", subtitlesPreferences.subPos.get())
 
     Log.d(TAG, "Applied subtitle preferences")
   }
@@ -2110,22 +2110,22 @@ class PlayerActivity :
     if (identifier.isBlank()) return
 
     if (!viewModel.playbackSession.loaded ||
-      !viewModel.playbackSession.acceptsPath(MPVLib.getPropertyString("path"))) return
-    val pos = MPVLib.getPropertyInt("time-pos") ?: return
-    val duration = MPVLib.getPropertyInt("duration") ?: 0
+      !viewModel.playbackSession.acceptsPath(MpvGateway.getPropertyString("path"))) return
+    val pos = MpvGateway.getPropertyInt("time-pos") ?: return
+    val duration = MpvGateway.getPropertyInt("duration") ?: 0
     val savePosition = playerPreferences.savePositionOnQuit.get()
     val watchedThreshold = browserPreferences.watchedThreshold.get() / 100f
     val snapshot = PlaybackStateEntity(
       mediaTitle = identifier,
       lastPosition = if (duration > 0 && pos >= duration - 1) 0 else pos,
-      playbackSpeed = MPVLib.getPropertyDouble("speed") ?: DEFAULT_PLAYBACK_SPEED,
-      videoZoom = MPVLib.getPropertyDouble("video-zoom")?.toFloat() ?: 0f,
+      playbackSpeed = MpvGateway.getPropertyDouble("speed") ?: DEFAULT_PLAYBACK_SPEED,
+      videoZoom = MpvGateway.getPropertyDouble("video-zoom")?.toFloat() ?: 0f,
       sid = player.sid,
       secondarySid = player.secondarySid,
-      subDelay = ((MPVLib.getPropertyDouble("sub-delay") ?: 0.0) * MILLISECONDS_TO_SECONDS).toInt(),
-      subSpeed = MPVLib.getPropertyDouble("sub-speed") ?: DEFAULT_SUB_SPEED,
+      subDelay = ((MpvGateway.getPropertyDouble("sub-delay") ?: 0.0) * MILLISECONDS_TO_SECONDS).toInt(),
+      subSpeed = MpvGateway.getPropertyDouble("sub-speed") ?: DEFAULT_SUB_SPEED,
       aid = player.aid,
-      audioDelay = ((MPVLib.getPropertyDouble("audio-delay") ?: 0.0) * MILLISECONDS_TO_SECONDS).toInt(),
+      audioDelay = ((MpvGateway.getPropertyDouble("audio-delay") ?: 0.0) * MILLISECONDS_TO_SECONDS).toInt(),
       externalSubtitles = viewModel.externalSubtitles.joinToString("|"),
       hasBeenWatched = duration > 0 && (pos >= duration - 1 || pos.toFloat() / duration >= watchedThreshold),
     )
@@ -2217,20 +2217,20 @@ class PlayerActivity :
       Log.d(TAG, "Restored audio track: ${state.aid} (user selection)")
     }
 
-    MPVLib.setPropertyDouble("sub-delay", subDelay)
-    MPVLib.setPropertyDouble("speed", state.playbackSpeed)
-    MPVLib.setPropertyDouble("audio-delay", audioDelay)
-    MPVLib.setPropertyDouble("sub-speed", state.subSpeed)
+    MpvGateway.setPropertyDouble("sub-delay", subDelay)
+    MpvGateway.setPropertyDouble("speed", state.playbackSpeed)
+    MpvGateway.setPropertyDouble("audio-delay", audioDelay)
+    MpvGateway.setPropertyDouble("sub-speed", state.subSpeed)
 
     // Restore video zoom from saved state
-    MPVLib.setPropertyDouble("video-zoom", state.videoZoom.toDouble())
+    MpvGateway.setPropertyDouble("video-zoom", state.videoZoom.toDouble())
     viewModel.setVideoZoom(state.videoZoom)
 
     val savedPosition = PlaybackPositionPolicy.positionToRestore(
       savePositionOnQuit = playerPreferences.savePositionOnQuit.get(),
       savedPosition = state.lastPosition,
     )
-    if (restorePosition) savedPosition?.let { MPVLib.setPropertyInt("time-pos", it) }
+    if (restorePosition) savedPosition?.let { MpvGateway.setPropertyInt("time-pos", it) }
   }
 
   /**
@@ -2243,7 +2243,7 @@ class PlayerActivity :
   private fun applyDefaultSettings(state: PlaybackStateEntity?) {
     if (state == null) {
       val defaultSubSpeed = subtitlesPreferences.defaultSubSpeed.get().toDouble()
-      MPVLib.setPropertyDouble("sub-speed", defaultSubSpeed)
+      MpvGateway.setPropertyDouble("sub-speed", defaultSubSpeed)
     }
   }
 
@@ -2304,28 +2304,28 @@ class PlayerActivity :
 
       // Get parsed video title from MPV
       val videoTitle = runCatching {
-        MPVLib.getPropertyString("media-title")
+        MpvGateway.getPropertyString("media-title")
       }.getOrNull()?.takeIf { it.isNotBlank() && it != fileName }
 
       // Get duration and file size from MPV
       val duration = runCatching {
-        (MPVLib.getPropertyDouble("duration") ?: 0.0).times(1000).toLong()
+        (MpvGateway.getPropertyDouble("duration") ?: 0.0).times(1000).toLong()
       }.getOrDefault(0L)
 
       val fileSize = runCatching {
         // Try multiple properties to get file size
-        MPVLib.getPropertyDouble("file-size")?.toLong()
-          ?: MPVLib.getPropertyDouble("stream-end")?.toLong()
+        MpvGateway.getPropertyDouble("file-size")?.toLong()
+          ?: MpvGateway.getPropertyDouble("stream-end")?.toLong()
           ?: 0L
       }.getOrDefault(0L)
 
       // Get video resolution from MPV
       val width = runCatching {
-        MPVLib.getPropertyInt("width") ?: MPVLib.getPropertyInt("video-params/w") ?: 0
+        MpvGateway.getPropertyInt("width") ?: MpvGateway.getPropertyInt("video-params/w") ?: 0
       }.getOrDefault(0)
 
       val height = runCatching {
-        MPVLib.getPropertyInt("height") ?: MPVLib.getPropertyInt("video-params/h") ?: 0
+        MpvGateway.getPropertyInt("height") ?: MpvGateway.getPropertyInt("video-params/h") ?: 0
       }.getOrDefault(0)
 
       RecentlyPlayedOps.addRecentlyPlayed(
@@ -2842,8 +2842,8 @@ class PlayerActivity :
     MediaPlaybackService.createNotificationChannel(this)
     
     // Get media info before starting service
-    val artist = runCatching { MPVLib.getPropertyString("metadata/artist") }.getOrNull() ?: ""
-    val thumbnail = runCatching { MPVLib.grabThumbnail(1080) }.getOrNull()
+    val artist = runCatching { MpvGateway.getPropertyString("metadata/artist") }.getOrNull() ?: ""
+    val thumbnail = runCatching { MpvGateway.grabThumbnail(1080) }.getOrNull()
     
     // Pass media info via intent extras
     val intent = Intent(this, MediaPlaybackService::class.java).apply {
@@ -3168,14 +3168,14 @@ class PlayerActivity :
     // Don't force media-title for m3u/m3u8 streams - let MPV provide it
     val isM3U = uri.toString().lowercase().contains(".m3u8") || uri.toString().lowercase().contains(".m3u")
     if (!isM3U) {
-      MPVLib.setPropertyString("force-media-title", fileName)
+      MpvGateway.setPropertyString("force-media-title", fileName)
       viewModel.setMediaTitle(fileName)
     }
 
     // Update media session metadata
     lifecycleScope.launch {
       kotlinx.coroutines.delay(100) // Wait for MPV to load the file
-      val durationMs = (MPVLib.getPropertyDouble("duration")?.times(1000))?.toLong() ?: 0L
+      val durationMs = (MpvGateway.getPropertyDouble("duration")?.times(1000))?.toLong() ?: 0L
       updateMediaSessionMetadata(
         title = fileName,
         durationMs = durationMs,
@@ -3207,8 +3207,8 @@ class PlayerActivity :
         // Do not let a watcher for the previous item prefetch after a manual
         // jump or an automatic track switch.
         if (playlistIndex != watchedIndex) return@launch
-        val duration = MPVLib.getPropertyDouble("duration") ?: 0.0
-        val pos = MPVLib.getPropertyDouble("time-pos") ?: 0.0
+        val duration = MpvGateway.getPropertyDouble("duration") ?: 0.0
+        val pos = MpvGateway.getPropertyDouble("time-pos") ?: 0.0
         if (duration > 0) {
           if (duration - pos <= NEXT_PREFETCH_SECONDS && canPrefetchNext(watchedIndex)) {
             prefetchNextPlaylistItem(watchedIndex)
@@ -3273,13 +3273,13 @@ class PlayerActivity :
 
   private fun canPrefetchNext(index: Int): Boolean {
     if (!isReady || playlistIndex != index) return false
-    val remaining = (MPVLib.getPropertyDouble("duration") ?: return false) -
-      (MPVLib.getPropertyDouble("time-pos") ?: return false)
+    val remaining = (MpvGateway.getPropertyDouble("duration") ?: return false) -
+      (MpvGateway.getPropertyDouble("time-pos") ?: return false)
     return app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkPlaybackPolicy.shared.canPrefetch(
       remaining,
-      MPVLib.getPropertyDouble("demuxer-cache-duration") ?: 0.0,
-      MPVLib.getPropertyBoolean("seeking") ?: false,
-      MPVLib.getPropertyBoolean("paused-for-cache") ?: false,
+      MpvGateway.getPropertyDouble("demuxer-cache-duration") ?: 0.0,
+      MpvGateway.getPropertyBoolean("seeking") ?: false,
+      MpvGateway.getPropertyBoolean("paused-for-cache") ?: false,
     )
   }
 
@@ -3349,7 +3349,7 @@ class PlayerActivity :
   fun getTitleForControls(): String {
     // For m3u/m3u8 streams, use MPV's raw media-title directly
     if (isCurrentStreamM3U()) {
-      val rawTitle = MPVLib.getPropertyString("media-title")
+      val rawTitle = MpvGateway.getPropertyString("media-title")
       if (!rawTitle.isNullOrBlank()) {
         return rawTitle
       }
@@ -3424,28 +3424,28 @@ class PlayerActivity :
 
       // Get parsed video title from MPV
       val videoTitle = runCatching {
-        MPVLib.getPropertyString("media-title")
+        MpvGateway.getPropertyString("media-title")
       }.getOrNull()?.takeIf { it.isNotBlank() && it != name }
 
       // Get duration and file size from MPV
       val duration = runCatching {
-        (MPVLib.getPropertyDouble("duration") ?: 0.0).times(1000).toLong()
+        (MpvGateway.getPropertyDouble("duration") ?: 0.0).times(1000).toLong()
       }.getOrDefault(0L)
 
       val fileSize = runCatching {
         // Try multiple properties to get file size
-        MPVLib.getPropertyDouble("file-size")?.toLong()
-          ?: MPVLib.getPropertyDouble("stream-end")?.toLong()
+        MpvGateway.getPropertyDouble("file-size")?.toLong()
+          ?: MpvGateway.getPropertyDouble("stream-end")?.toLong()
           ?: 0L
       }.getOrDefault(0L)
 
       // Get video resolution from MPV
       val width = runCatching {
-        MPVLib.getPropertyInt("width") ?: MPVLib.getPropertyInt("video-params/w") ?: 0
+        MpvGateway.getPropertyInt("width") ?: MpvGateway.getPropertyInt("video-params/w") ?: 0
       }.getOrDefault(0)
 
       val height = runCatching {
-        MPVLib.getPropertyInt("height") ?: MPVLib.getPropertyInt("video-params/h") ?: 0
+        MpvGateway.getPropertyInt("height") ?: MpvGateway.getPropertyInt("video-params/h") ?: 0
       }.getOrDefault(0)
 
       RecentlyPlayedOps.addRecentlyPlayed(
