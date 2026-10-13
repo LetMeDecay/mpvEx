@@ -26,6 +26,7 @@ internal class PlaybackCommandQueue(
   private val wakeup = Channel<Unit>(Channel.CONFLATED)
   private var pendingLoad: Command? = null
   private var pendingSeek: Command? = null
+  private var pendingPause: Command? = null
 
   private val worker: Job
 
@@ -35,8 +36,12 @@ internal class PlaybackCommandQueue(
         while (true) {
           ensureActive()
           val command = synchronized(lock) {
-            val next = pendingLoad ?: pendingSeek
-            if (pendingLoad != null) pendingLoad = null else pendingSeek = null
+            val next = pendingLoad ?: pendingPause ?: pendingSeek
+            when {
+              pendingLoad != null -> pendingLoad = null
+              pendingPause != null -> pendingPause = null
+              else -> pendingSeek = null
+            }
             next
           } ?: break
           try {
@@ -58,6 +63,7 @@ internal class PlaybackCommandQueue(
         wakeup.close()
         pendingLoad = null
         pendingSeek = null
+        pendingPause = null
       }
     }
   }
@@ -65,13 +71,20 @@ internal class PlaybackCommandQueue(
   fun load(arguments: List<String>, isValid: () -> Boolean) = synchronized(lock) {
     pendingLoad = Command(arguments.toList(), isValid)
     pendingSeek = null
+    pendingPause = null
     if (wakeup.trySend(Unit).isFailure) pendingLoad = null
   }
 
   fun loadAction(isValid: () -> Boolean, action: suspend () -> Unit) = synchronized(lock) {
     pendingLoad = Command(emptyList(), isValid, action)
     pendingSeek = null
+    pendingPause = null
     if (wakeup.trySend(Unit).isFailure) pendingLoad = null
+  }
+
+  fun pause(paused: Boolean, isValid: () -> Boolean) = synchronized(lock) {
+    pendingPause = Command(listOf("set", "pause", if (paused) "yes" else "no"), isValid)
+    if (wakeup.trySend(Unit).isFailure) pendingPause = null
   }
 
   fun retire() {
@@ -79,6 +92,7 @@ internal class PlaybackCommandQueue(
       wakeup.close()
       pendingLoad = null
       pendingSeek = null
+      pendingPause = null
     }
     worker.cancel()
   }
@@ -93,5 +107,6 @@ internal class PlaybackCommandQueue(
   fun clearPending() = synchronized(lock) {
     pendingLoad = null
     pendingSeek = null
+    pendingPause = null
   }
 }

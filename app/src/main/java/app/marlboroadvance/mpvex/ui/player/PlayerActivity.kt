@@ -29,12 +29,13 @@ import androidx.activity.viewModels
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.core.net.toUri
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.withStarted
 import app.marlboroadvance.mpvex.database.entities.PlaybackStateEntity
 import app.marlboroadvance.mpvex.databinding.PlayerLayoutBinding
 import app.marlboroadvance.mpvex.domain.playbackstate.repository.PlaybackStateRepository
@@ -54,7 +55,6 @@ import app.marlboroadvance.mpvex.utils.media.PlaylistPrefetchOrder
 import app.marlboroadvance.mpvex.utils.media.SubtitleOps
 import app.marlboroadvance.mpvex.utils.storage.FileTypeUtils
 import app.marlboroadvance.mpvex.utils.storage.FileFilterUtils
-import com.github.k1rakishou.fsaf.FileManager
 import `is`.xyz.mpv.MPVLib
 import `is`.xyz.mpv.MPVNode
 import `is`.xyz.mpv.Utils
@@ -149,7 +149,6 @@ class PlayerActivity :
   /**
    * Manager for file operations.
    */
-  private val fileManager: FileManager by inject()
 
   /**
    * Track selector for automatic audio/subtitle selection
@@ -357,10 +356,62 @@ class PlayerActivity :
     // OPTIMIZATION: Set volume control stream so hardware buttons control media volume
     volumeControlStream = AudioManager.STREAM_MUSIC
 
-    setupMPV()
+    setupBackPressHandler()
+    binding.controls.setContent {
+      MpvexTheme {
+        androidx.compose.foundation.layout.Box(
+          modifier = Modifier.fillMaxSize(),
+          contentAlignment = androidx.compose.ui.Alignment.Center,
+        ) { androidx.compose.material3.CircularProgressIndicator() }
+      }
+    }
+    lifecycleScope.launch {
+      val prepareStarted = android.os.SystemClock.elapsedRealtime()
+      var prepared: ConfigSnapshotStore.Lease? = null
+      try {
+        prepared = PlayerConfigRepository.prepare(applicationContext, PlayerConfigRepository.Request(
+          advancedPreferences.mpvConfStorageUri.get(), advancedPreferences.mpvConf.get(),
+          advancedPreferences.inputConf.get(), subtitlesPreferences.fontsFolder.get(),
+        ))
+        Log.d("PlayerStartup", "configPreparationMs=${android.os.SystemClock.elapsedRealtime() - prepareStarted}")
+        firstPlayerDraw.await()
+        lifecycle.withStarted {
+          if (!isFinishing) {
+            setupMPV(prepared!!)
+            prepared = null // Native engine now owns the snapshot lease.
+            completePlayerSetup()
+            setupStartedPlayer()
+            updateVolume()
+          }
+        }
+      } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+      } catch (failure: Exception) {
+        Log.e(TAG, "Unable to prepare player configuration")
+        android.widget.Toast.makeText(this@PlayerActivity,
+          getString(app.marlboroadvance.mpvex.R.string.player_config_failed), android.widget.Toast.LENGTH_LONG).show()
+        finish()
+      } finally {
+        withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { prepared?.close() }
+      }
+    }
+    binding.root.viewTreeObserver.addOnDrawListener(object : android.view.ViewTreeObserver.OnDrawListener {
+      private var reported = false
+      override fun onDraw() {
+        if (reported) return
+        reported = true
+        Log.d("PlayerStartup", "activityToFirstDrawMs=${android.os.SystemClock.elapsedRealtime() - createdAt}")
+        binding.root.post {
+          binding.root.viewTreeObserver.removeOnDrawListener(this)
+          firstPlayerDraw.complete(Unit)
+        }
+      }
+    })
+  }
+
+  private fun completePlayerSetup() {
     MediaPlaybackService.createNotificationChannel(this)
     setupAudio()
-    setupBackPressHandler()
     setupPlayerControls()
     setupPipHelper()
     setupMediaSession()
@@ -402,17 +453,6 @@ class PlayerActivity :
 
     window.attributes.layoutInDisplayCutoutMode =
       WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-    Log.d("PlayerStartup", "activitySetupMs=${android.os.SystemClock.elapsedRealtime() - createdAt}")
-    binding.root.viewTreeObserver.addOnDrawListener(object : android.view.ViewTreeObserver.OnDrawListener {
-      private var reported = false
-      override fun onDraw() {
-        if (reported) return
-        reported = true
-        val now = android.os.SystemClock.elapsedRealtime()
-        Log.d("PlayerStartup", "activityToFirstDrawMs=${now - createdAt}")
-        binding.root.post { binding.root.viewTreeObserver.removeOnDrawListener(this) }
-      }
-    })
   }
 
   override fun attachBaseContext(newBase: Context?) {
@@ -433,6 +473,7 @@ class PlayerActivity :
 
   @RequiresApi(Build.VERSION_CODES.P)
   private fun handleBackPress() {
+    if (!mpvInitialized) { finish(); return }
     // Dismiss overlays first
     if (viewModel.sheetShown.value != Sheets.None) {
       viewModel.sheetShown.update { Sheets.None }
@@ -475,8 +516,14 @@ class PlayerActivity :
   /**
    * Initializes the Picture-in-Picture helper.
    */
+  internal fun stopFromSystem() {
+    isManualBackgroundPlayback = false
+    isUserFinishing = true
+    finish()
+  }
+
   private fun setupPipHelper() {
-    pipHelper = MPVPipHelper(activity = this, mpvView = player)
+    pipHelper = MPVPipHelper(activity = this, mpvView = player, controls = viewModel.controls)
   }
 
   private fun setupAudio() {
@@ -541,6 +588,7 @@ class PlayerActivity :
   @RequiresApi(Build.VERSION_CODES.P)
   override fun onDestroy() {
     Log.d(TAG, "PlayerActivity onDestroy")
+    if (!mpvInitialized) { super.onDestroy(); return }
 
     runCatching {
       // OPTIMIZATION: Prevent any further UI updates or callbacks
@@ -611,6 +659,9 @@ class PlayerActivity :
       player.releaseEngineSurface()
       MpvGateway.destroy()
       mpvInitialized = false
+      val retiredConfig = configLease
+      configLease = null
+      kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch { retiredConfig?.close() }
     }.onFailure { e ->
       Log.e(TAG, "Error cleaning up MPV", e)
     }
@@ -638,6 +689,7 @@ class PlayerActivity :
 
   @RequiresApi(Build.VERSION_CODES.P)
   override fun onPause() {
+    if (!mpvInitialized) { super.onPause(); return }
     runCatching {
       val isInPip = isInPictureInPictureMode
       val shouldPause = (!audioPreferences.automaticBackgroundPlayback.get() && !isManualBackgroundPlayback) || 
@@ -667,6 +719,7 @@ class PlayerActivity :
 
   @RequiresApi(Build.VERSION_CODES.P)
   override fun finish() {
+    if (!mpvInitialized) { super.finish(); return }
     runCatching {
       // Don't restore UI during normal finish to prevent flickering
       // System will handle UI restoration automatically
@@ -687,6 +740,7 @@ class PlayerActivity :
 
   // finishAndRemoveTask() was added in API 21, but since our minSdk is 26, it's always available
   override fun finishAndRemoveTask() {
+    if (!mpvInitialized) { super.finishAndRemoveTask(); return }
     runCatching {
       // Don't restore UI during normal finish to prevent flickering
       // System will handle UI restoration automatically
@@ -707,6 +761,7 @@ class PlayerActivity :
   }
 
   override fun onStop() {
+    if (!mpvInitialized) { super.onStop(); return }
     runCatching {
       pipHelper.onStop()
       saveVideoPlaybackState(fileName)
@@ -734,7 +789,10 @@ class PlayerActivity :
   @RequiresApi(Build.VERSION_CODES.P)
   override fun onStart() {
     super.onStart()
+    if (mpvInitialized) setupStartedPlayer()
+  }
 
+  private fun setupStartedPlayer() {
     runCatching {
       setupWindowFlags()
       setupSystemUI()
@@ -829,22 +887,18 @@ class PlayerActivity :
   /**
    * Initializes the MPV player with the necessary paths and observers.
    */
-  private fun setupMPV() {
-    val prepareStarted = android.os.SystemClock.elapsedRealtime()
-    // Copy essential files FIRST, before MPV initialization
-    runCatching {
-      Utils.copyAssets(this@PlayerActivity)
-      syncFromUserMpvDirectory()
-      Log.d(TAG, "MPV config and scripts prepared successfully")
-    }.onFailure { e ->
-      Log.e(TAG, "Error copying MPV config and scripts", e)
-    }
+  private val firstPlayerDraw = kotlinx.coroutines.CompletableDeferred<Unit>()
+  private var configLease: ConfigSnapshotStore.Lease? = null
 
+  private fun setupMPV(snapshot: ConfigSnapshotStore.Lease) {
+    configLease = snapshot
+    if (snapshot.usedFallback) android.widget.Toast.makeText(this,
+      getString(app.marlboroadvance.mpvex.R.string.player_config_fallback), android.widget.Toast.LENGTH_LONG).show()
+    player.configDirectory = snapshot.directory
     // NOW initialize MPV - it will find and load the scripts we just copied
     val initializeStarted = android.os.SystemClock.elapsedRealtime()
-    Log.d("PlayerStartup", "configPreparationMs=${initializeStarted - prepareStarted}")
     MpvGateway.open()
-    player.initialize(filesDir.path, cacheDir.path)
+    player.initialize(snapshot.directory.path, cacheDir.path)
     Log.d("PlayerStartup", "mpvInitializationMs=${android.os.SystemClock.elapsedRealtime() - initializeStarted}")
     mpvInitialized = true
     Log.d(TAG, "MPV initialized")
@@ -853,178 +907,9 @@ class PlayerActivity :
     MpvGateway.addObserver(playerObserver)
   }
 
-  /**
-   * Syncs ALL MPV assets from the user's configured MPV directory to internal storage.
-   * Handles: mpv.conf, input.conf, scripts/, script-opts/, shaders/, fonts/
-   *
-   * Uses case-insensitive subfolder matching and falls back to root scanning
-   * if standard subfolders don't exist. Falls back to preferences-based config
-   * if no user directory is configured.
-   */
-  private fun syncFromUserMpvDirectory() {
-    val mpvConfStorageUri = advancedPreferences.mpvConfStorageUri.get()
-
-    // Try to open the user's MPV directory
-    val tree = if (mpvConfStorageUri.isNotBlank()) {
-      runCatching {
-        DocumentFile.fromTreeUri(this, mpvConfStorageUri.toUri())
-      }.getOrNull()?.takeIf { it.exists() && it.canRead() }
-    } else null
-
-    if (tree != null) {
-      Log.d(TAG, "Syncing from user MPV directory: ${tree.uri}")
-      syncConfigFiles(tree)
-      syncFonts(tree)
-      Log.d(TAG, "Full MPV directory sync completed")
-    } else {
-      // Fallback: use preferences-based config (no user directory set)
-      Log.d(TAG, "No MPV directory configured, using preferences fallback")
-      copyMPVConfigFromPreferences()
-    }
-  }
-
-  // ==================== Config Files Sync ====================
-
-  /**
-   * Syncs mpv.conf and input.conf from the user's MPV directory.
-   * Also caches the content in preferences for the config editor.
-   */
-  private fun syncConfigFiles(tree: DocumentFile) {
-    for (configName in listOf("mpv.conf", "input.conf")) {
-      runCatching {
-        val configFile = findFileCaseInsensitive(tree, configName)
-        if (configFile != null && configFile.exists() && configFile.canRead()) {
-          contentResolver.openInputStream(configFile.uri)?.use { input ->
-            val content = input.bufferedReader().readText()
-            File(filesDir, configName).writeText(content)
-            // Cache in preferences for the config editor
-            when (configName) {
-              "mpv.conf" -> advancedPreferences.mpvConf.set(content)
-              "input.conf" -> advancedPreferences.inputConf.set(content)
-            }
-            Log.d(TAG, "Synced config: $configName (${content.length} chars)")
-          }
-        } else {
-          // Config not in directory, fall back to preferences
-          val prefContent = when (configName) {
-            "mpv.conf" -> advancedPreferences.mpvConf.get()
-            "input.conf" -> advancedPreferences.inputConf.get()
-            else -> ""
-          }
-          File(filesDir, configName).apply {
-            if (!exists()) createNewFile()
-            if (prefContent.isNotBlank()) writeText(prefContent)
-          }
-          Log.d(TAG, "Config not found in directory, used preferences: $configName")
-        }
-      }.onFailure { e ->
-        Log.e(TAG, "Error syncing config: $configName", e)
-      }
-    }
-  }
-
-  // ==================== Fonts Sync ====================
-
-  /**
-   * Syncs font files (.ttf, .otf, .ttc, .woff, .woff2) from the user's MPV directory.
-   * Looks in fonts/ subfolder first (case-insensitive), falls back to root.
-   * Also syncs from the subtitle preferences font folder if set.
-   */
-  private fun syncFonts(tree: DocumentFile) {
-    val internalFontsDir = File(filesDir, "fonts")
-    internalFontsDir.mkdirs()
-
-    val fontsSubdir = findSubdirCaseInsensitive(tree, "fonts")
-    val sourceDir = fontsSubdir ?: tree
-    val fontExtensions = setOf("ttf", "otf", "ttc", "woff", "woff2")
-    var count = 0
-
-    sourceDir.listFiles().forEach { file ->
-      if (!file.isFile) return@forEach
-      val name = file.name ?: return@forEach
-      val ext = name.substringAfterLast('.', "").lowercase()
-      if (ext !in fontExtensions) return@forEach
-
-      val target = File(internalFontsDir, name)
-      // Skip if font already exists (fonts can be large)
-      if (target.exists()) return@forEach
-
-      runCatching {
-        contentResolver.openInputStream(file.uri)?.use { input ->
-          target.outputStream().use { output ->
-            input.copyTo(output)
-          }
-          count++
-          Log.d(TAG, "Synced font: $name")
-        }
-      }.onFailure { e ->
-        Log.e(TAG, "Error syncing font: $name", e)
-      }
-    }
-
-    // Also sync from subtitle preferences font folder if set
-    runCatching {
-      val fontsFolderUri = subtitlesPreferences.fontsFolder.get()
-      if (fontsFolderUri.isNotBlank()) {
-        val destDir = fileManager.fromPath("${filesDir.path}/fonts")
-        if (!fileManager.exists(destDir)) {
-          fileManager.createDir(fileManager.fromPath(filesDir.path), "fonts")
-        }
-        val fontsDir = fileManager.fromUri(fontsFolderUri.toUri())
-        if (fontsDir != null && fileManager.exists(fontsDir)) {
-          fileManager.copyDirectoryWithContent(fontsDir, destDir, false)
-        }
-      }
-    }.onFailure { e ->
-      Log.e(TAG, "Error syncing subtitle fonts: ${e.message}")
-    }
-
-    Log.d(TAG, "Fonts sync: $count file(s) from MPV directory")
-  }
-
-  // ==================== Helpers ====================
-
-  /**
-   * Fallback: copies config from preferences when no user MPV directory is set.
-   */
-  private fun copyMPVConfigFromPreferences() {
-    runCatching {
-      File(filesDir, "mpv.conf").apply {
-        if (!exists()) createNewFile()
-        val content = advancedPreferences.mpvConf.get()
-        if (content.isNotBlank()) writeText(content)
-      }
-      File(filesDir, "input.conf").apply {
-        if (!exists()) createNewFile()
-        val content = advancedPreferences.inputConf.get()
-        if (content.isNotBlank()) writeText(content)
-      }
-      // Ensure fonts directory exists even without user dir
-      File(filesDir, "fonts").mkdirs()
-    }.onFailure { e ->
-      Log.e(TAG, "Error creating fallback config files", e)
-    }
-  }
-
-  /**
-   * Finds a subdirectory by name (case-insensitive) within a DocumentFile.
-   */
-  private fun findSubdirCaseInsensitive(parent: DocumentFile, name: String): DocumentFile? =
-    parent.listFiles().firstOrNull {
-      it.isDirectory && it.name?.equals(name, ignoreCase = true) == true
-    }
-
-  /**
-   * Finds a file by name (case-insensitive) within a DocumentFile.
-   */
-  private fun findFileCaseInsensitive(parent: DocumentFile, name: String): DocumentFile? =
-    parent.listFiles().firstOrNull {
-      it.isFile && it.name?.equals(name, ignoreCase = true) == true
-    }
-
   override fun onResume() {
     super.onResume()
-    updateVolume()
+    if (mpvInitialized) updateVolume()
   }
 
   /**
@@ -2300,6 +2185,10 @@ class PlayerActivity :
    */
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
+    if (!mpvInitialized) {
+      if (parsePathFromIntent(intent) != null) setIntent(intent)
+      return
+    }
 
     // Use the same parser as playback: SEND carries EXTRA_STREAM/EXTRA_TEXT,
     // and explicit callers can supply "uri" without Intent.data.
@@ -2487,6 +2376,7 @@ class PlayerActivity :
     keyCode: Int,
     event: KeyEvent?,
   ): Boolean {
+    if (!mpvInitialized) return super.onKeyDown(keyCode, event)
     val isTrackSheetOpen =
       viewModel.sheetShown.value == Sheets.SubtitleTracks ||
         viewModel.sheetShown.value == Sheets.AudioTracks
@@ -2578,6 +2468,7 @@ class PlayerActivity :
     keyCode: Int,
     event: KeyEvent?,
   ): Boolean {
+    if (!mpvInitialized) return super.onKeyUp(keyCode, event)
     event?.let {
       if (player.onKey(it)) return true
     }
@@ -2703,6 +2594,7 @@ class PlayerActivity :
       ) {
         val binder = service as? MediaPlaybackService.MediaPlaybackBinder ?: return
         mediaPlaybackService = binder.getService()
+        mediaPlaybackService?.attachControls(viewModel.controls)
         serviceBound = true
         Log.d(TAG, "Service connected")
       }
@@ -2768,6 +2660,7 @@ class PlayerActivity :
   private fun endBackgroundPlayback() {
     Log.d(TAG, "Ending background playback service")
     
+    mediaPlaybackService?.attachControls(null)
     if (serviceBound) {
       try {
         unbindService(serviceConnection)

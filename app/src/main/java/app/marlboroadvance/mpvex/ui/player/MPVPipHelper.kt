@@ -26,9 +26,10 @@ private const val PIP_PAUSE = 2
 private const val PIP_REWIND = 3
 private const val PIP_FORWARD = 4
 
-class MPVPipHelper(
+internal class MPVPipHelper(
   private val activity: AppCompatActivity,
   private val mpvView: MPVView,
+  private val controls: PlaybackControls,
 ) : KoinComponent {
   private val playerPreferences: PlayerPreferences by inject()
   private var pipReceiver: BroadcastReceiver? = null
@@ -49,15 +50,11 @@ class MPVPipHelper(
           context: Context?,
           intent: Intent?,
         ) {
-          // Use precise seeking for videos shorter than 2 minutes (120 seconds) or if preference is enabled
-          val duration = MpvGateway.getPropertyInt("duration") ?: 0
-          val shouldUsePreciseSeeking = playerPreferences.usePreciseSeeking.get() || duration < 120
-          val seekMode = if (shouldUsePreciseSeeking) "relative+exact" else "relative+keyframes"
           when (intent?.getIntExtra(PIP_INTENT_ACTION, 0)) {
-            PIP_PLAY -> MpvGateway.setPropertyBoolean("pause", false)
-            PIP_PAUSE -> MpvGateway.setPropertyBoolean("pause", true)
-            PIP_REWIND -> MpvGateway.command("seek", "-10", seekMode)
-            PIP_FORWARD -> MpvGateway.command("seek", "10", seekMode)
+            PIP_PLAY -> controls.setPaused(false)
+            PIP_PAUSE -> controls.setPaused(true)
+            PIP_REWIND -> controls.seekBy(-10)
+            PIP_FORWARD -> controls.seekBy(10)
           }
           updatePictureInPictureParams()
         }
@@ -130,7 +127,7 @@ class MPVPipHelper(
   }
 
   private fun createPipActions(): List<RemoteAction> {
-    val isPlaying = MpvGateway.getPropertyBoolean("pause") == false
+    val isPlaying = !controls.state.value.paused
 
     return listOf(
       createRemoteAction("rewind", android.R.drawable.ic_media_rew, PIP_REWIND),

@@ -36,7 +36,6 @@
 | FTP 重连后继续使用旧局部客户端（P2） | clients/FtpClient.kt:109；整个文件与原版相同 | 重连后更新局部引用，按实例清理 |
 | SMB 建流/查询失败缺少异常资源清理（P2） | proxy/NetworkStreamingProxy.kt:462/851；原版对应 :331/:757 已有相同问题 | 明确资源移交，异常时逐项回收 |
 | 分块 NOT IN 误删有效本地元数据缓存（P2） | database/repository/VideoMetadataCacheRepository.kt:284；该文件和 VideoMetadataDao.kt 均与原版相同 | 计算失效路径，分块 IN 删除；不涉及媒体文件删除 |
-| 配置读取 copyTo 两侧流未确定关闭（P3） | ui/preferences/ConfigEditorScreen.kt:100、AdvancedPreferencesScreen.kt:330/359；原版已有相同调用 | 嵌套 use 与 finally 清理 |
 
 上述未写完整路径者均位于 `app/src/main/java/app/marlboroadvance/mpvex/` 下对应模块。
 旧详细报告保留在外层 `REVIEW_ASTRA_LOW_2026-09-07.md`；本轮纠正归因，不宣称已修复。
@@ -44,7 +43,7 @@
 ## 重构边界
 
 - reex Dart AOT 播放链未完整还原；已确认架构和推测必须区分。
-- MPV AAR 仍将实例初始化与 Surface 生命周期耦合；本轮只统一 Surface 就绪后的加载入口和退出顺序，未启用实例复用或将初始化移出主线程。
+- MPV AAR 仍将实例初始化与 Surface 生命周期耦合；Surface 就绪后的加载入口和退出顺序已统一；配置准备已移至 IO，native 初始化安排在首个界面绘制之后，仍在主线程且未启用实例复用。
 - 原生事件已按 loadfile 返回的条目 ID 绑定并校验在播 ID；应用代次测试和 JNI 静态核对不替代设备上的 Surface 重建、M3U/重定向和后台切换验收。
-- 销毁需等待不可取消的同步 JNI 调用结束；数据库最终快照和同步 ContentProvider 打开也需等待 IO 完成，尚无耗时上界。核心时间线/暂停/缓冲已统一状态，其余控件意图及 Service/PiP 仍需迁移；数据库队列只是延后加载，尚未分页。
+- 销毁需等待不可取消的同步 JNI 调用结束；数据库最终快照和同步 ContentProvider 打开也需等待 IO 完成，尚无耗时上界。核心时间线/暂停/缓冲已统一状态，通知/PiP 核心控制已接入，其余控件意图与完整元数据仍需迁移；数据库队列只是延后加载，尚未分页。
 - 无当前设备验收或私有服务器数据；未执行功能测试。旧测试结果不能替代新架构验证。

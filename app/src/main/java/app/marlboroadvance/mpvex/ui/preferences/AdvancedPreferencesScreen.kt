@@ -66,9 +66,6 @@ import me.zhanghai.compose.preference.SwitchPreference
 import me.zhanghai.compose.preference.TwoTargetIconButtonPreference
 import org.koin.compose.koinInject
 import java.io.File
-import kotlin.io.path.deleteIfExists
-import kotlin.io.path.outputStream
-import kotlin.io.path.readLines
 
 @Serializable
 object AdvancedPreferencesScreen : Screen {
@@ -315,7 +312,6 @@ object AdvancedPreferencesScreen : Screen {
               LaunchedEffect(mpvConfStorageLocation) {
                 if (mpvConfStorageLocation.isBlank()) return@LaunchedEffect
                 withContext(Dispatchers.IO) {
-                  val tempFile = kotlin.io.path.createTempFile()
                   runCatching {
                     val tree =
                       DocumentFile.fromTreeUri(
@@ -324,11 +320,8 @@ object AdvancedPreferencesScreen : Screen {
                       )
                     val mpvConfFile = tree?.findFile("mpv.conf")
                     if (mpvConfFile != null && mpvConfFile.exists()) {
-                      context.contentResolver
-                        .openInputStream(
-                          mpvConfFile.uri,
-                        )?.copyTo(tempFile.outputStream())
-                      val content = tempFile.readLines().fastJoinToString("\n")
+                      val content = context.contentResolver.openInputStream(mpvConfFile.uri)
+                        ?.bufferedReader()?.use { it.readText() } ?: return@runCatching
                       preferences.mpvConf.set(content)
                       File(context.filesDir, "mpv.conf").writeText(content)
                       withContext(Dispatchers.Main) {
@@ -336,7 +329,6 @@ object AdvancedPreferencesScreen : Screen {
                       }
                     }
                   }
-                  tempFile.deleteIfExists()
                 }
               }
               
@@ -344,7 +336,6 @@ object AdvancedPreferencesScreen : Screen {
               LaunchedEffect(mpvConfStorageLocation) {
                 if (mpvConfStorageLocation.isBlank()) return@LaunchedEffect
                 withContext(Dispatchers.IO) {
-                  val tempFile = kotlin.io.path.createTempFile()
                   runCatching {
                     val tree =
                       DocumentFile.fromTreeUri(
@@ -353,11 +344,8 @@ object AdvancedPreferencesScreen : Screen {
                       )
                     val inputConfFile = tree?.findFile("input.conf")
                     if (inputConfFile != null && inputConfFile.exists()) {
-                      context.contentResolver
-                        .openInputStream(
-                          inputConfFile.uri,
-                        )?.copyTo(tempFile.outputStream())
-                      val content = tempFile.readLines().fastJoinToString("\n")
+                      val content = context.contentResolver.openInputStream(inputConfFile.uri)
+                        ?.bufferedReader()?.use { it.readText() } ?: return@runCatching
                       preferences.inputConf.set(content)
                       File(context.filesDir, "input.conf").writeText(content)
                       withContext(Dispatchers.Main) {
@@ -365,7 +353,6 @@ object AdvancedPreferencesScreen : Screen {
                       }
                     }
                   }
-                  tempFile.deleteIfExists()
                 }
               }
               

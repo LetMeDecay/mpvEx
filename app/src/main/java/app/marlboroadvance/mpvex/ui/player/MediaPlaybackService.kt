@@ -1,5 +1,7 @@
 package app.marlboroadvance.mpvex.ui.player
 
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
@@ -22,18 +24,13 @@ import androidx.core.app.ServiceCompat
 import androidx.media.MediaBrowserServiceCompat
 import androidx.media.session.MediaButtonReceiver
 import app.marlboroadvance.mpvex.R
-import `is`.xyz.mpv.MPVLib
-import `is`.xyz.mpv.MPVNode
-import app.marlboroadvance.mpvex.preferences.PlayerPreferences
 import org.koin.core.component.KoinComponent
-import org.koin.core.component.inject
 
 /**
  * Background playback service for mpv with MediaSession integration.
  */
 class MediaPlaybackService :
   MediaBrowserServiceCompat(),
-  MPVLib.EventObserver,
   KoinComponent {
   companion object {
     private const val TAG = "MediaPlaybackService"
@@ -66,11 +63,35 @@ class MediaPlaybackService :
 
   private val binder = MediaPlaybackBinder()
   private lateinit var mediaSession: MediaSessionCompat
-  private val playerPreferences: PlayerPreferences by inject()
+  private val serviceScope = kotlinx.coroutines.CoroutineScope(
+    kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate,
+  )
+  private var controls: PlaybackControls? = null
+  private var stateJob: kotlinx.coroutines.Job? = null
+  private var playback = PlaybackUiState()
+
+  internal fun attachControls(controls: PlaybackControls?) {
+    stateJob?.cancel()
+    this.controls = controls
+    if (controls == null) return
+    stateJob = serviceScope.launch {
+      controls.state.collect { next ->
+        val important = playback.phase != next.phase || playback.paused != next.paused ||
+          playback.generation != next.generation || playback.duration != next.duration
+        playback = next
+        paused = next.paused
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (important || now - lastNotificationUpdateTime >= notificationUpdateIntervalMs) {
+          lastNotificationUpdateTime = now
+          updateMediaSession()
+        }
+      }
+    }
+  }
 
   private var mediaTitle = ""
   private var mediaArtist = ""
-  private var paused = false
+  private var paused = true
   private var lastNotificationUpdateTime = 0L
   private val notificationUpdateIntervalMs = 1000L // Update notification every 1 second
 
@@ -89,18 +110,6 @@ class MediaPlaybackService :
 
     setupMediaSession()
     
-    // Only add MPV observer if MPV is initialized
-    try {
-      MpvGateway.addObserver(this)
-      // Observe properties
-      MpvGateway.observeProperty("pause", MPVLib.MpvFormat.MPV_FORMAT_FLAG)
-      MpvGateway.observeProperty("media-title", MPVLib.MpvFormat.MPV_FORMAT_STRING)
-      MpvGateway.observeProperty("metadata/artist", MPVLib.MpvFormat.MPV_FORMAT_STRING)
-      MpvGateway.observeProperty("time-pos", MPVLib.MpvFormat.MPV_FORMAT_DOUBLE)
-      Log.d(TAG, "MPV observer registered")
-    } catch (e: Exception) {
-      Log.e(TAG, "Error registering MPV observer", e)
-    }
   }
 
   override fun onBind(intent: Intent): IBinder = binder
@@ -127,14 +136,6 @@ class MediaPlaybackService :
         Log.d(TAG, "Media info from intent: $mediaTitle")
       }
     }
-
-    // Fallback: Read current state from MPV if not provided via intent
-    if (mediaTitle.isBlank()) {
-      mediaTitle = MpvGateway.getPropertyString("media-title") ?: ""
-      mediaArtist = MpvGateway.getPropertyString("metadata/artist") ?: ""
-    }
-    
-    paused = MpvGateway.getPropertyBoolean("pause") == true
 
     updateMediaSession()
 
@@ -187,40 +188,32 @@ class MediaPlaybackService :
           object : MediaSessionCompat.Callback() {
             override fun onPlay() {
               Log.d(TAG, "onPlay called")
-              MpvGateway.setPropertyBoolean("pause", false)
+              controls?.setPaused(false)
             }
 
             override fun onPause() {
               Log.d(TAG, "onPause called")
-              MpvGateway.setPropertyBoolean("pause", true)
+              controls?.setPaused(true)
             }
 
             override fun onStop() {
               Log.d(TAG, "onStop called")
+              controls?.stop()
               stopSelf()
             }
 
             override fun onSkipToNext() {
               Log.d(TAG, "onSkipToNext called")
-              // Use precise seeking for videos shorter than 2 minutes (120 seconds) or if preference is enabled
-              val duration = MpvGateway.getPropertyInt("duration") ?: 0
-              val shouldUsePreciseSeeking = playerPreferences.usePreciseSeeking.get() || duration < 120
-              val seekMode = if (shouldUsePreciseSeeking) "relative+exact" else "relative+keyframes"
-              MpvGateway.command("seek", "10", seekMode)
+              controls?.seekBy(10)
             }
 
             override fun onSkipToPrevious() {
-              Log.d(TAG, "onSkipToPrevious called")
-              // Use precise seeking for videos shorter than 2 minutes (120 seconds) or if preference is enabled
-              val duration = MpvGateway.getPropertyInt("duration") ?: 0
-              val shouldUsePreciseSeeking = playerPreferences.usePreciseSeeking.get() || duration < 120
-              val seekMode = if (shouldUsePreciseSeeking) "relative+exact" else "relative+keyframes"
-              MpvGateway.command("seek", "-10", seekMode)
+              controls?.seekBy(-10)
             }
 
             override fun onSeekTo(pos: Long) {
               Log.d(TAG, "onSeekTo called: $pos")
-              MpvGateway.setPropertyDouble("time-pos", pos / 1000.0)
+              controls?.seekTo((pos / 1000L).coerceIn(0L, Int.MAX_VALUE.toLong()).toInt())
             }
           },
         )
@@ -242,10 +235,8 @@ class MediaPlaybackService :
       val title = mediaTitle.ifBlank { "Unknown Video" }
       
       // Update metadata
-      val duration = runCatching { 
-        MpvGateway.getPropertyDouble("duration")?.times(1000)?.toLong()
-      }.getOrNull() ?: 0L
-      
+      val duration = ((playback.duration ?: 0f) * 1000).toLong()
+
       val metadataBuilder =
         MediaMetadataCompat
           .Builder()
@@ -261,11 +252,13 @@ class MediaPlaybackService :
       mediaSession.setMetadata(metadataBuilder.build())
 
       // Update playback state
-      val position = runCatching { 
-        MpvGateway.getPropertyDouble("time-pos")?.times(1000)?.toLong()
-      }.getOrNull() ?: 0L
-      
-      val state = if (paused) PlaybackStateCompat.STATE_PAUSED else PlaybackStateCompat.STATE_PLAYING
+      val position = (playback.position * 1000).toLong()
+      val state = when (playback.phase) {
+        PlaybackPhase.Preparing, PlaybackPhase.Opening -> PlaybackStateCompat.STATE_BUFFERING
+        PlaybackPhase.Failed -> PlaybackStateCompat.STATE_ERROR
+        PlaybackPhase.Idle, PlaybackPhase.Stopping -> PlaybackStateCompat.STATE_STOPPED
+        PlaybackPhase.Ready -> if (paused) PlaybackStateCompat.STATE_PAUSED else PlaybackStateCompat.STATE_PLAYING
+      }
 
       mediaSession.setPlaybackState(
         PlaybackStateCompat
@@ -364,82 +357,15 @@ class MediaPlaybackService :
       .build()
   }
 
-  // ==================== MPV Event Observers ====================
-
-  override fun eventProperty(property: String) {}
-
-  override fun eventProperty(
-    property: String,
-    value: Long,
-  ) {}
-
-  override fun eventProperty(
-    property: String,
-    value: Boolean,
-  ) {
-    if (property == "pause") {
-      paused = value
-      updateMediaSession()
-    }
-  }
-
-  override fun eventProperty(
-    property: String,
-    value: String,
-  ) {
-    when (property) {
-      "media-title" -> {
-        if (value.isNotBlank()) {
-          mediaTitle = value
-          updateMediaSession()
-        }
-      }
-      "metadata/artist" -> {
-        mediaArtist = value
-        updateMediaSession()
-      }
-    }
-  }
-
-  override fun eventProperty(
-    property: String,
-    value: Double,
-  ) {
-    if (property == "time-pos") {
-      // Throttle notification updates to avoid excessive updates
-      val currentTime = System.currentTimeMillis()
-      if (currentTime - lastNotificationUpdateTime >= notificationUpdateIntervalMs) {
-        lastNotificationUpdateTime = currentTime
-        updateMediaSession()
-      }
-    }
-  }
-
-  override fun eventProperty(
-    property: String,
-    value: MPVNode,
-  ) {}
-
-  override fun event(eventId: Int, data: MPVNode) {
-    if (eventId == MPVLib.MpvEvent.MPV_EVENT_SHUTDOWN) {
-      Log.d(TAG, "MPV shutdown event received, stopping service")
-      stopSelf()
-    }
-  }
-
   override fun onDestroy() {
     try {
       Log.d(TAG, "Service destroyed")
 
       isServiceRunning = false
       
-      // Remove MPV observer safely
-      try {
-        MpvGateway.removeObserver(this)
-      } catch (e: Exception) {
-        Log.e(TAG, "Error removing MPV observer", e)
-      }
-      
+      attachControls(null)
+      serviceScope.cancel()
+
       // Stop foreground and remove notification explicitly
       try {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {

@@ -838,4 +838,6 @@
   <string name="why_do_i_see_this">我为什么会看到此提示？</string>
   <string name="why_this_permission_is_needed">需要此权限的原因</string>
   <string name="playback_load_failed">无法打开此视频</string>
+    <string name="player_config_failed">无法准备播放器配置</string>
+    <string name="player_config_fallback">配置更新失败，已使用上一份完整配置</string>
 </resources>

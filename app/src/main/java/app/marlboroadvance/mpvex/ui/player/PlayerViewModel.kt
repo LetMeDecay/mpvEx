@@ -171,6 +171,15 @@ class PlayerViewModel(
   )
   private val playbackStateStore = PlaybackStateStore()
   internal val playbackState = playbackStateStore.state
+  private var requestedPause: Pair<Long, Boolean>? = null
+  internal val controls = object : PlaybackControls {
+    override val state = playbackState
+    override fun setPaused(paused: Boolean) = requestPause(paused)
+    override fun seekBy(seconds: Int) = this@PlayerViewModel.seekBy(seconds)
+    override fun seekTo(seconds: Int) = this@PlayerViewModel.seekTo(seconds)
+    override fun stop() { (host as? PlayerActivity)?.stopFromSystem() }
+  }
+
 
   fun beginFileChange(path: String) {
     if (stopPlaybackJob != null) return
@@ -277,11 +286,13 @@ class PlayerViewModel(
           val time = MpvGateway.getPropertyDouble("time-pos")?.toFloat()
           val duration = MpvGateway.getPropertyDouble("duration")?.toFloat()
           val seeking = MpvGateway.getPropertyBoolean("seeking") == true
+          val paused = MpvGateway.getPropertyBoolean("pause") != false
+          if (requestedPause == (generation to paused)) requestedPause = null
           playbackStateStore.sample(
             generation,
             playbackSession.displayPosition(time, seeking, android.os.SystemClock.elapsedRealtime()),
             duration,
-            MpvGateway.getPropertyBoolean("pause") != false,
+            paused,
             seeking,
             MpvGateway.getPropertyBoolean("paused-for-cache") == true,
           )
@@ -891,34 +902,27 @@ class PlayerViewModel(
   // ==================== Playback Control ====================
 
   fun pauseUnpause() {
-    viewModelScope.launch(Dispatchers.IO) {
-      val isPaused = MpvGateway.getPropertyBoolean("pause") ?: false
-      if (isPaused) {
-        // We are about to unpause, so request focus
-        withContext(Dispatchers.Main) { host.requestAudioFocus() }
-        MpvGateway.setPropertyBoolean("pause", false)
-      } else {
-        // We are about to pause
-        MpvGateway.setPropertyBoolean("pause", true)
-        withContext(Dispatchers.Main) { host.abandonAudioFocus() }
+    val generation = playbackSession.generation
+    val paused = requestedPause?.takeIf { it.first == generation }?.second
+      ?: playbackState.value.paused
+    requestPause(!paused)
+  }
+
+  fun pause() = requestPause(true)
+
+  fun unpause() = requestPause(false)
+
+  private fun requestPause(paused: Boolean) {
+    val generation = playbackSession.generation
+    viewModelScope.launch(Dispatchers.Main.immediate) {
+      if (stopPlaybackJob != null || generation != playbackSession.generation) return@launch
+      requestedPause = generation to paused
+      if (paused) host.abandonAudioFocus() else host.requestAudioFocus()
+      playbackCommands.pause(paused) {
+        stopPlaybackJob == null && generation == playbackSession.generation
       }
     }
   }
-
-  fun pause() {
-    viewModelScope.launch(Dispatchers.IO) {
-      MpvGateway.setPropertyBoolean("pause", true)
-      withContext(Dispatchers.Main) { host.abandonAudioFocus() }
-    }
-  }
-
-  fun unpause() {
-    viewModelScope.launch(Dispatchers.IO) {
-      withContext(Dispatchers.Main) { host.requestAudioFocus() }
-      MpvGateway.setPropertyBoolean("pause", false)
-    }
-  }
-
   // ==================== UI Control ====================
 
   fun showControls() {

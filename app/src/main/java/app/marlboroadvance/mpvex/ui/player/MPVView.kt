@@ -34,6 +34,7 @@ class MPVView(
   private val subtitlesPreferences: SubtitlesPreferences by inject()
   private val anime4kManager: Anime4KManager by inject()
 
+  internal var configDirectory: java.io.File = context.filesDir
   @Volatile var isExiting = false
   private var surfaceReady = false
   private var engineReleased = false
@@ -158,7 +159,7 @@ class MPVView(
     MpvGateway.setPropertyBoolean("input-default-bindings", true)
 
     MpvGateway.setOptionString("tls-verify", "yes")
-    MpvGateway.setOptionString("tls-ca-file", "${context.filesDir.path}/cacert.pem")
+    MpvGateway.setOptionString("tls-ca-file", "${configDirectory.path}/cacert.pem")
 
     val screenshotDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
     screenshotDir.mkdirs()
@@ -282,7 +283,7 @@ class MPVView(
     MpvGateway.setOptionString("sub-file-paths", "")
     MpvGateway.setOptionString("subs-fallback", "no")
 
-    val fontsDirPath = "${context.filesDir.path}/fonts/"
+    val fontsDirPath = "${configDirectory.path}/fonts/"
     MpvGateway.setOptionString("sub-fonts-dir", fontsDirPath)
     
     // Delay and speed for both primary and secondary

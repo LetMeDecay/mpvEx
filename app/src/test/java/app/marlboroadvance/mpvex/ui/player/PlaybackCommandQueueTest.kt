@@ -17,6 +17,39 @@ import kotlin.coroutines.ContinuationInterceptor
 
 class PlaybackCommandQueueTest {
   @Test(timeout = 5000)
+  fun pauseIsBoundedAndRetiredWithItsFile() = runBlocking {
+    val owner = Job()
+    val entered = CompletableDeferred<Unit>()
+    val release = CompletableDeferred<Unit>()
+    val calls = mutableListOf<List<String>>()
+    val queue = PlaybackCommandQueue(
+      CoroutineScope(coroutineContext + owner),
+      coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
+      execute = { calls.add(it) }, onFailure = { throw AssertionError(it) },
+    )
+    try {
+      queue.loadAction({ true }) { entered.complete(Unit); release.await() }
+      entered.await()
+      repeat(1000) { queue.pause(it % 2 == 0) { true } }
+      queue.seek(listOf("seek", "10")) { true }
+      release.complete(Unit)
+      yield()
+      assertEquals(listOf(listOf("set", "pause", "no"), listOf("seek", "10")), calls)
+      queue.pause(true) { true }
+      queue.load(listOf("loadfile", "next")) { true }
+      yield()
+      assertEquals(listOf("loadfile", "next"), calls.last())
+      assertEquals(3, calls.size)
+      queue.pause(true) { false }
+      yield()
+      queue.pause(true) { true }
+      queue.retire()
+      queue.awaitRetired()
+      assertEquals(3, calls.size)
+    } finally { owner.cancelAndJoin() }
+  }
+
+  @Test(timeout = 5000)
   fun blockedLoadKeepsOnlyLatestLoadAndSeek() = runBlocking {
     val owner = Job()
     val entered = CompletableDeferred<Unit>()

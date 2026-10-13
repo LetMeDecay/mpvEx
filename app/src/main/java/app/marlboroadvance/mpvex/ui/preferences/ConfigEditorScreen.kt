@@ -52,10 +52,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import org.koin.compose.koinInject
 import java.io.File
-import kotlin.io.path.createTempFile
-import kotlin.io.path.deleteIfExists
-import kotlin.io.path.outputStream
-import kotlin.io.path.readLines
 
 @Serializable
 data class ConfigEditorScreen(
@@ -92,17 +88,15 @@ data class ConfigEditorScreen(
     LaunchedEffect(mpvConfStorageLocation) {
       if (mpvConfStorageLocation.isBlank()) return@LaunchedEffect
       withContext(Dispatchers.IO) {
-        val tempFile = createTempFile()
         runCatching {
           val tree       = DocumentFile.fromTreeUri(context, mpvConfStorageLocation.toUri())
           val configFile = tree?.findFile(fileName)
           if (configFile != null && configFile.exists()) {
-            context.contentResolver.openInputStream(configFile.uri)?.copyTo(tempFile.outputStream())
-            val content = tempFile.readLines().joinToString("\n")
+            val content = context.contentResolver.openInputStream(configFile.uri)
+              ?.bufferedReader()?.use { it.readText() } ?: return@runCatching
             withContext(Dispatchers.Main) { configText = content }
           }
         }
-        tempFile.deleteIfExists()
       }
     }
 

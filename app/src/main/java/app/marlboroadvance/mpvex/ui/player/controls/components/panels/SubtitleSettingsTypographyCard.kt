@@ -80,7 +80,7 @@ fun SubtitleSettingsTypographyCard(modifier: Modifier = Modifier) {
   }
   LaunchedEffect(Unit) {
     withContext(Dispatchers.IO) {
-      val fontsDir = fileManager.fromPath(context.filesDir.path + "/fonts")
+      val fontsDir = fileManager.fromPath(MpvGateway.getPropertyString("sub-fonts-dir") ?: (context.filesDir.path + "/fonts"))
       if (fileManager.exists(fontsDir)) {
         fonts.addAll(
           fileManager
