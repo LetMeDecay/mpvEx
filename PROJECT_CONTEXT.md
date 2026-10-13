@@ -1,14 +1,12 @@
-# 项目当前状态
+# 当前状态
 
-更新：2026-10-05（Asia/Shanghai）
+更新：2026-10-13。主仓库 `/root/mpvex/mpvEx`；Android/Kotlin/Compose/Room/libmpv。
 
-- 主仓库 `/root/mpvex/mpvEx`，Android/Kotlin/Compose/libmpv 播放器；不操作相邻 mpvEx_New。
-- 当前任务已完成：用户要求直接覆盖更新。Release 1.2.9-rev1005，基础 versionCode 131，各 ABI 为 1310–1314，构建提交 `a7458fd`；沿用正式包名与旧 Release 签名证书。
-- 代码提交：`9084f51` 消除 HEAD 多余远端视频 GET；`8ad7b17` 后台预加载 MPVLib native 库（不创建播放实例），增加 PlayerStartup 分阶段日志。
-- 分析报告：REEX_STARTUP_REVIEW.md。reex 使用 Flutter/libmpv，Java 层可确认 Activity 内 Flutter 引擎复用；不能证实 MPV 预热/复用或完整 Dart AOT 播放链。mpvEx 在主线程准备配置及初始化 MPV，真正 loadfile 等待 Surface 创建。
-- 边界：HEAD 优化发生于后续建流，不解释界面前的等待。native 预加载主要针对每进程首次打开，同时增加仅浏览时的 native 内存占用；没有证据证明每次 1–2 秒延迟已消失。
-- 验证：两批 Kotlin 编译通过；最终 Standard Debug 构建通过；五种 APK 的 apksigner verify 全部通过。本次未新增或运行单测/功能/设备/网络测试。前批进度恢复的 10 项测试属于 `b031b1d` 验证，不混作性能测量。
-- 当前交付：`/root/mpvex/release/app-standard-*-release.apk` 及对应 idsig。五包证书均与旧版一致，包名保持 app.marlboroadvance.mpvex，版本码递增，zipalign/v4 校验及移动后 APK SHA256 通过；验证清单 release-rev1005-verification.json，构建/签名日志 release-rev1005-*.log。旧 Debug 子目录是历史产物，用户明确以后默认交付覆盖更新版。
-- 本次 Release 构建成功（3m48s），不重复已验证业务逻辑的测试；无连接设备，未安装，未运行功能测试或推送。构建输出与本次 scratch 已清理，日志保留在 release。reex 原始 APK 不变。
-- 下一步：用户验收冷/热打开。若仍慢，用 `adb logcat -s PlayerStartup:D` 查看 queuePreparationMs、clickToActivityMs、configPreparationMs、mpvInitializationMs、activitySetupMs、activityToFirstDrawMs。日志没有路径/凭据；firstDraw 不是视频首帧完成的证据。
-- 前批：`b031b1d` 修复当前文件 RESTART 补齐加载确认；首次事件为何未被接受仍缺设备证据。既有 R1–R4、5 项原版遗留和重叠 GET 风险保持未修复，见 PROJECT_ISSUES.md。
+- 当前授权：按 Codex 全局配置精简项目规则/上下文；完整重构方案落盘后开始分阶段编码。已读取 `/root/.codex/config.toml` 的 developer_instructions，不修改全局配置。
+- 设计入口：REFACTOR_PLAN.md；当前阶段 P0/P1a，先建立 MPV 访问边界，保持生命周期与线程语义。完整架构尚未实现。
+- 记录整理：AGENTS 只保留项目差异；删除 WORK_PROGRESS.md / modify.md 重复流水，历史在 Git；外层 CONTEXT 仅留索引；签名凭据已移到仓库外权限受限配置，记录不含凭据。
+- 最新已交付：Release 1.2.9-rev1005，代码 `a7458fd`；`../release/` 根目录五种 APK + idsig，原包名/签名。历史 Debug 不是默认交付。没有设备安装或性能验收结果。
+- 已有功能改动：进度恢复 `b031b1d`、HEAD 修正 `9084f51`、native 库预加载 `8ad7b17`；不把既有构建/测试结果算作新架构验证。
+- 验证：本次配置/设计整理待差异与引用检查；P1a 编码/编译待完成。无服务部署或安装；不推送。
+- 未解决问题仅见 PROJECT_ISSUES.md；reex 静态证据见 REEX_STARTUP_REVIEW.md。
+- 下一步：完成 P1a 窄编译，记录真实结果；后续 P1b 统一事件身份与命令顺序，不能自动宣称全部重构完成。
