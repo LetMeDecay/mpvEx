@@ -165,6 +165,7 @@ class TrackSelector(
   private fun ensureAudioTrackSelected(tracks: List<Track>, hasState: Boolean) {
     try {
       if (hasState) return
+      val currentAid = MpvGateway.getPropertyInt("aid")
 
       val preferredLangs = audioPreferences.preferredLanguages.get()
         .split(",")
