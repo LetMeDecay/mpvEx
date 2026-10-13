@@ -494,7 +494,7 @@ private fun NetworkBrowserContent(
                 // prefetching a few items ahead so thumbnails are ready as the
                 // user scrolls. ensureThumbnail is idempotent (memory + disk cache),
                 // and actual network work stays capped by NetworkMetadataProbe.
-                LaunchedEffect(video.path, showThumbnails) {
+                LaunchedEffect(video.path, video.size, video.lastModified, video.etag, showThumbnails) {
                   if (showThumbnails) {
                     onVideoVisible(video)
                     for (offset in 1..THUMBNAIL_PREFETCH_AHEAD) {

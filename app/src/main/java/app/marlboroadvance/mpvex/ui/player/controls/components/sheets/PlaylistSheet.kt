@@ -303,7 +303,7 @@ fun PlaylistSheet(
   val lazyListState = rememberLazyListState()
 
   // Find the currently playing item index - tracks changes in playlist items
-  val playingItemIndex by remember {
+  val playingItemIndex by remember(playlist) {
     derivedStateOf {
       playlist.indexOfFirst { it.isPlaying }
     }

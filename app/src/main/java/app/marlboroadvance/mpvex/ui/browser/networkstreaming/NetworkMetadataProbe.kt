@@ -94,212 +94,20 @@ object NetworkMetadataProbe {
 
   enum class ThumbnailPriority { CURRENT, VISIBLE, PREFETCH, BACKGROUND }
 
-  private data class ThumbnailRequest(
-    val key: String,
-    val generation: Long,
-    val connection: NetworkConnection,
-    val file: NetworkFile,
-    var priority: ThumbnailPriority,
-    val result: CompletableDeferred<Bitmap?> = CompletableDeferred(),
-  ) {
-    var waiters: Int = 0
-  }
+  private data class ThumbnailInput(val generation: Long, val connection: NetworkConnection, val file: NetworkFile)
 
-  /** One native consumer shared by browser, playlist and startup pre-warm. */
-  private object ThumbnailDispatcher {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val wakeUp = Channel<Unit>(Channel.CONFLATED)
-    private val lock = Any()
-    private val requests = ThumbnailPriorityQueue<String, ThumbnailPriority> { it.ordinal }
-    private val byKey = mutableMapOf<String, ThumbnailRequest>()
-    private var running: ThumbnailRequest? = null
-    private var runningJob: Job? = null
-
-    init {
-      scope.launch {
-        for (ignored in wakeUp) {
-          while (true) {
-            val request = synchronized(lock) {
-              requests.poll()?.let { entry ->
-                byKey[entry.key]?.also { running = it }
-              }
-            } ?: break
-
-            // Dequeue and job assignment are separate operations because the
-            // native call must run in a child Job. Re-check the shared request
-            // under the same lock before creating that Job; a last waiter may
-            // have cancelled in the gap.
-            val claimed = synchronized(lock) {
-              val canStart = ThumbnailDispatchGuard.canStart(
-                ThumbnailDispatchSnapshot(
-                  waiters = request.waiters,
-                  resultCancelled = request.result.isCancelled,
-                  stillRegistered = byKey[request.key] === request,
-                ),
-              )
-              if (!canStart) {
-                byKey.remove(request.key, request)
-                if (running === request) running = null
-              }
-              canStart
-            }
-            if (!claimed) {
-              request.result.cancel()
-              continue
-            }
-
-            // Start lazily so cancellation can never race assignment of the
-            // active job. The assignment gate below handles cancellation that
-            // arrives after this child is created but before it is started.
-            val job = launch(start = CoroutineStart.LAZY) {
-              val canEnterNative = synchronized(lock) {
-                ThumbnailDispatchGuard.canStart(
-                  ThumbnailDispatchSnapshot(
-                    waiters = request.waiters,
-                    resultCancelled = request.result.isCancelled,
-                    stillRegistered = byKey[request.key] === request,
-                  ),
-                )
-              }
-              if (!canEnterNative || !currentCoroutineContext().isActive) {
-                request.result.cancel()
-                return@launch
-              }
-              try {
-                val bitmap = probeThumbnailNow(request.connection, request.file, request.generation)
-                // Display first. Only this producer can wait for persistence capacity,
-                // so a slow disk cannot create an unbounded set of suspended writers.
-                if (bitmap != null) {
-                  thumbnailWrites.publishAndEnqueue(
-                    ThumbnailWrite(request.connection, request.file, request.generation, bitmap),
-                  ) { request.result.complete(bitmap) }
-                } else {
-                  request.result.complete(null)
-                }
-              } catch (e: CancellationException) {
-                request.result.cancel(e)
-              } catch (e: Exception) {
-                Log.w(TAG, "Thumbnail request failed for ${request.file.path}", e)
-                request.result.complete(null)
-              }
-            }
-
-            val assigned = synchronized(lock) {
-              val canStart = ThumbnailDispatchGuard.canStart(
-                ThumbnailDispatchSnapshot(
-                  waiters = request.waiters,
-                  resultCancelled = request.result.isCancelled,
-                  stillRegistered = byKey[request.key] === request,
-                ),
-              )
-              if (canStart) {
-                runningJob = job
-              }
-              canStart
-            }
-            if (!assigned) {
-              request.result.cancel()
-              job.cancel()
-              job.join()
-              synchronized(lock) {
-                byKey.remove(request.key, request)
-                if (running === request) running = null
-                if (runningJob === job) runningJob = null
-              }
-              continue
-            }
-
-            job.start()
-            job.join()
-            synchronized(lock) {
-              byKey.remove(request.key, request)
-              running = null
-              runningJob = null
-            }
-          }
-        }
-      }
-    }
-
-    suspend fun submit(
-      key: String,
-      generation: Long,
-      connection: NetworkConnection,
-      file: NetworkFile,
-      priority: ThumbnailPriority,
-    ): Bitmap? {
-      val request = synchronized(lock) {
-        val existing = byKey[key]
-        val selected = if (existing != null && !existing.result.isCancelled) {
-          if (existing !== running && priority.ordinal < existing.priority.ordinal) {
-            requests.promote(existing.key, priority)
-            existing.priority = priority
-          }
-          existing
-        } else {
-          val request = ThumbnailRequest(key, generation, connection, file, priority)
-          byKey[key] = request
-          requests.offer(key, priority)
-          wakeUp.trySend(Unit)
-          request
-        }
-        selected.also { it.waiters++ }
-      }
-      return try {
-        request.result.await()
-      } finally {
-        // A cancelled screen must be able to withdraw queued work. Shared
-        // requests stay alive until their last waiter leaves, so a playlist
-        // sheet and a browser card can safely deduplicate the same thumbnail.
-        if (!currentCoroutineContext().isActive) {
-          synchronized(lock) {
-            request.waiters = (request.waiters - 1).coerceAtLeast(0)
-            if (request.waiters == 0 && !request.result.isCompleted) {
-              if (request === running) {
-                // A worker can dequeue just before assigning runningJob. Mark
-                // the shared result cancelled in that tiny window so it will
-                // not start native decoding after its last waiter disappears.
-                runningJob?.cancel() ?: request.result.cancel()
-              } else if (requests.cancel(request.key)) {
-                byKey.remove(request.key, request)
-                request.result.cancel()
-              }
-            }
-          }
-        } else {
-          synchronized(lock) {
-            request.waiters = (request.waiters - 1).coerceAtLeast(0)
-          }
-        }
-      }
-    }
-
-    fun promote(key: String, priority: ThumbnailPriority) {
-      synchronized(lock) {
-        val request = byKey[key] ?: return
-        if (priority.ordinal >= request.priority.ordinal) return
-        if (request === running || requests.promote(key, priority)) {
-          request.priority = priority
-        }
-      }
-    }
-
-    fun cancelBackgroundExcept(retainedKeys: Set<String>) {
-      synchronized(lock) {
-        requests.entries()
-          .filter { it.priority.ordinal >= ThumbnailPriority.PREFETCH.ordinal && it.key !in retainedKeys }
-          .forEach { entry ->
-            requests.cancel(entry.key)
-            byKey.remove(entry.key)?.result?.cancel()
-          }
-        val active = running
-        if (active != null && !active.result.isCompleted &&
-          active.priority.ordinal >= ThumbnailPriority.PREFETCH.ordinal && active.key !in retainedKeys) {
-          runningJob?.cancel() ?: active.result.cancel()
-        }
-      }
-    }
-  }
+  private val thumbnailDispatcher = PriorityProbeDispatcher<String, ThumbnailInput, Bitmap>(
+    CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    produce = { input, publish ->
+      val bitmap = probeThumbnailNow(input.connection, input.file, input.generation)
+      if (bitmap != null) {
+        thumbnailWrites.publishAndEnqueue(
+          ThumbnailWrite(input.connection, input.file, input.generation, bitmap),
+        ) { publish(bitmap) }
+      } else publish(null)
+    },
+    onFailure = { Log.w(TAG, "Thumbnail request failed (${it.javaClass.simpleName})") },
+  )
   // MediaMetadataRetriever instances are independent and truly parallel, so
   // durations keep a higher concurrency for real gains.
   private val durationSemaphore = Semaphore(6)
@@ -524,7 +332,7 @@ object NetworkMetadataProbe {
 
     val generation = cacheGeneration.token(key)
     cachedThumbnail(key, connection.id)?.let { return it }
-    return ThumbnailDispatcher.submit("$key#$generation", generation, connection, file, priority)
+    return thumbnailDispatcher.submit("$key#$generation", ThumbnailInput(generation, connection, file), priority.ordinal)
   }
 
   private suspend fun cachedThumbnail(key: String, connectionId: Long): Bitmap? {
@@ -621,7 +429,7 @@ object NetworkMetadataProbe {
   fun cancelBackgroundThumbnailsExcept(
     retained: Collection<Pair<NetworkConnection, NetworkFile>>,
   ) {
-    ThumbnailDispatcher.cancelBackgroundExcept(retained.mapTo(mutableSetOf()) { "${cacheKey(it.first, it.second)}#${cacheToken(it.first, it.second)}" })
+    thumbnailDispatcher.cancelBackgroundExcept(retained.mapTo(mutableSetOf()) { "${cacheKey(it.first, it.second)}#${cacheToken(it.first, it.second)}" }, ThumbnailPriority.PREFETCH.ordinal)
   }
 
   /** Promote an already queued request without creating another native job. */
@@ -631,7 +439,7 @@ object NetworkMetadataProbe {
     priority: ThumbnailPriority,
   ) {
     if (file.isDirectory) return
-    ThumbnailDispatcher.promote("${cacheKey(connection, file)}#${cacheToken(connection, file)}", priority)
+    thumbnailDispatcher.promote("${cacheKey(connection, file)}#${cacheToken(connection, file)}", priority.ordinal)
   }
 
   private data class ThumbnailResult(

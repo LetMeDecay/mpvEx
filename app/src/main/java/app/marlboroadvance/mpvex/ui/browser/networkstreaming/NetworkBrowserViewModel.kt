@@ -19,6 +19,7 @@ import app.marlboroadvance.mpvex.preferences.NetworkSortType
 import app.marlboroadvance.mpvex.preferences.SortOrder
 import app.marlboroadvance.mpvex.repository.NetworkRepository
 import app.marlboroadvance.mpvex.utils.sort.SortUtils
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineStart
@@ -68,8 +69,10 @@ class NetworkBrowserViewModel(
   private val runningThumbnails = ConcurrentHashMap<String, Job>()
   private val thumbnailPriorities = ConcurrentHashMap<String, NetworkMetadataProbe.ThumbnailPriority>()
   private val thumbnailLock = Any()
+  private var directoryRevision = 0L
+  private var directoryLoadJob: Job? = null
   private var durationProbeJob: Job? = null
-  private var listedFilesByPath: Map<String, NetworkFile> = emptyMap()
+  @Volatile private var listedFilesByPath: Map<String, NetworkFile> = emptyMap()
   private var retainedThumbnailPaths: Set<String> = emptySet()
   private val thumbnailVersions = ConcurrentHashMap<String, Pair<NetworkFile, Long>>()
   @Volatile
@@ -163,18 +166,32 @@ class NetworkBrowserViewModel(
    * Load files in the current directory
    */
   fun loadFiles() {
-    viewModelScope.launch {
+    val revision = ++directoryRevision
+    directoryLoadJob?.cancel()
+    directoryLoadJob = viewModelScope.launch {
       _isLoading.value = true
       _error.value = null
 
       try {
         val connection = repository.getConnectionById(connectionId)
           ?: throw Exception(application.getString(R.string.network_connection_not_found))
-        loadedConnection = connection
-
-        repository.listFiles(connection, currentPath)
-          .onSuccess { fileList ->
-            listedFilesByPath = fileList.associateBy { it.path }
+        val listing = repository.listFiles(connection, currentPath)
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        listing.onSuccess { fileList ->
+            synchronized(thumbnailLock) {
+              val next = fileList.associateBy { it.path }
+              val obsolete = (listedFilesByPath.keys + thumbnailVersions.keys).filter { path ->
+                loadedConnection != connection || listedFilesByPath[path]?.sameVersion(next[path]) != true
+              }.toSet()
+              listedFilesByPath = next
+              loadedConnection = connection
+              obsolete.forEach { path ->
+                thumbnailJobs.remove(path)?.cancel()
+                thumbnailPriorities.remove(path)
+                thumbnailVersions.remove(path)
+              }
+              _thumbnails.update { cached -> cached.filterKeys { it !in obsolete } }
+            }
             // Pre-load cached durations so the list displays instantly without re-probing
             val cachedDurations = NetworkMetadataProbe.getCachedDurations(connection, fileList)
             _files.value = fileList.map { file ->
@@ -187,10 +204,12 @@ class NetworkBrowserViewModel(
           .onFailure { e ->
             _error.value = e.message ?: application.getString(R.string.network_unknown_error)
           }
+      } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
       } catch (e: Exception) {
         _error.value = e.message ?: application.getString(R.string.network_unknown_error)
       } finally {
-        _isLoading.value = false
+        if (revision == directoryRevision) _isLoading.value = false
       }
     }
   }
@@ -233,7 +252,7 @@ class NetworkBrowserViewModel(
           val duration = NetworkMetadataProbe.probeDuration(connection, file)
           if (duration > 0) {
             withContext(Dispatchers.Main) {
-              if (NetworkMetadataProbe.cacheToken(connection, file) != generation) return@withContext
+              if (!file.sameVersion(listedFilesByPath[file.path]) || NetworkMetadataProbe.cacheToken(connection, file) != generation) return@withContext
               _files.update { current ->
                 if (current.any { it.path == file.path && it.duration != duration }) {
                   current.map {
@@ -272,6 +291,7 @@ class NetworkBrowserViewModel(
   ) {
     if (file.isDirectory) return
     if (!appearancePreferences.showNetworkThumbnails.get()) return
+    if (!file.sameVersion(listedFilesByPath[file.path])) return
     if (_thumbnails.value.containsKey(file.path)) return
 
     synchronized(thumbnailLock) {
@@ -313,7 +333,7 @@ class NetworkBrowserViewModel(
               val generation = NetworkMetadataProbe.cacheToken(connection, file)
               val bitmap = NetworkMetadataProbe.probeThumbnail(connection, file, effectivePriority)
               if (bitmap != null && NetworkMetadataProbe.cacheToken(connection, file) == generation) {
-                retainThumbnail(file, bitmap, generation)
+                retainThumbnail(connection, file, bitmap, generation)
               }
             } finally {
               runningThumbnails.remove(file.path, kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job])
@@ -341,10 +361,14 @@ class NetworkBrowserViewModel(
    * current visible+prefetch window. In-flight decodes are left alone so we
    * never waste an already-downloaded range and re-fetch it on scroll-back.
    */
-  private fun retainThumbnail(file: NetworkFile, bitmap: Bitmap, generation: Long) {
-    if (file.path !in retainedThumbnailPaths) return
-    thumbnailVersions[file.path] = file to generation
-    _thumbnails.update { it + (file.path to bitmap) }
+  private fun retainThumbnail(connection: NetworkConnection, file: NetworkFile, bitmap: Bitmap, generation: Long) {
+    synchronized(thumbnailLock) {
+      if (connection != loadedConnection || file.path !in retainedThumbnailPaths ||
+        !file.sameVersion(listedFilesByPath[file.path]) ||
+        NetworkMetadataProbe.cacheToken(connection, file) != generation) return
+      thumbnailVersions[file.path] = file to generation
+      _thumbnails.update { it + (file.path to bitmap) }
+    }
   }
 
   fun cancelThumbnailsExcept(keepPaths: Set<String>) {
@@ -415,7 +439,7 @@ class NetworkBrowserViewModel(
       }
       val duration = NetworkMetadataProbe.probeDuration(connection, file)
       withContext(Dispatchers.Main) {
-        if (NetworkMetadataProbe.cacheToken(connection, file) != generation) return@withContext
+        if (!file.sameVersion(listedFilesByPath[file.path]) || NetworkMetadataProbe.cacheToken(connection, file) != generation) return@withContext
         _files.value = _files.value.map {
           if (it.path == file.path) it.copy(duration = duration) else it
         }
@@ -424,8 +448,8 @@ class NetworkBrowserViewModel(
         val bitmap = NetworkMetadataProbe.probeThumbnail(connection, file)
         if (bitmap != null) {
           withContext(Dispatchers.Main) {
-            if (NetworkMetadataProbe.cacheToken(connection, file) != generation) return@withContext
-            retainThumbnail(file, bitmap, generation)
+            if (!file.sameVersion(listedFilesByPath[file.path]) || NetworkMetadataProbe.cacheToken(connection, file) != generation) return@withContext
+            retainThumbnail(connection, file, bitmap, generation)
           }
         }
       }
@@ -455,10 +479,10 @@ class NetworkBrowserViewModel(
           val newDuration = NetworkMetadataProbe.probeDuration(connection, file)
           val bitmap = if (showThumbnails) NetworkMetadataProbe.probeThumbnail(connection, file) else null
           withContext(Dispatchers.Main) {
-            if (NetworkMetadataProbe.cacheToken(connection, file) != generation) return@withContext
+            if (!file.sameVersion(listedFilesByPath[file.path]) || NetworkMetadataProbe.cacheToken(connection, file) != generation) return@withContext
             _files.update { current -> current.map { if (it.path == file.path) it.copy(duration = newDuration) else it } }
             if (bitmap != null) {
-              retainThumbnail(file, bitmap, generation)
+              retainThumbnail(connection, file, bitmap, generation)
             } else {
               thumbnailVersions.remove(file.path)
               _thumbnails.update { it - file.path }

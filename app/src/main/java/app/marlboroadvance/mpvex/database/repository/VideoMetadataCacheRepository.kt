@@ -272,22 +272,8 @@ class VideoMetadataCacheRepository(
 
       Log.d(TAG, "Validating ${cachedPaths.size} cached entries...")
 
-      val existingPaths = cachedPaths.filter { path ->
-        File(path).exists()
-      }
-
-      val staleCount = cachedPaths.size - existingPaths.size
+      val staleCount = pruneMissingMetadata(cachedPaths, { File(it).exists() }, dao::deleteByPaths)
       if (staleCount > 0) {
-        // Delete entries for non-existent files
-        if (existingPaths.isNotEmpty()) {
-          // SQLite has a limit on IN clause size, so chunk if needed
-          existingPaths.chunked(999).forEach { chunk ->
-            dao.deleteStaleEntries(chunk)
-          }
-        } else {
-          // All cached files are gone, clear everything
-          dao.clearAll()
-        }
         Log.d(TAG, "Removed $staleCount stale cache entries (deleted/moved/renamed videos)")
       } else {
         Log.d(TAG, "No stale entries found")
