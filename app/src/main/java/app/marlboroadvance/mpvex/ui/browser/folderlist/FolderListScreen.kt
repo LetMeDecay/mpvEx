@@ -384,7 +384,7 @@ object FolderListScreen : Screen {
                     val intent = Intent(Intent.ACTION_VIEW, allVideos.first().uri)
                     intent.setClass(context, app.marlboroadvance.mpvex.ui.player.PlayerActivity::class.java)
                     intent.putExtra("internal_launch", true)
-                    intent.putParcelableArrayListExtra("playlist", ArrayList(allVideos.map { it.uri }))
+                    intent.putExtra(app.marlboroadvance.mpvex.ui.player.PlaybackQueueRegistry.EXTRA, app.marlboroadvance.mpvex.ui.player.PlaybackQueueRegistry.put(allVideos.map { it.uri }))
                     intent.putExtra("playlist_index", 0)
                     intent.putExtra("launch_source", "playlist")
                     context.startActivity(intent)

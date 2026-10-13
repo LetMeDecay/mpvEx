@@ -840,4 +840,7 @@
   <string name="playback_load_failed">无法打开此视频</string>
     <string name="player_config_failed">无法准备播放器配置</string>
     <string name="player_config_fallback">配置更新失败，已使用上一份完整配置</string>
+    <string name="playlist_previous_page">上一页</string>
+    <string name="playlist_next_page">下一页</string>
+    <string name="playlist_changed">播放列表已变更或无法读取，请重新打开列表</string>
 </resources>

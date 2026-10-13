@@ -506,6 +506,7 @@ class NetworkBrowserViewModel(
     val clickedAt = android.os.SystemClock.elapsedRealtime()
     viewModelScope.launch {
       val registeredStreams = mutableListOf<String>()
+      var queueToken: String? = null
       try {
         val connection = repository.getConnectionById(connectionId)
           ?: throw Exception(application.getString(R.string.network_connection_not_found))
@@ -523,7 +524,7 @@ class NetworkBrowserViewModel(
         // Register a proxy stream for every item so the player can switch to the
         // next file without re-registering. The player releases retired queues.
         val uris =
-          queue.map { queued ->
+          withContext(Dispatchers.IO) { queue.map { queued ->
             if (useProxy) {
               val streamId = "${connectionId}_${System.nanoTime()}_${queued.path.hashCode()}"
               val proxyUrl =
@@ -540,6 +541,8 @@ class NetworkBrowserViewModel(
             }
           }
 
+        }
+
         val startUri = uris[startIndex]
 
         // Launch the player
@@ -553,7 +556,10 @@ class NetworkBrowserViewModel(
         // Pass the original network file path for stable media identifier (position saving)
         intent.putExtra("network_file_path", file.path)
         intent.putExtra("network_connection_id", connectionId)
-        intent.putParcelableArrayListExtra("playlist", ArrayList(uris))
+        queueToken = app.marlboroadvance.mpvex.ui.player.PlaybackQueueRegistry.put(uris) {
+          proxy.unregisterStreams(registeredStreams)
+        }
+        intent.putExtra(app.marlboroadvance.mpvex.ui.player.PlaybackQueueRegistry.EXTRA, queueToken)
         intent.putExtra("playlist_index", startIndex)
         intent.setDataAndType(startUri, file.mimeType ?: "video/*")
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -565,6 +571,7 @@ class NetworkBrowserViewModel(
         Log.d("PlayerStartup", "queuePreparationMs=${android.os.SystemClock.elapsedRealtime() - clickedAt}, items=${uris.size}")
         application.startActivity(intent)
       } catch (e: Exception) {
+        app.marlboroadvance.mpvex.ui.player.PlaybackQueueRegistry.discard(queueToken)
         app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
           .existingInstance()?.unregisterStreams(registeredStreams)
         if (e is kotlinx.coroutines.CancellationException) throw e

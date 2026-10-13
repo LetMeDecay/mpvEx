@@ -180,9 +180,19 @@ class PlayerActivity :
   /**
    * Playlist of URIs for sequential playback
    */
-  internal var playlist: List<Uri> = emptyList()
+  @Volatile internal var playlistPage = StablePlaybackQueue.Window<Uri>(0, emptyList())
+    private set
+  @Volatile private var databaseQueue: StablePlaybackQueue<Int>? = null
+  private var queuePageJob: Job? = null
+  private var queueSelectionJob: Job? = null
+  private var activeQueueIndex = -1
+  private var activeQueueUri: Uri? = null
+  internal val queueSize: Int get() = databaseQueue?.size ?: playlist.size
+
+  internal var playlist: List<Uri>
+    get() = playlistPage.items
     set(value) {
-      field = value
+      playlistPage = StablePlaybackQueue.Window(playlistPage.offset, value)
       playbackStreams.replaceQueue(value.mapNotNull(::playbackProxyStreamId).toSet())
     }
 
@@ -210,7 +220,39 @@ class PlayerActivity :
    * Tracks the starting offset of the loaded playlist window in the full playlist.
    * Used for windowed loading to prevent ANR with large playlists.
    */
-  private var playlistWindowOffset: Int = 0
+  private var playlistWindowOffset: Int
+    get() = playlistPage.offset
+    set(value) { playlistPage = playlistPage.copy(offset = value) }
+
+  private fun queueUriAt(index: Int): Uri? = playlistPage.let { page ->
+    page.items.getOrNull(index - page.offset)
+      ?: activeQueueUri.takeIf { index == activeQueueIndex }
+  }
+
+  private suspend fun resolveQueueUri(index: Int): Uri? {
+    queueUriAt(index)?.let { return it }
+    val queue = databaseQueue ?: return null
+    val pid = playlistId ?: return null
+    return queue.item(index) { playlistRepository.getPlaybackUris(pid, it) }
+  }
+
+  internal fun showPlaylistPage(center: Int) {
+    val queue = databaseQueue ?: return
+    val pid = playlistId ?: return
+    if (center !in 0 until queue.size) return
+    queuePageJob?.cancel()
+    queuePageJob = lifecycleScope.launch {
+      try {
+        val page = withContext(Dispatchers.IO) {
+          queue.window(center, 100) { playlistRepository.getPlaybackUris(pid, it) }
+        }
+        if (databaseQueue !== queue || isFinishing) return@launch
+        playlistPage = page
+        viewModel.refreshPlaylistItems(probeNetworkMetadata = false)
+      } catch (cancelled: CancellationException) { throw cancelled }
+      catch (_: Exception) { viewModel.showToast(getString(app.marlboroadvance.mpvex.R.string.playlist_changed)) }
+    }
+  }
 
   /**
    * Total count of items in the full playlist (when using windowed loading).
@@ -422,7 +464,7 @@ class PlayerActivity :
     intent.data?.let(::playbackProxyStreamId)?.let(playbackStreams::remember)
 
     // Load playlist from intent extras first (fast path - backward compatibility)
-    playlist = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+    playlist = intent.getStringExtra(PlaybackQueueRegistry.EXTRA)?.let(PlaybackQueueRegistry::take) ?: if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
       intent.getParcelableArrayListExtra("playlist", Uri::class.java) ?: emptyList()
     } else {
       @Suppress("DEPRECATION")
@@ -430,7 +472,7 @@ class PlayerActivity :
     }
 
     val launchIntent = intent
-    val initialItem = playlist.getOrNull(playlistIndex)
+    val initialItem = queueUriAt(playlistIndex)
     parsePathFromIntent(launchIntent)?.let { path ->
       viewModel.beginFileChange(path)
       preparePlayback(
@@ -588,13 +630,18 @@ class PlayerActivity :
   @RequiresApi(Build.VERSION_CODES.P)
   override fun onDestroy() {
     Log.d(TAG, "PlayerActivity onDestroy")
-    if (!mpvInitialized) { super.onDestroy(); return }
+    if (!mpvInitialized) {
+      PlaybackQueueRegistry.discard(intent.getStringExtra(PlaybackQueueRegistry.EXTRA))
+      super.onDestroy(); return
+    }
 
     runCatching {
       // OPTIMIZATION: Prevent any further UI updates or callbacks
       isReady = false
       nextPrefetchJob?.cancel()
       playlistLoadJob?.cancel()
+      queuePageJob?.cancel()
+      queueSelectionJob?.cancel()
       mediaPreparationJob?.cancel()
       nextPrefetchJob = null
 
@@ -1197,7 +1244,7 @@ class PlayerActivity :
    * @param index The index of the playlist item to play
    */
   internal fun playPlaylistItem(index: Int) {
-    if (index in playlist.indices) {
+    if (index in 0 until queueSize) {
       loadPlaylistItem(index)
     }
   }
@@ -1371,7 +1418,7 @@ class PlayerActivity :
         val hasNextItem = if (viewModel.shuffleEnabled.value) {
           shuffledPosition < shuffledIndices.size - 1
         } else {
-          playlistIndex < playlist.size - 1
+          playlistIndex < queueSize - 1
         }
 
         // Check if autoplay next video is enabled
@@ -1644,8 +1691,8 @@ class PlayerActivity :
       if (playlist.isNotEmpty()) {
         // For playlist items, save using the current URI
         // All items are loaded, so playlistIndex is the direct index
-        if (playlistIndex >= 0 && playlistIndex < playlist.size) {
-          saveRecentlyPlayedForUri(playlist[playlistIndex], fileName)
+        if (playlistIndex >= 0 && playlistIndex < queueSize) {
+          queueUriAt(playlistIndex)?.let { saveRecentlyPlayedForUri(it, fileName) }
         } else {
           Log.w(TAG, "Cannot save recently played: invalid playlist index $playlistIndex (playlist size: ${playlist.size})")
         }
@@ -1690,7 +1737,7 @@ class PlayerActivity :
         // this is different from the original launch URI after the first item.
         // Proxy URLs are ephemeral, so use their registry entry for the actual
         // remote path and connection id.
-        val currentUri = playlist.getOrNull(playlistIndex) ?: extractUriFromIntent(intent)
+        val currentUri = queueUriAt(playlistIndex) ?: extractUriFromIntent(intent)
         val currentStreamInfo = currentUri?.let(::resolveProxyStreamInfo)
         val networkFilePath = currentStreamInfo?.filePath
           ?: intent.getStringExtra("network_file_path")
@@ -2186,14 +2233,17 @@ class PlayerActivity :
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     if (!mpvInitialized) {
-      if (parsePathFromIntent(intent) != null) setIntent(intent)
+      if (parsePathFromIntent(intent) != null) {
+        PlaybackQueueRegistry.discard(this.intent.getStringExtra(PlaybackQueueRegistry.EXTRA))
+        setIntent(intent)
+      }
       return
     }
 
     // Use the same parser as playback: SEND carries EXTRA_STREAM/EXTRA_TEXT,
     // and explicit callers can supply "uri" without Intent.data.
     val mediaPath = parsePathFromIntent(intent)
-    if (mediaPath == null && !intent.hasExtra("playlist") && !intent.hasExtra("playlist_id")) return
+    if (mediaPath == null && !intent.hasExtra("playlist") && !intent.hasExtra("playlist_id") && !intent.hasExtra(PlaybackQueueRegistry.EXTRA)) return
     mediaPath?.let(Uri::parse)?.let(::playbackProxyStreamId)?.let(playbackStreams::remember)
 
     saveVideoPlaybackState(fileName)
@@ -2210,10 +2260,10 @@ class PlayerActivity :
 
     // Check if this intent has playlist information
     val hasPlaylistExtras = intent.hasExtra("playlist_id") ||
-      intent.hasExtra("playlist")
+      intent.hasExtra(PlaybackQueueRegistry.EXTRA) || intent.hasExtra("playlist")
 
     // Load playlist from intent extras first (fast path)
-    val playlistFromIntent = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+    val playlistFromIntent = intent.getStringExtra(PlaybackQueueRegistry.EXTRA)?.let(PlaybackQueueRegistry::take) ?: if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
       intent.getParcelableArrayListExtra("playlist", Uri::class.java) ?: emptyList()
     } else {
       @Suppress("DEPRECATION")
@@ -2226,12 +2276,17 @@ class PlayerActivity :
       val newPlaylistId = intent.getIntExtra("playlist_id", -1).takeIf { it != -1 }
       playlistId = newPlaylistId
       playlistIndex = intent.getIntExtra("playlist_index", 0)
+      databaseQueue = null
+      queueSelectionJob?.cancel()
+      queuePageJob?.cancel()
+      activeQueueIndex = -1
+      activeQueueUri = null
       playlistWindowOffset = 0
       playlistTotalCount = -1
       playlist = playlistFromIntent
     }
 
-    val initialItem = playlist.getOrNull(playlistIndex)
+    val initialItem = queueUriAt(playlistIndex)
     preparePlayback(
       playablePath,
       readName = { initialItem?.let(::getFileNameFromUri) ?: getFileName(intent) },
@@ -2772,7 +2827,7 @@ class PlayerActivity :
     if (playlist.isEmpty()) return
 
     // Create a list of all indices except the current one
-    val indices = playlist.indices.filter { it != playlistIndex }.toMutableList()
+    val indices = (0 until queueSize).filter { it != playlistIndex }.toMutableList()
     indices.shuffle()
 
     // Put current index at the beginning
@@ -2875,23 +2930,22 @@ class PlayerActivity :
    * Load a playlist item by index
    */
   private fun loadPlaylistItem(index: Int) {
-    // All items are loaded - just validate index and load directly
-    if (index < 0 || index >= playlist.size) {
-      Log.e(TAG, "Invalid playlist index: $index (playlist size: ${playlist.size})")
-      return
+    if (index !in 0 until queueSize) return
+    queueSelectionJob?.cancel()
+    val generation = viewModel.playbackSession.generation
+    val queue = databaseQueue
+    queueSelectionJob = lifecycleScope.launch {
+      try {
+        val uri = withContext(Dispatchers.IO) { resolveQueueUri(index) } ?: return@launch
+        if (generation != viewModel.playbackSession.generation || databaseQueue !== queue || isFinishing) return@launch
+        loadPlaylistItemInternal(index, uri)
+        showPlaylistPage(index)
+      } catch (cancelled: CancellationException) { throw cancelled }
+      catch (_: Exception) { viewModel.showToast(getString(app.marlboroadvance.mpvex.R.string.playlist_changed)) }
     }
-    loadPlaylistItemInternal(index)
   }
 
-  /**
-   * Internal method to load a playlist item
-   */
-  private fun loadPlaylistItemInternal(index: Int) {
-    if (index < 0 || index >= playlist.size) {
-      Log.e(TAG, "Invalid playlist index: $index (playlist size: ${playlist.size})")
-      return
-    }
-
+  private fun loadPlaylistItemInternal(index: Int, uri: Uri) {
     // Stop watching the old item immediately. The new watcher is started from
     // the FILE_LOADED event once MPV has switched to the new item.
     cancelNextPrefetch()
@@ -2903,7 +2957,8 @@ class PlayerActivity :
       saveVideoPlaybackState(fileName)
     }
 
-    val uri = playlist[index]
+    activeQueueIndex = index
+    activeQueueUri = uri
     val playableUri = uri.toString()
     viewModel.beginFileChange(playableUri)
     isReady = false
@@ -2972,7 +3027,7 @@ class PlayerActivity :
     // waiting for its duration.
     cancelNextPrefetch()
 
-    if (playlist.size <= 1) return
+    if (queueSize <= 1) return
     val isNetworkPlayback = playlist.any { it.host == "127.0.0.1" || it.host == "localhost" }
     if (!isNetworkPlayback) return
 
@@ -3007,7 +3062,7 @@ class PlayerActivity :
   private suspend fun prefetchNextPlaylistItem(currentIndex: Int) {
     val next = nextPlaylistIndexForPrefetch(currentIndex) ?: return
 
-    val uri = playlist.getOrNull(next) ?: return
+    val uri = resolveQueueUri(next) ?: return
     val host = uri.host
     if (host != "127.0.0.1" && host != "localhost") return
 
@@ -3067,7 +3122,7 @@ class PlayerActivity :
   private fun nextPlaylistIndexForPrefetch(currentIndex: Int): Int? {
     return PlaylistPrefetchOrder.nextIndex(
       currentIndex = currentIndex,
-      playlistSize = playlist.size,
+      playlistSize = queueSize,
       shuffleEnabled = viewModel.shuffleEnabled.value,
       shuffledIndices = shuffledIndices,
       repeatAll = viewModel.repeatMode.value == app.marlboroadvance.mpvex.ui.player.RepeatMode.ALL,
@@ -3144,8 +3199,8 @@ class PlayerActivity :
     }
 
     // Also check the current playlist item if playing from a playlist
-    if (playlist.isNotEmpty() && playlistIndex >= 0 && playlistIndex < playlist.size) {
-      return isUriM3U(playlist[playlistIndex])
+    if (playlist.isNotEmpty() && playlistIndex >= 0 && playlistIndex < queueSize) {
+      return queueUriAt(playlistIndex)?.let(::isUriM3U) ?: false
     }
 
     return false
@@ -3250,7 +3305,7 @@ class PlayerActivity :
   /**
    * Generate a unique identifier for this media for playback state/history.
    *
-   * For local/offline files, uses fileName (display name or path).
+   * For local/offline files, uses a stable URI/path identity.
    * For network streams via proxy (SMB/WebDAV/FTP), uses the stable network file path from intent extras.
    * For other network URIs (http/https/rtmp/etc.), uses a hash of the URI string to distinguish different streams.
    */
@@ -3284,15 +3339,14 @@ class PlayerActivity :
       // For remote protocols: hash the URI so position is per-episode or per-stream.
       "${fileName}_${uri.toString().hashCode()}"
     } else {
-      // For local/file uris and unknown: just use fileName.
-      fileName
+      app.marlboroadvance.mpvex.utils.media.LocalMediaIdentity.forUri(uri?.toString() ?: fileName)
     }
   }
 
   /**
    * Generate a unique identifier for this media from a URI and name.
    *
-   * For local/offline files, uses fileName (display name or path).
+   * For local/offline files, uses a stable URI/path identity.
    * For network URIs (http/https/rtmp/etc.), uses a hash of the URI string to distinguish different streams.
    */
   private fun getMediaIdentifierFromUri(uri: Uri, fileName: String): String {
@@ -3305,7 +3359,7 @@ class PlayerActivity :
     return if (uri.scheme?.startsWith("http") == true || uri.scheme == "rtmp" || uri.scheme == "ftp" || uri.scheme == "rtsp" || uri.scheme == "mms") {
       "${fileName}_${uri.toString().hashCode()}"
     } else {
-      fileName
+      app.marlboroadvance.mpvex.utils.media.LocalMediaIdentity.forUri(uri.toString())
     }
   }
 
@@ -3353,15 +3407,21 @@ class PlayerActivity :
     playlistLoadJob = lifecycleScope.launch(Dispatchers.IO) {
       try {
         val entity = playlistRepository.getPlaylistById(pid)
-        val items = playlistRepository.getPlaylistItemsAsUris(pid)
+        val queue = StablePlaybackQueue(playlistRepository.getPlaybackItemIds(pid))
+        val page = queue.window(playlistIndex.coerceIn(0, (queue.size - 1).coerceAtLeast(0)), 100) {
+          playlistRepository.getPlaybackUris(pid, it)
+        }
         withContext(Dispatchers.Main) {
           if (generation != viewModel.playbackSession.generation || playlistId != pid || isFinishing) {
             return@withContext
           }
           isM3uPlaylist = entity?.isM3uPlaylist ?: false
-          playlist = items
-          playlistWindowOffset = 0
-          playlistTotalCount = items.size
+          databaseQueue = queue
+          playlistPage = page
+          playlistTotalCount = queue.size
+          activeQueueIndex = playlistIndex
+          activeQueueUri = parsePathFromIntent(intent)?.let(Uri::parse)
+          viewModel.refreshPlaylistItems(probeNetworkMetadata = false)
           if (viewModel.shuffleEnabled.value) onShuffleToggled(true)
           if (isReady) startNextPrefetch()
         }

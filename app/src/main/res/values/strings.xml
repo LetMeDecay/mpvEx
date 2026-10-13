@@ -850,4 +850,7 @@
   <string name="playback_load_failed">Unable to open this video</string>
     <string name="player_config_failed">Unable to prepare player configuration</string>
     <string name="player_config_fallback">Configuration refresh failed; using the previous complete configuration</string>
+    <string name="playlist_previous_page">Previous</string>
+    <string name="playlist_next_page">Next</string>
+    <string name="playlist_changed">Playlist changed or unavailable; reopen it to refresh</string>
 </resources>

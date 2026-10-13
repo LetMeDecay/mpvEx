@@ -73,11 +73,24 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
   private val sharedRanges = SharedRangeReads()
   @Volatile private var playingStreamId: String? = null
 
-  data class StreamInfo(
+  class StreamInfo(
     val connection: NetworkConnection,
     val file: NetworkFile,
-    val client: NetworkClient,
   ) {
+    private val clientLock = Any()
+    private var retired = false
+    private var createdClient: NetworkClient? = null
+    val client: NetworkClient get() = synchronized(clientLock) {
+      check(!retired) { "Stream retired" }
+      createdClient ?: NetworkClientFactory.createClient(connection).also { createdClient = it }
+    }
+    internal suspend fun closeClient() {
+      val client = synchronized(clientLock) {
+        retired = true
+        createdClient.also { createdClient = null }
+      }
+      client?.disconnect()
+    }
     internal val requests = ProxyRequestRegistry()
     val filePath: String get() = file.path
     var fileSize: Long = file.size
@@ -122,12 +135,9 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     connection: NetworkConnection,
     file: NetworkFile,
   ): String {
-    val client = NetworkClientFactory.createClient(connection)
-
     val streamInfo = StreamInfo(
       connection = connection,
       file = file,
-      client = client,
     )
 
     activeStreams[streamId] = streamInfo
@@ -175,7 +185,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
       streamInfo.requests.close()
       runBlocking {
         try {
-          streamInfo.client.disconnect()
+          streamInfo.closeClient()
         } catch (e: Exception) {
           // Ignore disconnect errors
         }
@@ -190,7 +200,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     retired.forEach { it.requests.close() }
     if (retired.isEmpty()) return
     cleanupScope.launch {
-      retired.forEach { info -> runCatching { info.client.disconnect() } }
+      retired.forEach { info -> runCatching { info.closeClient() } }
     }
   }
 

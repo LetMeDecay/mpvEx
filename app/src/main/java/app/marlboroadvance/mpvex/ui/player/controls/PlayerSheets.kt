@@ -349,6 +349,7 @@ fun PlayerSheets(
             viewModel.playPlaylistItem(item.index)
           },
           totalCount = totalCount,
+          onPage = viewModel::showPlaylistPage,
           isM3UPlaylist = isM3U,
           playerPreferences = playerPreferences,
         )

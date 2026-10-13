@@ -264,6 +264,7 @@ fun PlaylistSheet(
   onDismissRequest: () -> Unit,
   onItemClick: (PlaylistItem) -> Unit,
   totalCount: Int = playlist.size,
+  onPage: (Int) -> Unit = {},
   isM3UPlaylist: Boolean = false,
   playerPreferences: app.marlboroadvance.mpvex.preferences.PlayerPreferences,
   modifier: Modifier = Modifier,
@@ -434,6 +435,19 @@ fun PlaylistSheet(
           }
         }
 
+        if (totalCount > playlist.size && playlist.isNotEmpty()) {
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            androidx.compose.material3.TextButton(
+              enabled = playlist.first().index > 0,
+              onClick = { onPage((playlist.first().index - playlist.size / 2).coerceAtLeast(0)) },
+            ) { Text(stringResource(R.string.playlist_previous_page)) }
+            Text("${playlist.first().index + 1}–${playlist.last().index + 1} / $totalCount")
+            androidx.compose.material3.TextButton(
+              enabled = playlist.last().index < totalCount - 1,
+              onClick = { onPage((playlist.last().index + 1 + playlist.size / 2).coerceAtMost(totalCount - 1)) },
+            ) { Text(stringResource(R.string.playlist_next_page)) }
+          }
+        }
         // Conditional rendering based on view mode
         if (isListMode) {
           // Vertical list mode (original implementation)

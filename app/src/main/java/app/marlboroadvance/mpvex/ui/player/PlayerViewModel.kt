@@ -1548,9 +1548,11 @@ class PlayerViewModel(
     return activity.isCurrentPlaylistM3U()
   }
 
+  fun showPlaylistPage(center: Int) { (host as? PlayerActivity)?.showPlaylistPage(center) }
+
   fun getPlaylistTotalCount(): Int {
     val activity = host as? PlayerActivity ?: return 0
-    return activity.playlist.size
+    return activity.queueSize
   }
 
   fun getPlaylistData(): List<app.marlboroadvance.mpvex.ui.player.controls.components.sheets.PlaylistItem>? {
@@ -1564,7 +1566,9 @@ class PlayerViewModel(
       ((currentPos.toFloat() / currentDuration.toFloat()) * 100f).coerceIn(0f, 100f)
     } else 0f
 
-    return activity.playlist.mapIndexed { index, uri ->
+    val page = activity.playlistPage
+    return page.items.mapIndexed { localIndex, uri ->
+      val index = page.offset + localIndex
       val title = activity.getPlaylistItemTitle(uri)
       // Path is not used for thumbnail loading - thumbnails are loaded directly from URI
       // Keep it for cache key compatibility
@@ -1821,8 +1825,13 @@ class PlayerViewModel(
    * Refreshes the playlist items to update the currently playing indicator.
    * Called when a new video starts playing to update the playlist UI.
    */
+  private var playlistRefreshJob: Job? = null
   fun refreshPlaylistItems(probeNetworkMetadata: Boolean = true) {
-    viewModelScope.launch(Dispatchers.IO) {
+    playlistRefreshJob?.cancel()
+    val activity = host as? PlayerActivity ?: return
+    val page = activity.playlistPage
+    val generation = playbackSession.generation
+    playlistRefreshJob = viewModelScope.launch(Dispatchers.IO) {
       val updatedItems = getPlaylistData()
       if (updatedItems != null) {
         // Clear cache if playlist size changed
@@ -1830,7 +1839,11 @@ class PlayerViewModel(
           metadataCache.evictAll()
         }
 
-        _playlistItems.value = updatedItems
+        withContext(Dispatchers.Main) {
+          if (activity.playlistPage === page && playbackSession.generation == generation) {
+            _playlistItems.value = updatedItems
+          }
+        }
 
         // Load metadata asynchronously in the background
         loadPlaylistMetadataAsync(updatedItems)

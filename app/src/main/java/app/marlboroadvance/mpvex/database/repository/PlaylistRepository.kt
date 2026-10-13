@@ -108,6 +108,13 @@ class PlaylistRepository(private val playlistDao: PlaylistDao) {
   fun observePlaylistItems(playlistId: Int): Flow<List<PlaylistItemEntity>> =
     playlistDao.observePlaylistItems(playlistId)
 
+  suspend fun getPlaybackItemIds(playlistId: Int): List<Int> = playlistDao.getPlaybackItemIds(playlistId)
+
+  suspend fun getPlaybackUris(playlistId: Int, ids: List<Int>): Map<Int, Uri> {
+    require(ids.size <= 100)
+    return playlistDao.getPlaybackItems(playlistId, ids).associate { it.id to Uri.parse(it.filePath) }
+  }
+
   suspend fun getPlaylistItems(playlistId: Int): List<PlaylistItemEntity> =
     playlistDao.getPlaylistItems(playlistId)
 

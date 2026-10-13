@@ -123,6 +123,12 @@ interface PlaylistDao {
   )
   suspend fun getPlaylistItemByPath(playlistId: Int, filePath: String): PlaylistItemEntity?
 
+  @Query("SELECT id FROM PlaylistItemEntity WHERE playlistId = :playlistId ORDER BY position ASC, id ASC")
+  suspend fun getPlaybackItemIds(playlistId: Int): List<Int>
+
+  @Query("SELECT * FROM PlaylistItemEntity WHERE playlistId = :playlistId AND id IN (:ids)")
+  suspend fun getPlaybackItems(playlistId: Int, ids: List<Int>): List<PlaylistItemEntity>
+
   // Pagination support for large playlists
   @Query(
     """
