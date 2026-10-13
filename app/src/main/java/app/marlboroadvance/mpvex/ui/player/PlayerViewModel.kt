@@ -46,8 +46,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
@@ -162,7 +160,12 @@ class PlayerViewModel(
   val duration by MpvGateway.propInt["duration"].collectAsState(viewModelScope)
 
   internal val playbackSession = PlaybackSession()
-  private val playbackCommandMutex = Mutex()
+  private val playbackCommands = PlaybackCommandQueue(
+    scope = viewModelScope,
+    dispatcher = Dispatchers.IO,
+    execute = { MpvGateway.command(*it.toTypedArray()) },
+    onFailure = { Log.e("PlayerViewModel", "Playback command failed") },
+  )
   private val _mediaGeneration = MutableStateFlow(0L)
   val mediaGeneration = _mediaGeneration.asStateFlow()
 
@@ -170,6 +173,7 @@ class PlayerViewModel(
     app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
       .existingInstance()?.setPlaybackUrl(path)
     playbackSession.begin(path)
+    playbackCommands.clearPending()
     _mediaGeneration.value = playbackSession.generation
     seekCoalesceJob?.cancel()
     pendingSeekOffset = 0
@@ -183,10 +187,8 @@ class PlayerViewModel(
 
   fun loadFile(path: String) {
     val generation = playbackSession.generation
-    viewModelScope.launch(Dispatchers.IO) {
-      playbackCommandMutex.withLock {
-        if (playbackSession.generation == generation) MpvGateway.command("loadfile", path)
-      }
+    playbackCommands.load(listOf("loadfile", path)) {
+      playbackSession.generation == generation && playbackSession.acceptsPath(path)
     }
   }
 
@@ -949,13 +951,9 @@ class PlayerViewModel(
     seekCoalesceJob?.cancel()
     pendingSeekOffset = 0
     if (exact) _precisePosition.value = target.toFloat()
-    viewModelScope.launch(Dispatchers.IO) {
-      playbackCommandMutex.withLock {
-        if (playbackSession.isCurrent(ticket)) {
-          MpvGateway.command("seek", target.toString(), if (exact) "absolute+exact" else "absolute+keyframes")
-        }
-      }
-    }
+    playbackCommands.seek(
+      listOf("seek", target.toString(), if (exact) "absolute+exact" else "absolute+keyframes"),
+    ) { playbackSession.isCurrent(ticket) }
   }
 
   private fun coalesceSeek(offset: Int) {

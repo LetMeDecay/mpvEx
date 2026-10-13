@@ -16,7 +16,6 @@ import androidx.annotation.DrawableRes
 import androidx.appcompat.app.AppCompatActivity
 import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.preferences.PlayerPreferences
-import `is`.xyz.mpv.MPVLib
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 
@@ -51,14 +50,14 @@ class MPVPipHelper(
           intent: Intent?,
         ) {
           // Use precise seeking for videos shorter than 2 minutes (120 seconds) or if preference is enabled
-          val duration = MPVLib.getPropertyInt("duration") ?: 0
+          val duration = MpvGateway.getPropertyInt("duration") ?: 0
           val shouldUsePreciseSeeking = playerPreferences.usePreciseSeeking.get() || duration < 120
           val seekMode = if (shouldUsePreciseSeeking) "relative+exact" else "relative+keyframes"
           when (intent?.getIntExtra(PIP_INTENT_ACTION, 0)) {
-            PIP_PLAY -> MPVLib.setPropertyBoolean("pause", false)
-            PIP_PAUSE -> MPVLib.setPropertyBoolean("pause", true)
-            PIP_REWIND -> MPVLib.command("seek", "-10", seekMode)
-            PIP_FORWARD -> MPVLib.command("seek", "10", seekMode)
+            PIP_PLAY -> MpvGateway.setPropertyBoolean("pause", false)
+            PIP_PAUSE -> MpvGateway.setPropertyBoolean("pause", true)
+            PIP_REWIND -> MpvGateway.command("seek", "-10", seekMode)
+            PIP_FORWARD -> MpvGateway.command("seek", "10", seekMode)
           }
           updatePictureInPictureParams()
         }
@@ -103,8 +102,8 @@ class MPVPipHelper(
       }.build()
 
   private fun getVideoAspectRatio(): Rational? {
-    val width = MPVLib.getPropertyInt("video-out-params/dw") ?: 0
-    val height = MPVLib.getPropertyInt("video-out-params/dh") ?: 0
+    val width = MpvGateway.getPropertyInt("video-out-params/dw") ?: 0
+    val height = MpvGateway.getPropertyInt("video-out-params/dh") ?: 0
 
     if (width == 0 || height == 0) return null
 
@@ -131,7 +130,7 @@ class MPVPipHelper(
   }
 
   private fun createPipActions(): List<RemoteAction> {
-    val isPlaying = MPVLib.getPropertyBoolean("pause") == false
+    val isPlaying = MpvGateway.getPropertyBoolean("pause") == false
 
     return listOf(
       createRemoteAction("rewind", android.R.drawable.ic_media_rew, PIP_REWIND),

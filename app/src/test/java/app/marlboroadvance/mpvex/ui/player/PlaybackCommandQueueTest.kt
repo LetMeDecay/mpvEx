@@ -1,0 +1,148 @@
+package app.marlboroadvance.mpvex.ui.player
+
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
+import org.junit.Assert.assertEquals
+import org.junit.Test
+import kotlin.coroutines.ContinuationInterceptor
+
+class PlaybackCommandQueueTest {
+  @Test(timeout = 5000)
+  fun blockedLoadKeepsOnlyLatestLoadAndSeek() = runBlocking {
+    val owner = Job()
+    val entered = CompletableDeferred<Unit>()
+    val release = CompletableDeferred<Unit>()
+    val calls = mutableListOf<List<String>>()
+    val queue = PlaybackCommandQueue(
+      CoroutineScope(coroutineContext + owner),
+      coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
+      execute = {
+        calls.add(it)
+        if (it == listOf("loadfile", "a")) {
+          entered.complete(Unit)
+          release.await()
+        }
+      },
+      onFailure = { throw AssertionError(it) },
+    )
+    try {
+      queue.load(listOf("loadfile", "a")) { true }
+      entered.await()
+      queue.seek(listOf("seek", "old")) { true }
+      queue.load(listOf("loadfile", "b")) { true }
+      queue.load(listOf("loadfile", "c")) { true }
+      repeat(1000) { queue.seek(listOf("seek", "$it")) { true } }
+      release.complete(Unit)
+      yield()
+      assertEquals(
+        listOf(listOf("loadfile", "a"), listOf("loadfile", "c"), listOf("seek", "999")),
+        calls,
+      )
+    } finally {
+      owner.cancelAndJoin()
+    }
+  }
+
+  @Test(timeout = 5000)
+  fun validityIsCheckedAtDispatchAndClearDropsPendingWork() = runBlocking {
+    val owner = Job()
+    val calls = mutableListOf<List<String>>()
+    val queue = PlaybackCommandQueue(
+      CoroutineScope(coroutineContext + owner),
+      coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
+      execute = { calls.add(it) },
+      onFailure = { throw AssertionError(it) },
+    )
+    try {
+      var current = true
+      queue.load(listOf("loadfile", "a")) { current }
+      current = false
+      yield()
+      assertEquals(emptyList<List<String>>(), calls)
+      queue.load(listOf("loadfile", "b")) { true }
+      queue.seek(listOf("seek", "10")) { true }
+      queue.clearPending()
+      yield()
+      assertEquals(emptyList<List<String>>(), calls)
+      queue.load(listOf("loadfile", "c")) { true }
+      yield()
+      assertEquals(listOf(listOf("loadfile", "c")), calls)
+    } finally {
+      owner.cancelAndJoin()
+    }
+  }
+
+  @Test(timeout = 5000)
+  fun failedCommandDoesNotDisableQueueAndCancelledOwnerRejectsWork() = runBlocking {
+    val owner = Job()
+    var failures = 0
+    val calls = mutableListOf<List<String>>()
+    val queue = PlaybackCommandQueue(
+      CoroutineScope(coroutineContext + owner),
+      coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
+      execute = {
+        if (it == listOf("loadfile", "bad")) error("native failure")
+        calls.add(it)
+      },
+      onFailure = { failures++ },
+    )
+    try {
+      queue.load(listOf("loadfile", "bad")) { true }
+      yield()
+      queue.load(listOf("loadfile", "good")) { true }
+      yield()
+      assertEquals(1, failures)
+      assertEquals(listOf(listOf("loadfile", "good")), calls)
+    } finally {
+      owner.cancelAndJoin()
+    }
+    queue.load(listOf("loadfile", "after cancellation")) { true }
+    yield()
+    assertEquals(1, calls.size)
+  }
+
+  @Test(timeout = 5000)
+  fun replacementLoadDropsSeekForPreviousFile() = runBlocking {
+    val owner = Job()
+    val calls = mutableListOf<List<String>>()
+    val queue = PlaybackCommandQueue(
+      CoroutineScope(coroutineContext + owner),
+      coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
+      execute = { calls.add(it) },
+      onFailure = { throw AssertionError(it) },
+    )
+    try {
+      queue.seek(listOf("seek", "120")) { true }
+      queue.load(listOf("loadfile", "next")) { true }
+      yield()
+      assertEquals(listOf(listOf("loadfile", "next")), calls)
+    } finally {
+      owner.cancelAndJoin()
+    }
+  }
+
+  @Test(timeout = 5000)
+  fun immediateDispatchDoesNotLoseWakeup() = runBlocking {
+    val owner = Job()
+    val calls = mutableListOf<List<String>>()
+    val queue = PlaybackCommandQueue(
+      CoroutineScope(coroutineContext + owner),
+      Dispatchers.Unconfined,
+      execute = { calls.add(it) },
+      onFailure = { throw AssertionError(it) },
+    )
+    try {
+      queue.load(listOf("loadfile", "a")) { true }
+      queue.seek(listOf("seek", "10")) { true }
+      assertEquals(listOf(listOf("loadfile", "a"), listOf("seek", "10")), calls)
+    } finally {
+      owner.cancelAndJoin()
+    }
+  }
+}

@@ -37,17 +37,17 @@ class MPVView(
 
   fun getVideoOutAspect(): Double? {
     // Try to get aspect from video-params/aspect first
-    val rawAspect = MPVLib.getPropertyDouble("video-params/aspect")
-    val rotate = MPVLib.getPropertyInt("video-params/rotate") ?: 0
+    val rawAspect = MpvGateway.getPropertyDouble("video-params/aspect")
+    val rotate = MpvGateway.getPropertyInt("video-params/rotate") ?: 0
 
     // If aspect is not available or 0, calculate from width and height
     val finalAspect = if (rawAspect == null || rawAspect < 0.001) {
       val width = runCatching {
-        MPVLib.getPropertyInt("width") ?: MPVLib.getPropertyInt("video-params/w") ?: 0
+        MpvGateway.getPropertyInt("width") ?: MpvGateway.getPropertyInt("video-params/w") ?: 0
       }.getOrDefault(0)
 
       val height = runCatching {
-        MPVLib.getPropertyInt("height") ?: MPVLib.getPropertyInt("video-params/h") ?: 0
+        MpvGateway.getPropertyInt("height") ?: MpvGateway.getPropertyInt("video-params/h") ?: 0
       }.getOrDefault(0)
 
       if (width > 0 && height > 0) {
@@ -76,7 +76,7 @@ class MPVView(
       thisRef: Any?,
       property: KProperty<*>,
     ): Int {
-      val v = MPVLib.getPropertyString(name)
+      val v = MpvGateway.getPropertyString(name)
       // we can get null here for "no" or other invalid value
       return v?.toIntOrNull() ?: -1
     }
@@ -86,7 +86,7 @@ class MPVView(
       property: KProperty<*>,
       value: Int,
     ) {
-      if (value == -1) MPVLib.setPropertyString(name, "no") else MPVLib.setPropertyInt(name, value)
+      if (value == -1) MpvGateway.setPropertyString(name, "no") else MpvGateway.setPropertyInt(name, value)
     }
   }
 
@@ -96,53 +96,53 @@ class MPVView(
 
   override fun initOptions() {
     val profile = decoderPreferences.profile.get()
-    MPVLib.setOptionString("profile", profile)
+    MpvGateway.setOptionString("profile", profile)
     setVo(if (decoderPreferences.gpuNext.get()) "gpu-next" else "gpu")
     
     // Set GPU API context (Vulkan or OpenGL)
     if (decoderPreferences.useVulkan.get()) {
-      MPVLib.setOptionString("gpu-context", "androidvk")
+      MpvGateway.setOptionString("gpu-context", "androidvk")
     }
 
     // Set hwdec with fallback order: HW+ (mediacodec) -> HW (mediacodec-copy) -> SW (no)
-    MPVLib.setOptionString(
+    MpvGateway.setOptionString(
       "hwdec",
       if (decoderPreferences.tryHWDecoding.get()) "mediacodec,mediacodec-copy,no" else "no",
     )
-    MPVLib.setOptionString("hwdec-codecs", "all")
+    MpvGateway.setOptionString("hwdec-codecs", "all")
 
     if (decoderPreferences.useYUV420P.get()) {
-      MPVLib.setOptionString("vf", "format=yuv420p")
+      MpvGateway.setOptionString("vf", "format=yuv420p")
     }
     
     // Cap demuxer cache for mobile to prevent memory issues
     val cacheMegs = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) 64 else 32
-    MPVLib.setOptionString("demuxer-max-bytes", "${cacheMegs * 1024 * 1024}")
-    MPVLib.setOptionString("demuxer-max-back-bytes", "${cacheMegs * 1024 * 1024}")
+    MpvGateway.setOptionString("demuxer-max-bytes", "${cacheMegs * 1024 * 1024}")
+    MpvGateway.setOptionString("demuxer-max-back-bytes", "${cacheMegs * 1024 * 1024}")
     
     val logLevel = if (advancedPreferences.verboseLogging.get()) "v" else "warn"
-    MPVLib.setOptionString("msg-level", "all=$logLevel")
+    MpvGateway.setOptionString("msg-level", "all=$logLevel")
 
-    MPVLib.setPropertyBoolean("keep-open", true)
-    MPVLib.setPropertyBoolean("input-default-bindings", true)
+    MpvGateway.setPropertyBoolean("keep-open", true)
+    MpvGateway.setPropertyBoolean("input-default-bindings", true)
 
-    MPVLib.setOptionString("tls-verify", "yes")
-    MPVLib.setOptionString("tls-ca-file", "${context.filesDir.path}/cacert.pem")
+    MpvGateway.setOptionString("tls-verify", "yes")
+    MpvGateway.setOptionString("tls-ca-file", "${context.filesDir.path}/cacert.pem")
 
     val screenshotDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
     screenshotDir.mkdirs()
-    MPVLib.setOptionString("screenshot-directory", screenshotDir.path)
+    MpvGateway.setOptionString("screenshot-directory", screenshotDir.path)
 
     VideoFilters.entries.forEach {
-      MPVLib.setOptionString(it.mpvProperty, it.preference(decoderPreferences).get().toString())
+      MpvGateway.setOptionString(it.mpvProperty, it.preference(decoderPreferences).get().toString())
     }
 
-    MPVLib.setOptionString("speed", playerPreferences.defaultSpeed.get().toString())
-    MPVLib.setOptionString("vd-lavc-film-grain", "cpu")
+    MpvGateway.setOptionString("speed", playerPreferences.defaultSpeed.get().toString())
+    MpvGateway.setOptionString("vd-lavc-film-grain", "cpu")
 
     val preciseSeek = playerPreferences.usePreciseSeeking.get()
-    MPVLib.setOptionString("hr-seek", if (preciseSeek) "yes" else "no")
-    MPVLib.setOptionString("hr-seek-framedrop", if (preciseSeek) "no" else "yes")
+    MpvGateway.setOptionString("hr-seek", if (preciseSeek) "yes" else "no")
+    MpvGateway.setOptionString("hr-seek-framedrop", if (preciseSeek) "no" else "yes")
 
     // Anime4K shader initialization (MUST be in initOptions, not after file load!)
     applyAnime4KShaders()
@@ -152,20 +152,20 @@ class MPVView(
   }
 
   override fun observeProperties() {
-    for ((name, format) in observedProps) MPVLib.observeProperty(name, format)
+    for ((name, format) in observedProps) MpvGateway.observeProperty(name, format)
   }
 
   override fun postInitOptions() {
     when (decoderPreferences.debanding.get()) {
       Debanding.None -> {}
-      Debanding.CPU -> MPVLib.command("vf", "add", "@deband:gradfun=radius=12")
-      Debanding.GPU -> MPVLib.setOptionString("deband", "yes")
+      Debanding.CPU -> MpvGateway.command("vf", "add", "@deband:gradfun=radius=12")
+      Debanding.GPU -> MpvGateway.setOptionString("deband", "yes")
     }
 
     advancedPreferences.enabledStatisticsPage.get().let {
       if (it != 0) {
-        MPVLib.command("script-binding", "stats/display-stats-toggle")
-        MPVLib.command("script-binding", "stats/display-page-$it")
+        MpvGateway.command("script-binding", "stats/display-stats-toggle")
+        MpvGateway.command("script-binding", "stats/display-page-$it")
       }
     }
   }
@@ -202,7 +202,7 @@ class MPVView(
 
     val action = if (event.action == KeyEvent.ACTION_DOWN) "keydown" else "keyup"
     mod.add(mapped)
-    MPVLib.command(action, mod.joinToString("+"))
+    MpvGateway.command(action, mod.joinToString("+"))
 
     return true
   }
@@ -231,14 +231,14 @@ class MPVView(
   private fun setupAudioOptions() {
     // Disable MPV's automatic audio selection
     // App will handle track selection manually via TrackSelector to respect user choices
-    MPVLib.setOptionString("alang", "")
-    MPVLib.setOptionString("audio-delay", (audioPreferences.defaultAudioDelay.get() / 1000.0).toString())
-    MPVLib.setOptionString("audio-pitch-correction", audioPreferences.audioPitchCorrection.get().toString())
-    MPVLib.setOptionString("volume-max", (audioPreferences.volumeBoostCap.get() + 100).toString())
+    MpvGateway.setOptionString("alang", "")
+    MpvGateway.setOptionString("audio-delay", (audioPreferences.defaultAudioDelay.get() / 1000.0).toString())
+    MpvGateway.setOptionString("audio-pitch-correction", audioPreferences.audioPitchCorrection.get().toString())
+    MpvGateway.setOptionString("volume-max", (audioPreferences.volumeBoostCap.get() + 100).toString())
     
     // Volume normalization using dynamic audio normalization filter
     if (audioPreferences.volumeNormalization.get()) {
-      MPVLib.setOptionString("af", "dynaudnorm")
+      MpvGateway.setOptionString("af", "dynaudnorm")
     }
   }
 
@@ -246,36 +246,36 @@ class MPVView(
   private fun setupSubtitlesOptions() {
     // Disable MPV's automatic subtitle selection
     // App will handle track selection manually via TrackSelector to respect user choices
-    MPVLib.setOptionString("slang", "")
-    MPVLib.setOptionString("sub-auto", "no")
-    MPVLib.setOptionString("sub-file-paths", "")
-    MPVLib.setOptionString("subs-fallback", "no")
+    MpvGateway.setOptionString("slang", "")
+    MpvGateway.setOptionString("sub-auto", "no")
+    MpvGateway.setOptionString("sub-file-paths", "")
+    MpvGateway.setOptionString("subs-fallback", "no")
 
     val fontsDirPath = "${context.filesDir.path}/fonts/"
-    MPVLib.setOptionString("sub-fonts-dir", fontsDirPath)
+    MpvGateway.setOptionString("sub-fonts-dir", fontsDirPath)
     
     // Delay and speed for both primary and secondary
     val subDelay = (subtitlesPreferences.defaultSubDelay.get() / 1000.0).toString()
     val subSpeed = subtitlesPreferences.defaultSubSpeed.get().toString()
-    MPVLib.setOptionString("sub-delay", subDelay)
-    MPVLib.setOptionString("sub-speed", subSpeed)
-    MPVLib.setOptionString("secondary-sub-delay", subDelay)
-    MPVLib.setOptionString("secondary-sub-speed", subSpeed)
+    MpvGateway.setOptionString("sub-delay", subDelay)
+    MpvGateway.setOptionString("sub-speed", subSpeed)
+    MpvGateway.setOptionString("secondary-sub-delay", subDelay)
+    MpvGateway.setOptionString("secondary-sub-speed", subSpeed)
 
     val preferredFont = subtitlesPreferences.font.get()
     if (preferredFont.isNotBlank()) {
-      MPVLib.setOptionString("sub-font", preferredFont)
-      MPVLib.setOptionString("secondary-sub-font", preferredFont)
+      MpvGateway.setOptionString("sub-font", preferredFont)
+      MpvGateway.setOptionString("secondary-sub-font", preferredFont)
     }
     // If blank, MPV uses its default font
 
     if (subtitlesPreferences.overrideAssSubs.get()) {
-      MPVLib.setOptionString("sub-ass-override", "force")
-      MPVLib.setOptionString("sub-ass-justify", "yes")
-      MPVLib.setOptionString("secondary-sub-ass-override", "force")
+      MpvGateway.setOptionString("sub-ass-override", "force")
+      MpvGateway.setOptionString("sub-ass-justify", "yes")
+      MpvGateway.setOptionString("secondary-sub-ass-override", "force")
     } else {
-      MPVLib.setOptionString("sub-ass-override", "no")
-      MPVLib.setOptionString("secondary-sub-ass-override", "no")
+      MpvGateway.setOptionString("sub-ass-override", "no")
+      MpvGateway.setOptionString("secondary-sub-ass-override", "no")
     }
 
     // Typography and styling for both primary and secondary
@@ -292,38 +292,38 @@ class MPVView(
     val subPos = subtitlesPreferences.subPos.get().toString()
     val subScale = subtitlesPreferences.subScale.get().toString()
 
-    MPVLib.setOptionString("sub-font-size", fontSize)
-    MPVLib.setOptionString("sub-bold", bold)
-    MPVLib.setOptionString("sub-italic", italic)
-    MPVLib.setOptionString("sub-justify", justify)
-    MPVLib.setOptionString("sub-color", textColor)
-    MPVLib.setOptionString("sub-back-color", backgroundColor)
-    MPVLib.setOptionString("sub-border-color", borderColor)
-    MPVLib.setOptionString("sub-border-size", borderSize)
-    MPVLib.setOptionString("sub-border-style", borderStyle)
-    MPVLib.setOptionString("sub-shadow-offset", shadowOffset)
-    MPVLib.setOptionString("sub-scale", subScale)
-    MPVLib.setOptionString("sub-pos", subPos)
+    MpvGateway.setOptionString("sub-font-size", fontSize)
+    MpvGateway.setOptionString("sub-bold", bold)
+    MpvGateway.setOptionString("sub-italic", italic)
+    MpvGateway.setOptionString("sub-justify", justify)
+    MpvGateway.setOptionString("sub-color", textColor)
+    MpvGateway.setOptionString("sub-back-color", backgroundColor)
+    MpvGateway.setOptionString("sub-border-color", borderColor)
+    MpvGateway.setOptionString("sub-border-size", borderSize)
+    MpvGateway.setOptionString("sub-border-style", borderStyle)
+    MpvGateway.setOptionString("sub-shadow-offset", shadowOffset)
+    MpvGateway.setOptionString("sub-scale", subScale)
+    MpvGateway.setOptionString("sub-pos", subPos)
     
-    MPVLib.setOptionString("secondary-sub-font-size", fontSize)
-    MPVLib.setOptionString("secondary-sub-bold", bold)
-    MPVLib.setOptionString("secondary-sub-italic", italic)
-    MPVLib.setOptionString("secondary-sub-justify", justify)
-    MPVLib.setOptionString("secondary-sub-color", textColor)
-    MPVLib.setOptionString("secondary-sub-back-color", backgroundColor)
-    MPVLib.setOptionString("secondary-sub-border-color", borderColor)
-    MPVLib.setOptionString("secondary-sub-border-size", borderSize)
-    MPVLib.setOptionString("secondary-sub-border-style", borderStyle)
-    MPVLib.setOptionString("secondary-sub-shadow-offset", shadowOffset)
-    MPVLib.setOptionString("secondary-sub-scale", subScale)
+    MpvGateway.setOptionString("secondary-sub-font-size", fontSize)
+    MpvGateway.setOptionString("secondary-sub-bold", bold)
+    MpvGateway.setOptionString("secondary-sub-italic", italic)
+    MpvGateway.setOptionString("secondary-sub-justify", justify)
+    MpvGateway.setOptionString("secondary-sub-color", textColor)
+    MpvGateway.setOptionString("secondary-sub-back-color", backgroundColor)
+    MpvGateway.setOptionString("secondary-sub-border-color", borderColor)
+    MpvGateway.setOptionString("secondary-sub-border-size", borderSize)
+    MpvGateway.setOptionString("secondary-sub-border-style", borderStyle)
+    MpvGateway.setOptionString("secondary-sub-shadow-offset", shadowOffset)
+    MpvGateway.setOptionString("secondary-sub-scale", subScale)
     // Position secondary subtitle at top (10) instead of bottom to avoid overlap with primary
-    MPVLib.setOptionString("secondary-sub-pos", "10")
+    MpvGateway.setOptionString("secondary-sub-pos", "10")
 
     val scaleByWindow = if (subtitlesPreferences.scaleByWindow.get()) "yes" else "no"
-    MPVLib.setOptionString("sub-scale-by-window", scaleByWindow)
-    MPVLib.setOptionString("sub-use-margins", scaleByWindow)
-    MPVLib.setOptionString("secondary-sub-scale-by-window", scaleByWindow)
-    MPVLib.setOptionString("secondary-sub-use-margins", scaleByWindow)
+    MpvGateway.setOptionString("sub-scale-by-window", scaleByWindow)
+    MpvGateway.setOptionString("sub-use-margins", scaleByWindow)
+    MpvGateway.setOptionString("secondary-sub-scale-by-window", scaleByWindow)
+    MpvGateway.setOptionString("secondary-sub-use-margins", scaleByWindow)
   }
 
 
@@ -374,13 +374,13 @@ class MPVView(
       if (shaderChain.isNotEmpty()) {
         // OpenGL-only tuning should not be pushed onto the Vulkan backend.
         if (!useVulkan) {
-          MPVLib.setOptionString("opengl-pbo", "yes")
-          MPVLib.setOptionString("opengl-early-flush", "no")
+          MpvGateway.setOptionString("opengl-pbo", "yes")
+          MpvGateway.setOptionString("opengl-early-flush", "no")
         }
-        MPVLib.setOptionString("vd-lavc-dr", "yes")
+        MpvGateway.setOptionString("vd-lavc-dr", "yes")
         
         // Apply shaders (MUST use setOptionString in initOptions!)
-        MPVLib.setOptionString("glsl-shaders", shaderChain)
+        MpvGateway.setOptionString("glsl-shaders", shaderChain)
       }
     }.onFailure {
       // Don't crash - just continue without shaders

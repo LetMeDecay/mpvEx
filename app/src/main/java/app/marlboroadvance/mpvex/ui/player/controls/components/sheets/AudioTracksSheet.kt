@@ -1,5 +1,7 @@
 package app.marlboroadvance.mpvex.ui.player.controls.components.sheets
 
+import app.marlboroadvance.mpvex.ui.player.MpvGateway
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -32,7 +34,6 @@ import app.marlboroadvance.mpvex.preferences.AudioPreferences
 import app.marlboroadvance.mpvex.preferences.preference.collectAsState
 import app.marlboroadvance.mpvex.ui.player.TrackNode
 import app.marlboroadvance.mpvex.ui.theme.spacing
-import `is`.xyz.mpv.MPVLib
 import kotlinx.collections.immutable.ImmutableList
 import org.koin.compose.koinInject
 
@@ -91,11 +92,11 @@ fun AudioTracksSheet(
               onClick = {
                 audioPreferences.audioChannels.set(it)
                 if (it == AudioChannels.ReverseStereo) {
-                  MPVLib.setPropertyString(AudioChannels.AutoSafe.property, AudioChannels.AutoSafe.value)
+                  MpvGateway.setPropertyString(AudioChannels.AutoSafe.property, AudioChannels.AutoSafe.value)
                 } else {
-                  MPVLib.setPropertyString(AudioChannels.ReverseStereo.property, "")
+                  MpvGateway.setPropertyString(AudioChannels.ReverseStereo.property, "")
                 }
-                MPVLib.setPropertyString(it.property, it.value)
+                MpvGateway.setPropertyString(it.property, it.value)
               },
               label = { Text(text = stringResource(id = it.title)) },
               leadingIcon = null,

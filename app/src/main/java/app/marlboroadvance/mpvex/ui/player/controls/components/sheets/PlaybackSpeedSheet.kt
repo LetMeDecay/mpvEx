@@ -1,5 +1,7 @@
 package app.marlboroadvance.mpvex.ui.player.controls.components.sheets
 
+import app.marlboroadvance.mpvex.ui.player.MpvGateway
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -56,7 +58,6 @@ import app.marlboroadvance.mpvex.preferences.preference.collectAsState
 import app.marlboroadvance.mpvex.presentation.components.PlayerSheet
 import app.marlboroadvance.mpvex.presentation.components.SliderItem
 import app.marlboroadvance.mpvex.ui.theme.spacing
-import `is`.xyz.mpv.MPVLib
 import me.zhanghai.compose.preference.ProvidePreferenceLocals
 import me.zhanghai.compose.preference.SwitchPreference
 import org.koin.compose.koinInject
@@ -250,7 +251,7 @@ fun PlaybackSpeedSheet(
                 .clickable { 
                     val newValue = !pitchCorrection
                     audioPreferences.audioPitchCorrection.set(newValue)
-                    MPVLib.setPropertyBoolean("audio-pitch-correction", newValue)
+                    MpvGateway.setPropertyBoolean("audio-pitch-correction", newValue)
                 }
                 .padding(horizontal = MaterialTheme.spacing.medium, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -272,7 +273,7 @@ fun PlaybackSpeedSheet(
                 checked = pitchCorrection,
                 onCheckedChange = { 
                     audioPreferences.audioPitchCorrection.set(it)
-                    MPVLib.setPropertyBoolean("audio-pitch-correction", it)
+                    MpvGateway.setPropertyBoolean("audio-pitch-correction", it)
                 },
                 modifier = Modifier.scale(0.8f) // Make switch slightly smaller
             )

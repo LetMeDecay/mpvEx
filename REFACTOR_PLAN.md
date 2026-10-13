@@ -152,5 +152,13 @@ P5 的可行性分析可提前，但业务上线后置。每阶段完成记录�
 
 ## 12. 当前落点
 
-首批已完成 P0/P1a：MpvGateway 接入 Activity/ViewModel/Service，迁移等价性检查及 Kotlin 编译通过。它建立下一阶段的可替换边界，不改变实例所有权、不实施 WebDAV 直连、不宣称性能收益。
-后续先补齐 native 事件身份及命令顺序设计，再迁移其余直接调用；缺少设备数据不影响纯代码结构工作，但阻止宣称性能验收完成。
+P0/P1a 已完成。P1b 本批完成应用侧剩余 MPV 运行时调用迁移，以及加载/定位有界队列：一个执行者，最多各保留一个待加载与待定位请求；加载替换清理旧定位，执行前校验代次/交互票据。正在执行的同步 native 命令不能强制中断。纯委托部分保持参数、线程及返回语义。
+
+P1b 尚未完成：首次加载仍由 AAR BaseMPVView.surfaceCreated 发起；stop/destroy、其余控制命令和状态发布仍沿用原生命周期。当前队列不等同于完整 Coordinator，也不证明 native 迟到事件已隔离。不启用实例复用或 WebDAV 直连，不宣称启动耗时改善。
+
+下一批按此顺序收口：
+1. 将首次 Surface 加载和后续加载收敛到同一个可返回身份的适配入口，保留渲染就绪约束。
+2. 绑定原生文件身份。本机 AAR 为 `mpv v0.41.0-224-gd54bad563`；JNI event_thread 使用 mpv_event_to_node，START_FILE/END_FILE 携带 playlist_entry_id；[对应版本 cmd_loadfile](https://github.com/mpv-player/mpv/blob/d54bad563/player/command.c) 返回该 ID，可由 commandNode 获取。FILE_LOADED/RESTART 需沿事件流归属，不能在收到回调时读当前 generation 充当身份。处理事件先于命令返回、重定向插入项和 A→B→A，再连接 UI 状态。
+3. stop/destroy 与在途命令统一退休及等待；停止前捕获最终历史快照，避免锁住 native 回调线程或主线程等待环。之后再推进 P2 的当前文件优先启动链。
+
+验证和交付状态仅记于 PROJECT_CONTEXT.md；缺少设备数据不阻止代码重构，但不能宣称性能验收完成。

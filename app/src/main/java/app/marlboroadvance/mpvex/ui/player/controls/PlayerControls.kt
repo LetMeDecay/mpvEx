@@ -1,5 +1,7 @@
 package app.marlboroadvance.mpvex.ui.player.controls
 
+import app.marlboroadvance.mpvex.ui.player.MpvGateway
+
 import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -118,7 +120,6 @@ import app.marlboroadvance.mpvex.ui.player.controls.components.sheets.toFixed
 import app.marlboroadvance.mpvex.ui.theme.controlColor
 import app.marlboroadvance.mpvex.ui.theme.playerRippleConfiguration
 import app.marlboroadvance.mpvex.ui.theme.spacing
-import `is`.xyz.mpv.MPVLib
 import `is`.xyz.mpv.Utils
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
@@ -166,21 +167,21 @@ fun PlayerControls(
   val controlsShown by viewModel.controlsShown.collectAsState()
   val areControlsLocked by viewModel.areControlsLocked.collectAsState()
   val seekBarShown by viewModel.seekBarShown.collectAsState()
-  val pausedForCache by MPVLib.propBoolean["paused-for-cache"].collectAsState()
-  val paused by MPVLib.propBoolean["pause"].collectAsState()
-  val duration by MPVLib.propInt["duration"].collectAsState()
-  val position by MPVLib.propInt["time-pos"].collectAsState()
+  val pausedForCache by MpvGateway.propBoolean["paused-for-cache"].collectAsState()
+  val paused by MpvGateway.propBoolean["pause"].collectAsState()
+  val duration by MpvGateway.propInt["duration"].collectAsState()
+  val position by MpvGateway.propInt["time-pos"].collectAsState()
   val precisePosition by viewModel.precisePosition.collectAsState()
   val preciseDuration by viewModel.preciseDuration.collectAsState()
-  val playbackSpeed by MPVLib.propFloat["speed"].collectAsState()
+  val playbackSpeed by MpvGateway.propFloat["speed"].collectAsState()
   val doubleTapSeekAmount by viewModel.doubleTapSeekAmount.collectAsState()
   val showDoubleTapOvals by playerPreferences.showDoubleTapOvals.collectAsState()
   val showSeekTime by playerPreferences.showSeekTimeWhileSeeking.collectAsState()
   var isSeeking by remember { mutableStateOf(false) }
   var resetControlsTimestamp by remember { mutableStateOf(0L) }
   val seekText by viewModel.seekText.collectAsState()
-  val currentChapter by MPVLib.propInt["chapter"].collectAsState()
-  val mpvDecoder by MPVLib.propString["hwdec-current"].collectAsState()
+  val currentChapter by MpvGateway.propInt["chapter"].collectAsState()
+  val mpvDecoder by MpvGateway.propString["hwdec-current"].collectAsState()
   val decoder by remember { derivedStateOf { getDecoderFromValue(mpvDecoder ?: "auto") } }
   val isSpeedNonOne by remember(playbackSpeed) {
     derivedStateOf { abs((playbackSpeed ?: 1f) - 1f) > 0.001f }
@@ -305,7 +306,7 @@ fun PlayerControls(
         val isVolumeSliderShown by viewModel.isVolumeSliderShown.collectAsState()
         val brightness by viewModel.currentBrightness.collectAsState()
         val volume by viewModel.currentVolume.collectAsState()
-        val mpvVolume by MPVLib.propInt["volume"].collectAsState()
+        val mpvVolume by MpvGateway.propInt["volume"].collectAsState()
         val swapVolumeAndBrightness by playerPreferences.swapVolumeAndBrightness.collectAsState()
         val reduceMotion by playerPreferences.reduceMotion.collectAsState()
 
@@ -313,7 +314,7 @@ fun PlayerControls(
         val aspect by viewModel.videoAspect.collectAsState()
         val currentZoom by viewModel.videoZoom.collectAsState()
 
-        val rawMediaTitle by MPVLib.propString["media-title"].collectAsState()
+        val rawMediaTitle by MpvGateway.propString["media-title"].collectAsState()
         val mediaTitle by remember(rawMediaTitle, activity) {
           derivedStateOf {
             rawMediaTitle?.takeIf { it.isNotBlank() }
@@ -1209,28 +1210,28 @@ fun PlayerControls(
       audioTracks = audioTracks.toImmutableList(),
       onAddAudio = viewModel::addAudio,
       onSelectAudio = {
-        if (MPVLib.getPropertyInt("aid") == it.id) {
-          MPVLib.setPropertyBoolean("aid", false)
+        if (MpvGateway.getPropertyInt("aid") == it.id) {
+          MpvGateway.setPropertyBoolean("aid", false)
         } else {
-          MPVLib.setPropertyInt("aid", it.id)
+          MpvGateway.setPropertyInt("aid", it.id)
         }
       },
       chapter = chapters.getOrNull(currentChapter ?: 0),
       chapters = chapters.toImmutableList(),
       onSeekToChapter = {
-        MPVLib.setPropertyInt("chapter", it)
+        MpvGateway.setPropertyInt("chapter", it)
       },
       decoder = decoder,
-      onUpdateDecoder = { MPVLib.setPropertyString("hwdec", it.value) },
+      onUpdateDecoder = { MpvGateway.setPropertyString("hwdec", it.value) },
       speed = playbackSpeed ?: playerPreferences.defaultSpeed.get(),
-      onSpeedChange = { MPVLib.setPropertyFloat("speed", it.toFixed(2)) },
+      onSpeedChange = { MpvGateway.setPropertyFloat("speed", it.toFixed(2)) },
       onMakeDefaultSpeed = { playerPreferences.defaultSpeed.set(it.toFixed(2)) },
       onAddSpeedPreset = { playerPreferences.speedPresets += it.toFixed(2).toString() },
       onRemoveSpeedPreset = { playerPreferences.speedPresets -= it.toFixed(2).toString() },
       onResetSpeedPresets = playerPreferences.speedPresets::delete,
       speedPresets = speedPresets.map { it.toFloat() }.sorted(),
       onResetDefaultSpeed = {
-        MPVLib.setPropertyFloat("speed", playerPreferences.defaultSpeed.deleteAndGet().toFixed(2))
+        MpvGateway.setPropertyFloat("speed", playerPreferences.defaultSpeed.deleteAndGet().toFixed(2))
       },
       sleepTimerTimeRemaining = sleepTimerTimeRemaining,
       onStartSleepTimer = viewModel::startTimer,

@@ -1,5 +1,7 @@
 package app.marlboroadvance.mpvex.ui.player.controls.components.sheets
 
+import app.marlboroadvance.mpvex.ui.player.MpvGateway
+
 import android.text.format.DateUtils
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
@@ -52,7 +54,6 @@ import app.marlboroadvance.mpvex.preferences.PlayerPreferences
 import app.marlboroadvance.mpvex.preferences.preference.collectAsState
 import app.marlboroadvance.mpvex.presentation.components.PlayerSheet
 import app.marlboroadvance.mpvex.ui.theme.spacing
-import `is`.xyz.mpv.MPVLib
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
@@ -169,8 +170,8 @@ val scope = rememberCoroutineScope()
               )
             },
             onClick = {
-              if ((page == 0) xor (statisticsPage == 0)) MPVLib.command("script-binding", "stats/display-stats-toggle")
-              if (page != 0) MPVLib.command("script-binding", "stats/display-page-$page")
+              if ((page == 0) xor (statisticsPage == 0)) MpvGateway.command("script-binding", "stats/display-stats-toggle")
+              if (page != 0) MpvGateway.command("script-binding", "stats/display-page-$page")
               advancedPreferences.enabledStatisticsPage.set(page)
             },
             selected = statisticsPage == page,
@@ -182,8 +183,8 @@ val scope = rememberCoroutineScope()
       // Shaders Controls
       if (enableAnime4K && (!gpuNext || useVulkan)) {
         // Auto-detect resolution to disable for 4K+
-        val width = MPVLib.getPropertyInt("video-params/w") ?: 0
-        val height = MPVLib.getPropertyInt("video-params/h") ?: 0
+        val width = MpvGateway.getPropertyInt("video-params/w") ?: 0
+        val height = MpvGateway.getPropertyInt("video-params/h") ?: 0
         val isHighRes = width >= 3840 || height >= 2160
 
         // Presets (Mode) - Now on Top
@@ -232,7 +233,7 @@ val scope = rememberCoroutineScope()
                     val shaderChain = anime4kManager.getShaderChain(currentMode, quality)
 
                     // Use setPropertyString for runtime changes
-                    MPVLib.setPropertyString("glsl-shaders", if (shaderChain.isNotEmpty()) shaderChain else "")
+                    MpvGateway.setPropertyString("glsl-shaders", if (shaderChain.isNotEmpty()) shaderChain else "")
                     onAnime4KChanged()
                   }
                 }
@@ -276,7 +277,7 @@ val scope = rememberCoroutineScope()
                     val shaderChain = anime4kManager.getShaderChain(modeEnum, currentQuality)
 
                     // Use setPropertyString for runtime changes
-                    MPVLib.setPropertyString("glsl-shaders", if (shaderChain.isNotEmpty()) shaderChain else "")
+                    MpvGateway.setPropertyString("glsl-shaders", if (shaderChain.isNotEmpty()) shaderChain else "")
                     onAnime4KChanged()
                   }
                 }

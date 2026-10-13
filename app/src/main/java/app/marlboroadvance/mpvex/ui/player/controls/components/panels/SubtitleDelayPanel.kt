@@ -1,5 +1,7 @@
 package app.marlboroadvance.mpvex.ui.player.controls.components.panels
 
+import app.marlboroadvance.mpvex.ui.player.MpvGateway
+
 import androidx.annotation.StringRes
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.clickable
@@ -50,7 +52,6 @@ import app.marlboroadvance.mpvex.presentation.components.OutlinedNumericChooser
 import app.marlboroadvance.mpvex.ui.player.controls.CARDS_MAX_WIDTH
 import app.marlboroadvance.mpvex.ui.player.controls.panelCardsColors
 import app.marlboroadvance.mpvex.ui.theme.spacing
-import `is`.xyz.mpv.MPVLib
 import kotlinx.coroutines.delay
 import org.koin.compose.koinInject
 import org.koin.compose.koinInject
@@ -69,27 +70,27 @@ fun SubtitleDelayPanel(
       SubtitleDelayTitle(onClose = onDismissRequest)
     }
   ) {
-    val delay by MPVLib.propDouble["sub-delay"].collectAsState()
+    val delay by MpvGateway.propDouble["sub-delay"].collectAsState()
     val delayFloat by remember { derivedStateOf { (delay ?: 0.0).toFloat() } }
-    val speed by MPVLib.propDouble["sub-speed"].collectAsState()
+    val speed by MpvGateway.propDouble["sub-speed"].collectAsState()
     val speedFloat by remember { derivedStateOf { (speed ?: 1.0).toFloat() } }
     
     // We unwrap the card content here because DraggablePanel already provides the card
     SubtitleDelayCardContent(
       delay = delayFloat,
       onDelayChange = {
-        MPVLib.setPropertyDouble("sub-delay", it.toDouble())
+        MpvGateway.setPropertyDouble("sub-delay", it.toDouble())
       },
       speed = speedFloat,
-      onSpeedChange = { MPVLib.setPropertyDouble("sub-speed", it.toDouble()) },
+      onSpeedChange = { MpvGateway.setPropertyDouble("sub-speed", it.toDouble()) },
       onApply = {
         preferences.defaultSubDelay.set((delayFloat * 1000).roundToInt())
         val currentSpeed = speed ?: 1.0
         if (currentSpeed in 0.1..10.0) preferences.defaultSubSpeed.set(currentSpeed.toFloat())
       },
       onReset = {
-        MPVLib.setPropertyDouble("sub-delay", preferences.defaultSubDelay.get() / 1000.0)
-        MPVLib.setPropertyDouble("sub-speed", preferences.defaultSubSpeed.get().toDouble())
+        MpvGateway.setPropertyDouble("sub-delay", preferences.defaultSubDelay.get() / 1000.0)
+        MpvGateway.setPropertyDouble("sub-speed", preferences.defaultSubSpeed.get().toDouble())
       },
     )
   }

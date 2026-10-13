@@ -1,5 +1,7 @@
 package app.marlboroadvance.mpvex.ui.player.controls.components.panels
 
+import app.marlboroadvance.mpvex.ui.player.MpvGateway
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,7 +29,6 @@ import app.marlboroadvance.mpvex.ui.player.VideoFilters
 import app.marlboroadvance.mpvex.ui.player.controls.CARDS_MAX_WIDTH
 import app.marlboroadvance.mpvex.ui.player.controls.panelCardsColors
 import app.marlboroadvance.mpvex.ui.theme.spacing
-import `is`.xyz.mpv.MPVLib
 import me.zhanghai.compose.preference.FooterPreference
 import me.zhanghai.compose.preference.ProvidePreferenceLocals
 import org.koin.compose.koinInject
@@ -56,7 +57,7 @@ fun VideoSettingsFiltersCard(modifier: Modifier = Modifier) {
         TextButton(
           onClick = {
             VideoFilters.entries.forEach {
-              MPVLib.setPropertyInt(it.mpvProperty, it.preference(decoderPreferences).deleteAndGet())
+              MpvGateway.setPropertyInt(it.mpvProperty, it.preference(decoderPreferences).deleteAndGet())
             }
           },
         ) {
@@ -71,7 +72,7 @@ fun VideoSettingsFiltersCard(modifier: Modifier = Modifier) {
             valueText = value.toString(),
             onChange = {
               filter.preference(decoderPreferences).set(it)
-              MPVLib.setPropertyInt(filter.mpvProperty, it)
+              MpvGateway.setPropertyInt(filter.mpvProperty, it)
             },
             max = filter.max,
             min = filter.min,
