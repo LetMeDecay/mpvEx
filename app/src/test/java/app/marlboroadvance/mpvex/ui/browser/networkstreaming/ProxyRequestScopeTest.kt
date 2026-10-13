@@ -8,6 +8,23 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ProxyRequestScopeTest {
+  @Test fun closingOneResponsePreservesOtherReadsAndRetirementClosesTransportOnce() {
+    val registry = ProxyRequestRegistry()
+    var closes = 0
+    val first = registry.open()
+    val second = registry.open()
+    val body = second.own(object : ByteArrayInputStream(byteArrayOf(7)) {
+      override fun close() { closes++ }
+    })
+    first.close()
+    assertEquals(7, body.read())
+    registry.cancelActive()
+    assertEquals(1, closes)
+    body.close()
+    assertEquals(1, closes)
+    try { body.read(); fail("Read after retirement") } catch (_: IOException) { }
+  }
+
   @Test fun cancellationRunsOnceAndLateCallsAreCancelledImmediately() {
     val scope = ProxyRequestScope()
     var cancelled = 0

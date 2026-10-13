@@ -106,22 +106,16 @@ class FtpClient(private val connection: NetworkConnection) : NetworkClient {
   override suspend fun listFiles(path: String): Result<List<NetworkFile>> =
     withContext(Dispatchers.IO) {
       try {
-        val client = ftpClient ?: return@withContext Result.failure(Exception("Not connected"))
+        var client = ftpClient ?: return@withContext Result.failure(Exception("Not connected"))
 
-        // Check if connection is still alive
-        if (!client.isConnected) {
-          return@withContext Result.failure(Exception("Connection lost"))
-        }
-
-        // Send NOOP to check connection health
-        try {
-          client.sendNoOp()
-        } catch (e: Exception) {
-          // Try to reconnect
+        // A successful reconnect installs a new instance; use it for this request.
+        if (!runCatching { client.isConnected && client.sendNoOp() }.getOrDefault(false)) {
+          runCatching { client.disconnect() }
           val reconnectResult = connect()
-          if (reconnectResult.isFailure) {
-            return@withContext Result.failure(Exception("Connection broken and reconnect failed"))
-          }
+          if (reconnectResult.isFailure) return@withContext Result.failure(
+            reconnectResult.exceptionOrNull() ?: java.io.IOException("FTP reconnect failed"),
+          )
+          client = ftpClient ?: return@withContext Result.failure(java.io.IOException("FTP reconnect failed"))
         }
 
         val files =

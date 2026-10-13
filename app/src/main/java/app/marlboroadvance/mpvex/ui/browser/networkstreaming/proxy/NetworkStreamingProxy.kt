@@ -232,10 +232,10 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     // Handle range requests for seeking
     val rangeHeader = session.headers["range"]
 
-    // A new GET from the active single-file player is an actual stream replacement,
-    // unlike finger movement or a cache-only seek. Metadata uses separate stream IDs.
+    // Parallel range reads belong to independent requests. Only explicit file
+    // replacement/retirement cancels all requests for a stream.
     val owner = try {
-      streamInfo.requests.open(replaceActive = playingStreamId == streamId && session.method == Method.GET)
+      streamInfo.requests.open()
     } catch (_: Exception) {
       return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Stream retired")
     }
@@ -354,7 +354,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
       ByteArrayInputStream(ByteArray(0))
     } else if (streamInfo.client is app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.WebDavClient) {
       webDavSource(streamInfo, owner).openFull()
-    } else getStream(streamInfo)
+    } else getStreamWithOffset(streamInfo, 0, (streamInfo.fileSize - 1).coerceAtLeast(0), owner)
 
     if (inputStream == null) {
       return newFixedLengthResponse(
@@ -421,6 +421,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
    * Get file size using SMB
    */
   private suspend fun getFileSizeSMB(streamInfo: StreamInfo): Long {
+    val resources = ResourceLease()
     try {
       Log.d(TAG, "SMB getFileSize called")
       Log.d(TAG, "  Connection path: ${streamInfo.connection.path}")
@@ -474,8 +475,8 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
         .withTimeout(30000, TimeUnit.MILLISECONDS)
         .withSoTimeout(35000, TimeUnit.MILLISECONDS)
         .build()
-      val smbClient = SMBClient(smbConfig)
-      val connection = smbClient.connect(streamInfo.connection.host, streamInfo.connection.port)
+      val smbClient = resources.own(SMBClient(smbConfig))
+      val connection = resources.own(smbClient.connect(streamInfo.connection.host, streamInfo.connection.port))
 
       val authContext = if (streamInfo.connection.isAnonymous) {
         AuthenticationContext.anonymous()
@@ -487,31 +488,26 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
         )
       }
 
-      val session = connection.authenticate(authContext)
-      val diskShare = session.connectShare(shareName) as DiskShare
+      val session = resources.own(connection.authenticate(authContext))
+      val diskShare = resources.own(session.connectShare(shareName)) as DiskShare
 
-      val file = diskShare.openFile(
+      val file = resources.own(diskShare.openFile(
         relativePath,
         EnumSet.of(AccessMask.GENERIC_READ),
         null,
         EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ),
         SMB2CreateDisposition.FILE_OPEN,
         null,
-      )
+      ))
 
       val fileSize = file.fileInformation.standardInformation.endOfFile
       Log.d(TAG, "  File size: $fileSize")
 
-      file.close()
-      diskShare.close()
-      session.close()
-      connection.close()
-      smbClient.close()
       return fileSize
     } catch (e: Exception) {
       Log.e(TAG, "SMB getFileSize error: ${e.message}", e)
       return -1L
-    }
+    } finally { resources.close() }
   }
 
   /**
@@ -624,11 +620,11 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
       try {
         when (streamInfo.client) {
           is app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.SmbClient -> {
-            getStreamWithOffsetSMB(streamInfo, offset)
+            getStreamWithOffsetSMB(streamInfo, offset, owner)
           }
 
           is app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.FtpClient -> {
-            getStreamWithOffsetFTP(streamInfo, offset)
+            getStreamWithOffsetFTP(streamInfo, offset, owner)
           }
 
           is app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.WebDavClient -> {
@@ -648,7 +644,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
   /**
    * Get FTP stream with offset using REST command (efficient seeking)
    */
-  private suspend fun getStreamWithOffsetFTP(streamInfo: StreamInfo, offset: Long): InputStream? {
+  private suspend fun getStreamWithOffsetFTP(streamInfo: StreamInfo, offset: Long, owner: ProxyRequestScope): InputStream? {
     // Create a new FTP client for this specific range request
     val ftpClient = org.apache.commons.net.ftp.FTPClient()
 
@@ -658,9 +654,13 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     ftpClient.setDataTimeout(30000)
     ftpClient.controlKeepAliveTimeout = 300
 
+    val detach = owner.onCancel { runCatching { ftpClient.disconnect() } }
+    var transferred = false
     try {
+      owner.checkActive()
       // Connect
       ftpClient.connect(streamInfo.connection.host, streamInfo.connection.port)
+      owner.checkActive()
 
       if (!org.apache.commons.net.ftp.FTPReply.isPositiveCompletion(ftpClient.replyCode)) {
         ftpClient.disconnect()
@@ -744,18 +744,13 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
           } catch (e: Exception) {
             // Ignore
           }
-          try {
-            if (ftpClient.isConnected) {
-              ftpClient.completePendingCommand()
-              ftpClient.logout()
-              ftpClient.disconnect()
-            }
-          } catch (e: Exception) {
-            // Ignore
-          }
+          try { ftpClient.disconnect() } catch (_: Exception) { }
+          detach()
         }
       }
 
+      owner.checkActive()
+      transferred = true
       return wrappedStream
 
     } catch (e: Exception) {
@@ -764,6 +759,11 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
       } catch (_: Exception) {
       }
       return null
+    } finally {
+      if (!transferred) {
+        runCatching { ftpClient.disconnect() }
+        detach()
+      }
     }
   }
 
@@ -808,7 +808,10 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
   /**
    * Get SMB stream with offset using SMBJ (efficient seeking)
    */
-  private suspend fun getStreamWithOffsetSMB(streamInfo: StreamInfo, offset: Long): InputStream? {
+  private suspend fun getStreamWithOffsetSMB(streamInfo: StreamInfo, offset: Long, owner: ProxyRequestScope): InputStream? {
+    val resources = ResourceLease()
+    val detach = owner.onCancel { resources.close() }
+    var transferred = false
     try {
       Log.d(TAG, "SMB getStreamWithOffset called, offset=$offset")
       Log.d(TAG, "  Connection path: ${streamInfo.connection.path}")
@@ -863,8 +866,8 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
         .withSoTimeout(120000, TimeUnit.MILLISECONDS)
         .withReadTimeout(120000, TimeUnit.MILLISECONDS)
         .build()
-      val smbClient = SMBClient(smbConfig)
-      val connection = smbClient.connect(streamInfo.connection.host, streamInfo.connection.port)
+      val smbClient = resources.own(SMBClient(smbConfig))
+      val connection = resources.own(smbClient.connect(streamInfo.connection.host, streamInfo.connection.port))
 
       val authContext = if (streamInfo.connection.isAnonymous) {
         AuthenticationContext.anonymous()
@@ -876,24 +879,24 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
         )
       }
 
-      val session = connection.authenticate(authContext)
-      val diskShare = session.connectShare(shareName) as DiskShare
+      val session = resources.own(connection.authenticate(authContext))
+      val diskShare = resources.own(session.connectShare(shareName)) as DiskShare
 
       // Open file with read access
-      val file = diskShare.openFile(
+      val file = resources.own(diskShare.openFile(
         relativePath,
         EnumSet.of(AccessMask.GENERIC_READ),
         null,
         EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ),
         SMB2CreateDisposition.FILE_OPEN,
         null,
-      )
+      ))
 
       // Create a seekable stream that reads from file at specific offsets
       val seekableStream = object : InputStream() {
         private var currentPosition = offset
         private val fileHandle = file
-        private var closed = false
+        @Volatile private var closed = false
 
         override fun read(): Int {
           if (closed) return -1
@@ -924,7 +927,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
             return bytesRead
           } catch (e: Exception) {
             Log.e(TAG, "Error reading from SMB file: ${e.message}")
-            return -1
+            throw java.io.IOException("SMB read failed", e)
           }
         }
 
@@ -932,44 +935,28 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
           if (closed) return 0
           return try {
             val remaining = fileHandle.fileInformation.standardInformation.endOfFile - currentPosition
-            remaining.toInt().coerceAtLeast(0)
+            remaining.coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
           } catch (e: Exception) {
             0
           }
         }
 
         override fun close() {
-          if (!closed) {
-            closed = true
-            try {
-              fileHandle.close()
-            } catch (_: Exception) {
-            }
-            try {
-              diskShare.close()
-            } catch (_: Exception) {
-            }
-            try {
-              session.close()
-            } catch (_: Exception) {
-            }
-            try {
-              connection.close()
-            } catch (_: Exception) {
-            }
-            try {
-              smbClient.close()
-            } catch (_: Exception) {
-            }
-          }
+          closed = true
+          resources.close()
+          detach()
         }
       }
 
       Log.d(TAG, "  Stream created successfully starting at offset $offset")
+      owner.checkActive()
+      transferred = true
       return seekableStream
     } catch (e: Exception) {
       Log.e(TAG, "SMB getStreamWithOffset error: ${e.message}", e)
       return null
+    } finally {
+      if (!transferred) { resources.close(); detach() }
     }
   }
 

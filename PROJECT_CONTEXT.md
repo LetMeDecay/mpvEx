@@ -1,6 +1,6 @@
 # 当前状态
 
-更新：2026-10-13。主仓库 `/root/mpvex/mpvEx`；Android/Kotlin/Compose/Room/libmpv。
+更新：2026-10-14。主仓库 `/root/mpvex/mpvEx`；Android/Kotlin/Compose/Room/libmpv。
 
 - 当前授权：按 REFACTOR_PLAN.md 分阶段优化并交付原包名/签名的 Standard Release；不推送。全局 Codex 配置不修改。
 - P0/P1a 完成；P1b 已统一 native 网关、加载/定位队列、条目身份和退出快照。当前批次将进度、时长、暂停、缓冲汇聚为原子 PlaybackUiState，隔离迟到失败事件；其他控件及 Service/PiP 尚未统一控制。
@@ -11,4 +11,5 @@
 - 本批检查：7 项命令队列测试、4 项配置快照测试及最终 Standard Debug 编译通过；日志 `.tmp/remaining-20261013/`。Release/R8/lintVital 构建通过（2m34s）。代码 `d40f12b` 的 1.2.9-rev1013.2 / versionCode 134（ABI 1340–1344）五种 APK + idsig 已覆盖 `../release/`；原证书、版本递增、16KB ZIP 对齐、签名与交付哈希均通过。无设备安装/功能验收。
 - 本批队列：数据库固定条目 ID 快照，每页最多 100 项，目标项单独查询；重排不改变打开时索引，删除项明确失败。目录 URI 列表用单次队列令牌传递，避免大型 Binder 参数；代理客户端实际读取时才创建，未创建者退出不实例化。局部元数据结果按页面/代次校验。
 - 本批历史：本地 URI/规范路径 SHA-256 身份隔离同名文件；旧文件名记录保留但因歧义不自动迁移。6 项队列/身份单测与 Standard Debug 编译通过，日志 queue-check.log；代码 `6840562` 的 versionCode 135（ABI 1350–1354）/ 1.2.9-rev1013.3 已交付五种 APK + idsig；Release/R8/lintVital 构建通过（2m40s），证书、递增版本、签名、16KB ZIP 对齐与交付哈希通过。
-- 下一步：P3 请求隔离及协议资源清理，随后 P4 缩略图版本/取消任务。未解决问题仅见 PROJECT_ISSUES.md，reex 静态证据见 REEX_STARTUP_REVIEW.md；历史查 Git，不恢复已删除的重复流水。
+- P3 本批：同视频并行 GET 各自持有请求，不互相取消；换片/退休关闭请求及输入流。SMB 建流/查询异常逆序释放资源，FTP 重连更新客户端，响应关闭可靠断开连接。13 项请求/资源/WebDAV 适配逻辑测试及最终编译通过；versionCode 136 / 1.2.9-rev1014 待交付。
+- 下一步：P4 缩略图版本/取消重入和缓存清理；认证 WebDAV native 直连的跨域凭据及错误分类回退尚未建立可验证边界，暂保留代理。未解决问题仅见 PROJECT_ISSUES.md，reex 静态证据见 REEX_STARTUP_REVIEW.md；历史查 Git，不恢复已删除的重复流水。

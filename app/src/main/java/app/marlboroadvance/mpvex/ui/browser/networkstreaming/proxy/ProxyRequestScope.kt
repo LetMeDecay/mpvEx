@@ -29,14 +29,20 @@ internal class ProxyRequestScope(private val onClosed: () -> Unit = {}) : Closea
     onClosed()
   }
 
-  fun own(stream: InputStream): InputStream = object : FilterInputStream(stream) {
-    override fun read(): Int { checkActive(); return stream.read() }
-    override fun read(b: ByteArray, off: Int, len: Int): Int { checkActive(); return stream.read(b, off, len) }
-    override fun close() {
-      this@ProxyRequestScope.close() // Cancel sockets before closing their response streams.
-      stream.close()
+  fun own(stream: InputStream): InputStream {
+    val closed = java.util.concurrent.atomic.AtomicBoolean()
+    fun closeStream() { if (closed.compareAndSet(false, true)) stream.close() }
+    onCancel { closeStream() }
+    return object : FilterInputStream(stream) {
+      override fun read(): Int { checkActive(); return stream.read() }
+      override fun read(b: ByteArray, off: Int, len: Int): Int { checkActive(); return stream.read(b, off, len) }
+      override fun close() {
+        this@ProxyRequestScope.close()
+        closeStream()
+      }
     }
   }
+
 }
 
 internal class ProxyRequestRegistry : Closeable {
