@@ -21,6 +21,24 @@ internal class PlaybackSession {
     expectedPath = path.removePrefix("file://")
   }
 
+  fun retire() {
+    loaded = false
+    expectedPath = null
+    generation++
+    interact()
+  }
+
+  /** Only called after native entry identity has been verified. */
+  fun adoptNativePath(path: String, eventGeneration: Long) {
+    if (generation != eventGeneration) return
+    val normalized = path.removePrefix("file://")
+    if (expectedPath != normalized) {
+      expectedPath = normalized
+      loaded = false
+      interact()
+    }
+  }
+
   fun acceptsPath(path: String?): Boolean =
     path != null && path.removePrefix("file://") == expectedPath
 

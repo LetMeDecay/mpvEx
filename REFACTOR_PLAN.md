@@ -152,13 +152,13 @@ P5 的可行性分析可提前，但业务上线后置。每阶段完成记录�
 
 ## 12. 当前落点
 
-P0/P1a 已完成。P1b 本批完成应用侧剩余 MPV 运行时调用迁移，以及加载/定位有界队列：一个执行者，最多各保留一个待加载与待定位请求；加载替换清理旧定位，执行前校验代次/交互票据。正在执行的同步 native 命令不能强制中断。纯委托部分保持参数、线程及返回语义。
+P0/P1a 已完成，P1b 核心加载/事件/退出链已收口：
+- 应用 native 访问统一到 MpvGateway；加载/定位各一个待执行槽，初次加载也在 Surface 就绪后进入同一队列，Surface 重建不重播。
+- PlaybackEventIdentity 将 START_FILE/END_FILE 的 playlist_entry_id 与 commandNode(loadfile) 返回 ID 关联；支持回调早于返回、替换/失败/退休释放等待者及重定向区间，不用当前 generation 冒充事件来源。FILE_LOADED/RESTART/EOF 还核对当前在播条目；普通高频属性不额外查询 native 条目。
+- 退出先同步捕获播放快照，再退休会话/待执行命令；独立 IO 保存任务不随 Activity 生命周期取消。停止等待加载执行者退出，销毁等待所有应用 JNI 调用返回；JNI 调用不持有计数锁，关闭期间回调/迟到调用不能重新进入 native。移除固定 100ms 等待。
 
-P1b 尚未完成：首次加载仍由 AAR BaseMPVView.surfaceCreated 发起；stop/destroy、其余控制命令和状态发布仍沿用原生命周期。当前队列不等同于完整 Coordinator，也不证明 native 迟到事件已隔离。不启用实例复用或 WebDAV 直连，不宣称启动耗时改善。
+适配依据：本机 AAR `mpv v0.41.0-224-gd54bad563`，JNI event_thread 使用 mpv_event_to_node；[对应 cmd_loadfile](https://github.com/mpv-player/mpv/blob/d54bad563/player/command.c) 返回 playlist_entry_id。[mpv 属性约定](https://mpv.io/manual/stable/#properties)中 playlist-playing-pos 与 playlist/N/id 用于校验实际在播条目。BaseMPVView 的文件槽保持为空，由原回调只负责 Surface 挂接/恢复 VO。
 
-下一批按此顺序收口：
-1. 将首次 Surface 加载和后续加载收敛到同一个可返回身份的适配入口，保留渲染就绪约束。
-2. 绑定原生文件身份。本机 AAR 为 `mpv v0.41.0-224-gd54bad563`；JNI event_thread 使用 mpv_event_to_node，START_FILE/END_FILE 携带 playlist_entry_id；[对应版本 cmd_loadfile](https://github.com/mpv-player/mpv/blob/d54bad563/player/command.c) 返回该 ID，可由 commandNode 获取。FILE_LOADED/RESTART 需沿事件流归属，不能在收到回调时读当前 generation 充当身份。处理事件先于命令返回、重定向插入项和 A→B→A，再连接 UI 状态。
-3. stop/destroy 与在途命令统一退休及等待；停止前捕获最终历史快照，避免锁住 native 回调线程或主线程等待环。之后再推进 P2 的当前文件优先启动链。
+下一步：推进完整 PlaybackUiState/控件意图汇聚及 P2 的当前文件优先、配置快照、URI 租约；P3–P6 仍未完成。不把本轮算作引擎复用或启动耗时优化已验收。实例初始化、手动后台/重建行为仍保留原框架，需按阶段验证后替换。
 
-验证和交付状态仅记于 PROJECT_CONTEXT.md；缺少设备数据不阻止代码重构，但不能宣称性能验收完成。
+验证和交付状态仅记于 PROJECT_CONTEXT.md；功能/性能与设备验收不由单元测试替代。

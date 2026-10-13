@@ -10,15 +10,6 @@
 
 ## 本分支问题
 
-### R1 / P2：正常退出先停止播放，后续保存可能被跳过
-
-- 位置：`app/src/main/java/app/marlboroadvance/mpvex/ui/player/PlayerActivity.kt:683-700`；关联 `:750-753`、`:2083-2085`、`:568-616`。
-- 触发：播放过程中通过返回键或界面返回按钮结束 Activity，且未启用手动后台播放。
-- 证据：`onPause` 在 `isFinishing` 时发送 `stop`，并跳过保存；`onStop` 才尝试保存，但保存函数要求 mpv 的 path 仍匹配且 time-pos 非空。stop 完成后这些条件不再成立。`onDestroy` 仅等待已有保存任务，没有注释声称的“最终保存”；`setReturnIntent` 也只返回数据给调用者，不写播放数据库。
-- 后果：本次续播位置、轨道/速度等状态可能未落库，重开使用旧记录或从头播放。此前先切后台已经保存的记录不等于最终退出进度。
-- 来源：原版 onPause 无条件发起保存且没有这个提前 stop；本分支 `da841bb` 引入该退出分支，当前快照保存仍未补齐退出入口。
-- 下一步：停止/销毁 mpv 前同步捕获最终状态并交给现有串行保存任务，退出时等待持久化；避免在 stop 后重新读取播放器属性。
-
 ### R2 / P2：onNewIntent 的媒体探测重复打开并遗失文件描述符
 
 - 位置：`app/src/main/java/app/marlboroadvance/mpvex/ui/player/PlayerActivity.kt:2353-2359`；关联 `:1240-1244`、`:1402-1409` 和 `ui/player/PlayerUtils.kt:159-165`。
@@ -62,6 +53,7 @@
 ## 重构边界
 
 - reex Dart AOT 播放链未完整还原；已确认架构和推测必须区分。
-- MPV AAR 将实例初始化与 Surface 生命周期耦合；应用侧网关已补齐，但首次加载/stop/destroy 尚未进入统一命令生命周期。加载/定位队列只约束后续命令，不能中断在途 native 调用。
-- Observer 在回调时读取当前 generation，不能可靠隔离同路径重新打开前的迟到事件；已有 PlaybackSession 测试只验证传入票据，不证明 native 来源正确。AAR 文件身份能力与接入顺序见 REFACTOR_PLAN.md §12；绑定前不启用实例复用。
+- MPV AAR 仍将实例初始化与 Surface 生命周期耦合；本轮只统一 Surface 就绪后的加载入口和退出顺序，未启用实例复用或将初始化移出主线程。
+- 原生事件已按 loadfile 返回的条目 ID 绑定并校验在播 ID；应用代次测试和 JNI 静态核对不替代设备上的 Surface 重建、M3U/重定向和后台切换验收。
+- 销毁需等待不可取消的同步 JNI 调用结束；数据库最终快照也需等待 IO 完成，尚无耗时上界。完整 PlaybackUiState/所有控件意图的统一仍需后续迁移，不等同于本轮生命周期收口。
 - 无当前设备验收或私有服务器数据；未执行功能测试。旧测试结果不能替代新架构验证。

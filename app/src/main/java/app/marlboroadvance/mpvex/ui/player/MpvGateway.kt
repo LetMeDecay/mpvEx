@@ -2,15 +2,10 @@ package app.marlboroadvance.mpvex.ui.player
 
 import `is`.xyz.mpv.MPVLib
 
-/**
- * Transitional native access boundary for application-owned playback calls.
- *
- * Delegation deliberately preserves caller-thread execution, exceptions and
- * native return values. Instance/Surface ownership still belongs to MPVView;
- * this is not yet the serialized PlaybackEngine described in REFACTOR_PLAN.md.
- * Lazy getters also preserve MPVLib initialization timing.
- */
+/** Native entry boundary. Destruction waits for leases without blocking callbacks. */
 internal object MpvGateway {
+  private val access = NativePlaybackAccess()
+  fun open() = access.open()
   val propBoolean get() = MPVLib.propBoolean
   val propInt get() = MPVLib.propInt
   val propNode get() = MPVLib.propNode
@@ -18,24 +13,37 @@ internal object MpvGateway {
   val propDouble get() = MPVLib.propDouble
   val propString get() = MPVLib.propString
 
-  fun command(vararg arguments: String) = MPVLib.command(*arguments)
-  fun setOptionString(name: String, value: String) = MPVLib.setOptionString(name, value)
+  fun loadFile(path: String): Long? = access.call {
+    checkNotNull(MPVLib.commandNode("loadfile", path)?.get("playlist_entry_id")?.asInt()) {
+      "Native load did not return a playlist entry identity"
+    }
+  }
 
-  fun getPropertyBoolean(name: String) = MPVLib.getPropertyBoolean(name)
-  fun getPropertyDouble(name: String) = MPVLib.getPropertyDouble(name)
-  fun getPropertyInt(name: String) = MPVLib.getPropertyInt(name)
-  fun getPropertyString(name: String) = MPVLib.getPropertyString(name)
-  fun getPropertyFloat(name: String) = MPVLib.getPropertyFloat(name)
+  fun playingEntryId(): Long? = access.call {
+    val position = MPVLib.getPropertyInt("playlist-playing-pos") ?: return@call null
+    if (position < 0) return@call null
+    val entry = MPVLib.getPropertyNode("playlist/$position") ?: return@call null
+    entry["id"]?.asInt().takeIf { entry["playing"]?.asBoolean() == true }
+  }
 
-  fun setPropertyBoolean(name: String, value: Boolean) = MPVLib.setPropertyBoolean(name, value)
-  fun setPropertyDouble(name: String, value: Double) = MPVLib.setPropertyDouble(name, value)
-  fun setPropertyFloat(name: String, value: Float) = MPVLib.setPropertyFloat(name, value)
-  fun setPropertyInt(name: String, value: Int) = MPVLib.setPropertyInt(name, value)
-  fun setPropertyString(name: String, value: String) = MPVLib.setPropertyString(name, value)
+  fun command(vararg arguments: String) = access.call { MPVLib.command(*arguments) }
+  fun setOptionString(name: String, value: String) = access.call { MPVLib.setOptionString(name, value) }
 
-  fun observeProperty(name: String, format: Int) = MPVLib.observeProperty(name, format)
+  fun getPropertyBoolean(name: String) = access.call { MPVLib.getPropertyBoolean(name) }
+  fun getPropertyDouble(name: String) = access.call { MPVLib.getPropertyDouble(name) }
+  fun getPropertyInt(name: String) = access.call { MPVLib.getPropertyInt(name) }
+  fun getPropertyString(name: String) = access.call { MPVLib.getPropertyString(name) }
+  fun getPropertyFloat(name: String) = access.call { MPVLib.getPropertyFloat(name) }
+
+  fun setPropertyBoolean(name: String, value: Boolean) = access.call { MPVLib.setPropertyBoolean(name, value) }
+  fun setPropertyDouble(name: String, value: Double) = access.call { MPVLib.setPropertyDouble(name, value) }
+  fun setPropertyFloat(name: String, value: Float) = access.call { MPVLib.setPropertyFloat(name, value) }
+  fun setPropertyInt(name: String, value: Int) = access.call { MPVLib.setPropertyInt(name, value) }
+  fun setPropertyString(name: String, value: String) = access.call { MPVLib.setPropertyString(name, value) }
+
+  fun observeProperty(name: String, format: Int) = access.call { MPVLib.observeProperty(name, format) }
   fun addObserver(observer: MPVLib.EventObserver) = MPVLib.addObserver(observer)
   fun removeObserver(observer: MPVLib.EventObserver) = MPVLib.removeObserver(observer)
-  fun grabThumbnail(size: Int) = MPVLib.grabThumbnail(size)
-  fun destroy() = MPVLib.destroy()
+  fun grabThumbnail(size: Int) = access.call { MPVLib.grabThumbnail(size) }
+  fun destroy() = access.close { MPVLib.destroy() }
 }

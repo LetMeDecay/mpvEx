@@ -132,4 +132,19 @@ class PlaybackSessionTest {
     assertEquals(0f, session.displayPosition(Float.NaN, false, 100), 0f)
     assertEquals(0f, session.displayPosition(-1f, false, 100), 0f)
   }
+  @Test
+  fun retirementInvalidatesPlaybackAndTrustedRedirectResetsLoadedState() {
+    val session = loaded("playlist")
+    val ticket = session.ticket()
+    session.adoptNativePath("redirected", session.generation)
+    assertFalse(session.loaded)
+    assertFalse(session.isCurrent(ticket))
+    assertTrue(session.confirmLoaded("redirected", session.generation, "redirected"))
+    val generation = session.generation
+    session.retire()
+    session.adoptNativePath("redirected", generation)
+    assertFalse(session.loaded)
+    assertFalse(session.acceptsEvent("redirected", generation))
+  }
+
 }

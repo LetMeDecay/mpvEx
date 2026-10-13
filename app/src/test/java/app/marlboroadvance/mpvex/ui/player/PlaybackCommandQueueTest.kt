@@ -5,6 +5,9 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
@@ -145,4 +148,44 @@ class PlaybackCommandQueueTest {
       owner.cancelAndJoin()
     }
   }
+  @Test(timeout = 5000)
+  fun retirementWaitsForNativeCallAndRejectsPendingAndLaterCommands() = runBlocking {
+    val owner = Job()
+    val entered = CompletableDeferred<Unit>()
+    val release = CompletableDeferred<Unit>()
+    val calls = mutableListOf<String>()
+    val queue = PlaybackCommandQueue(
+      CoroutineScope(coroutineContext + owner),
+      coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
+      execute = { error("Only the load action should run") },
+      onFailure = { throw AssertionError(it) },
+    )
+    try {
+      queue.loadAction({ true }) {
+        calls.add("load")
+        entered.complete(Unit)
+        // Model a JNI call which cannot be cancelled by coroutine cancellation.
+        withContext(NonCancellable) { release.await() }
+        calls.add("load returned")
+      }
+      entered.await()
+      queue.seek(listOf("seek", "old")) { true }
+      queue.retire()
+      queue.load(listOf("loadfile", "late")) { true }
+      val shutdown = async {
+        queue.awaitRetired()
+        calls.add("stop")
+        calls.add("destroy")
+      }
+      yield()
+      assertEquals(listOf("load"), calls)
+      release.complete(Unit)
+      shutdown.await()
+      assertEquals(listOf("load", "load returned", "stop", "destroy"), calls)
+    } finally {
+      release.complete(Unit)
+      owner.cancelAndJoin()
+    }
+  }
+
 }

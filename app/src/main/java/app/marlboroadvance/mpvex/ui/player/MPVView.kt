@@ -5,6 +5,7 @@ import android.os.Environment
 import android.util.AttributeSet
 
 import android.view.KeyCharacterMap
+import android.view.SurfaceHolder
 import android.view.KeyEvent
 import app.marlboroadvance.mpvex.preferences.AdvancedPreferences
 import app.marlboroadvance.mpvex.preferences.AudioPreferences
@@ -33,7 +34,37 @@ class MPVView(
   private val subtitlesPreferences: SubtitlesPreferences by inject()
   private val anime4kManager: Anime4KManager by inject()
 
-  var isExiting = false
+  @Volatile var isExiting = false
+  private var surfaceReady = false
+  private var engineReleased = false
+  private var pendingOpen: (() -> Unit)? = null
+
+  fun whenSurfaceReady(open: () -> Unit) {
+    if (isExiting || engineReleased) return
+    if (surfaceReady) open() else pendingOpen = open
+  }
+
+  override fun surfaceCreated(holder: SurfaceHolder) {
+    if (engineReleased) return
+    // Base filePath stays null: the base attaches/restores VO but does not load.
+    super.surfaceCreated(holder)
+    surfaceReady = true
+    val open = pendingOpen
+    pendingOpen = null
+    if (!isExiting) open?.invoke()
+  }
+
+  override fun surfaceDestroyed(holder: SurfaceHolder) {
+    surfaceReady = false
+    if (!engineReleased) super.surfaceDestroyed(holder)
+  }
+
+  fun releaseEngineSurface() {
+    pendingOpen = null
+    if (surfaceReady) surfaceDestroyed(holder)
+    engineReleased = true
+    holder.removeCallback(this)
+  }
 
   fun getVideoOutAspect(): Double? {
     // Try to get aspect from video-params/aspect first

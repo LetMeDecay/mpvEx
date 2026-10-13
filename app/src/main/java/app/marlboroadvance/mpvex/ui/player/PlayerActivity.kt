@@ -58,6 +58,7 @@ import com.github.k1rakishou.fsaf.FileManager
 import `is`.xyz.mpv.MPVLib
 import `is`.xyz.mpv.MPVNode
 import `is`.xyz.mpv.Utils
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.update
@@ -428,7 +429,7 @@ class PlayerActivity :
 
     getPlayableUri(intent)?.let { path ->
       viewModel.beginFileChange(path)
-      player.playFile(path)
+      player.whenSurfaceReady { viewModel.loadFile(path) }
     }
 
     // Only set orientation immediately if NOT in Video mode
@@ -599,13 +600,11 @@ class PlayerActivity :
       }
 
       // Wait for any pending save operation to complete before destroying MPV
-      // This prevents the race condition where the save coroutine tries to access
-      // MPV properties after MpvGateway.destroy() has been called
+      // The IO job persists a captured snapshot and never needs the UI thread.
       savePlaybackStateJob?.let { job ->
         Log.d(TAG, "Waiting for save playback state job to complete...")
         runCatching {
-          // Use runBlocking to ensure we wait for the job to finish
-          // This is safe here as onDestroy is already on the main thread
+          // The save owns its IO lifetime; lifecycle cancellation cannot discard it.
           kotlinx.coroutines.runBlocking {
             job.join()
           }
@@ -644,22 +643,11 @@ class PlayerActivity :
     runCatching {
       MpvGateway.removeObserver(playerObserver)
 
-      if (isReady) {
-        // Pause playback first to reduce thread activity
-        MpvGateway.setPropertyBoolean("pause", true)
-
-        // Send quit command to gracefully shut down MPV
-        MpvGateway.command("quit")
-
-        // Wait briefly for MPV to process quit and clean up internal threads
-        // This prevents race conditions where hardware UI threads try to access
-        // mutexes/queues that are destroyed by MpvGateway.destroy()
-        // We use a short blocking wait here as onDestroy is already on the main thread
-        // and this ensures proper cleanup before activity destruction
-        Thread.sleep(100)
-      }
-
-      // Now safe to destroy MPV as internal threads have had time to shut down
+      viewModel.stopPlayback()
+      // Worker and stop execute only on IO and never await the UI/event thread.
+      // Do not destroy the singleton while a synchronous load is still in flight.
+      kotlinx.coroutines.runBlocking { viewModel.awaitPlaybackStopped() }
+      player.releaseEngineSurface()
       MpvGateway.destroy()
       mpvInitialized = false
     }.onFailure { e ->
@@ -694,11 +682,11 @@ class PlayerActivity :
       val shouldPause = (!audioPreferences.automaticBackgroundPlayback.get() && !isManualBackgroundPlayback) || 
                         (isUserFinishing && !isManualBackgroundPlayback)
 
-      // OPTIMIZATION: Stop playback immediately if finishing to reduce cleanup overhead
+      // Capture native state before retiring the session or sending stop.
+      saveVideoPlaybackState(fileName)
       if (isFinishing && !isManualBackgroundPlayback) {
-        viewModel.pause()
-        // Tell MPV to stop processing to reduce busywork during cleanup
-        MpvGateway.command("stop")
+        player.isExiting = true
+        viewModel.stopPlayback()
       } else if (!isInPip && shouldPause) {
         wasPlayingBeforePause = !(viewModel.paused ?: true)
         viewModel.pause()
@@ -709,10 +697,6 @@ class PlayerActivity :
         restoreSystemUI()
       }
 
-      // OPTIMIZATION: Only save if not finishing (onDestroy will handle final save)
-      if (!isFinishing) {
-        saveVideoPlaybackState(fileName)
-      }
     }.onFailure { e ->
       Log.e(TAG, "Error during onPause", e)
     }
@@ -898,6 +882,7 @@ class PlayerActivity :
     // NOW initialize MPV - it will find and load the scripts we just copied
     val initializeStarted = android.os.SystemClock.elapsedRealtime()
     Log.d("PlayerStartup", "configPreparationMs=${initializeStarted - prepareStarted}")
+    MpvGateway.open()
     player.initialize(filesDir.path, cacheDir.path)
     Log.d("PlayerStartup", "mpvInitializationMs=${android.os.SystemClock.elapsedRealtime() - initializeStarted}")
     mpvInitialized = true
@@ -1826,7 +1811,7 @@ class PlayerActivity :
       }
     }
 
-    // This is the reliable lifecycle point for both the initial player.playFile
+    // This is the reliable lifecycle point for both the initial Surface-ready load
     // call and later playlist loadfile calls.
     startNextPrefetch()
 
@@ -2131,7 +2116,7 @@ class PlayerActivity :
     )
     // Preserve saves for different files and their order; never read mpv after suspension.
     val previousSave = savePlaybackStateJob
-    savePlaybackStateJob = lifecycleScope.launch(Dispatchers.IO) {
+    savePlaybackStateJob = CoroutineScope(Dispatchers.IO).launch {
       try {
         previousSave?.join()
         val oldState = playbackStateRepository.getVideoDataByTitle(identifier)
@@ -2452,7 +2437,7 @@ class PlayerActivity :
     // Set HTTP headers (including referer) BEFORE loading the new file
     setHttpHeadersFromExtras(intent.extras)
 
-    viewModel.loadFile(playablePath)
+    player.whenSurfaceReady { viewModel.loadFile(playablePath) }
   }
 
   // ==================== Picture-in-Picture Management ====================
@@ -3162,7 +3147,7 @@ class PlayerActivity :
 
     // Load the new video
     // Avoid blocking UI thread while mpv opens network streams (e.g., HLS).
-    viewModel.loadFile(playableUri)
+    player.whenSurfaceReady { viewModel.loadFile(playableUri) }
 
     // Update media title (this will trigger UI update)
     // Don't force media-title for m3u/m3u8 streams - let MPV provide it

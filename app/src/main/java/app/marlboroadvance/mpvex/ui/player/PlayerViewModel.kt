@@ -160,6 +160,9 @@ class PlayerViewModel(
   val duration by MpvGateway.propInt["duration"].collectAsState(viewModelScope)
 
   internal val playbackSession = PlaybackSession()
+  internal val playbackEvents = PlaybackEventIdentity()
+  private var playbackRequest: PlaybackEventIdentity.Request? = null
+  private var stopPlaybackJob: Job? = null
   private val playbackCommands = PlaybackCommandQueue(
     scope = viewModelScope,
     dispatcher = Dispatchers.IO,
@@ -170,9 +173,11 @@ class PlayerViewModel(
   val mediaGeneration = _mediaGeneration.asStateFlow()
 
   fun beginFileChange(path: String) {
+    if (stopPlaybackJob != null) return
     app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
       .existingInstance()?.setPlaybackUrl(path)
     playbackSession.begin(path)
+    playbackRequest = playbackEvents.begin(playbackSession.generation)
     playbackCommands.clearPending()
     _mediaGeneration.value = playbackSession.generation
     seekCoalesceJob?.cancel()
@@ -186,10 +191,40 @@ class PlayerViewModel(
   }
 
   fun loadFile(path: String) {
-    val generation = playbackSession.generation
-    playbackCommands.load(listOf("loadfile", path)) {
-      playbackSession.generation == generation && playbackSession.acceptsPath(path)
+    val request = playbackRequest ?: return
+    playbackCommands.loadAction(
+      isValid = {
+        stopPlaybackJob == null && playbackSession.generation == request.generation &&
+          playbackSession.acceptsPath(path)
+      },
+    ) {
+      var entryId: Long? = null
+      try {
+        entryId = MpvGateway.loadFile(path)
+      } finally {
+        playbackEvents.bind(request, entryId)
+      }
     }
+  }
+
+  /** Called after the Activity has captured its final playback snapshot. */
+  fun stopPlayback() {
+    if (stopPlaybackJob != null) return
+    playbackSession.retire()
+    playbackEvents.retire()
+    playbackRequest = null
+    seekCoalesceJob?.cancel()
+    playbackCommands.retire()
+    // Teardown must finish even if Android has already cleared the ViewModel.
+    stopPlaybackJob = CoroutineScope(Dispatchers.IO).launch {
+      playbackCommands.awaitRetired()
+      runCatching { MpvGateway.command("stop") }
+        .onFailure { Log.e("PlayerViewModel", "Playback stop failed") }
+    }
+  }
+
+  internal suspend fun awaitPlaybackStopped() {
+    stopPlaybackJob?.join()
   }
 
   fun onSeekStarted(expectedGeneration: Long = playbackSession.generation) {
