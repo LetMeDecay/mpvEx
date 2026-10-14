@@ -9,7 +9,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 
 /**
- * One worker, with at most one pending load and one pending seek. Native calls
+ * One worker, with one pending load/pause/seek and at most 16 auxiliary jobs. Native calls
  * already in progress cannot be interrupted; validity is checked at dispatch.
  * Retirement cancels pending work; join waits for an in-flight native call.
  */
@@ -20,13 +20,14 @@ internal class PlaybackCommandQueue(
   private val onFailure: (Exception) -> Unit,
 ) {
   private data class Command(val arguments: List<String>, val isValid: () -> Boolean,
-    val action: (suspend () -> Unit)? = null)
+    val action: (suspend () -> Unit)? = null, val cleanup: () -> Unit = {})
 
   private val lock = Any()
   private val wakeup = Channel<Unit>(Channel.CONFLATED)
   private var pendingLoad: Command? = null
   private var pendingSeek: Command? = null
   private var pendingPause: Command? = null
+  private val auxiliary = ArrayDeque<Command>()
 
   private val worker: Job
 
@@ -36,7 +37,7 @@ internal class PlaybackCommandQueue(
         while (true) {
           ensureActive()
           val command = synchronized(lock) {
-            val next = pendingLoad ?: pendingPause ?: pendingSeek
+            val next = pendingLoad ?: pendingPause ?: pendingSeek ?: auxiliary.removeFirstOrNull()
             when {
               pendingLoad != null -> pendingLoad = null
               pendingPause != null -> pendingPause = null
@@ -54,32 +55,47 @@ internal class PlaybackCommandQueue(
           } catch (failure: Exception) {
             // A failed native call must not permanently disable later requests.
             onFailure(failure)
+          } finally {
+            command.cleanup()
           }
         }
       }
     }
-    worker.invokeOnCompletion {
-      synchronized(lock) {
-        wakeup.close()
-        pendingLoad = null
-        pendingSeek = null
-        pendingPause = null
+    worker.invokeOnCompletion { clearPending(close = true) }
+  }
+
+  private fun takeAuxiliary() = auxiliary.toList().also { auxiliary.clear() }
+
+  fun load(arguments: List<String>, isValid: () -> Boolean) = replaceLoad(Command(arguments.toList(), isValid))
+
+  fun loadAction(isValid: () -> Boolean, action: suspend () -> Unit) =
+    replaceLoad(Command(emptyList(), isValid, action))
+
+  private fun replaceLoad(command: Command) {
+    val discarded = synchronized(lock) {
+      pendingLoad = command
+      pendingSeek = null
+      pendingPause = null
+      if (wakeup.trySend(Unit).isFailure) pendingLoad = null
+      takeAuxiliary()
+    }
+    discarded.forEach { it.cleanup() }
+  }
+
+  /** Takes ownership even if rejected. Cleanup runs once after execution or discard. */
+  fun auxiliary(isValid: () -> Boolean, cleanup: () -> Unit, action: suspend () -> Unit): Boolean {
+    val command = Command(emptyList(), isValid, action, cleanup)
+    val accepted = synchronized(lock) {
+      if (auxiliary.size >= 16) false else {
+        auxiliary.addLast(command)
+        if (wakeup.trySend(Unit).isSuccess) true else {
+          auxiliary.removeLast()
+          false
+        }
       }
     }
-  }
-
-  fun load(arguments: List<String>, isValid: () -> Boolean) = synchronized(lock) {
-    pendingLoad = Command(arguments.toList(), isValid)
-    pendingSeek = null
-    pendingPause = null
-    if (wakeup.trySend(Unit).isFailure) pendingLoad = null
-  }
-
-  fun loadAction(isValid: () -> Boolean, action: suspend () -> Unit) = synchronized(lock) {
-    pendingLoad = Command(emptyList(), isValid, action)
-    pendingSeek = null
-    pendingPause = null
-    if (wakeup.trySend(Unit).isFailure) pendingLoad = null
+    if (!accepted) cleanup()
+    return accepted
   }
 
   fun pause(paused: Boolean, isValid: () -> Boolean) = synchronized(lock) {
@@ -88,12 +104,7 @@ internal class PlaybackCommandQueue(
   }
 
   fun retire() {
-    synchronized(lock) {
-      wakeup.close()
-      pendingLoad = null
-      pendingSeek = null
-      pendingPause = null
-    }
+    clearPending(close = true)
     worker.cancel()
   }
 
@@ -104,9 +115,14 @@ internal class PlaybackCommandQueue(
     if (wakeup.trySend(Unit).isFailure) pendingSeek = null
   }
 
-  fun clearPending() = synchronized(lock) {
-    pendingLoad = null
-    pendingSeek = null
-    pendingPause = null
+  fun clearPending(close: Boolean = false) {
+    val discarded = synchronized(lock) {
+      if (close) wakeup.close()
+      pendingLoad = null
+      pendingSeek = null
+      pendingPause = null
+      takeAuxiliary()
+    }
+    discarded.forEach { it.cleanup() }
   }
 }

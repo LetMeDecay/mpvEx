@@ -189,6 +189,8 @@ class PlayerViewModel(
     app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
       .existingInstance()?.setPlaybackUrl(path)
     playbackSession.begin(path)
+    _externalSubtitles.clear()
+    mpvPathToUriMap.clear()
     playbackRequest = playbackEvents.begin(playbackSession.generation)
     playbackCommands.clearPending()
     playbackStateStore.begin(playbackSession.generation)
@@ -404,7 +406,7 @@ class PlayerViewModel(
   val externalSubtitles: List<String> get() = _externalSubtitles.toList()
   
   // Mapping from mpv internal path/URI to the original source URI (resolves deletion issues)
-  private val mpvPathToUriMap = mutableMapOf<String, String>()
+  private val mpvPathToUriMap = java.util.concurrent.ConcurrentHashMap<String, String>()
 
   // Repeat and Shuffle state
   private val _repeatMode = MutableStateFlow(RepeatMode.OFF)
@@ -564,62 +566,75 @@ class PlayerViewModel(
     select: Boolean = true,
     silent: Boolean = false,
     canApply: () -> Boolean = { true },
+    onAdded: () -> Unit = {},
   ) {
     val generation = playbackSession.generation
+    fun isCurrent() = generation == playbackSession.generation && canApply()
     viewModelScope.launch(Dispatchers.IO) {
-      val uriString = uri.toString()
-      if (_externalSubtitles.contains(uriString)) {
-        android.util.Log.d("PlayerViewModel", "Subtitle already tracked, skipping: $uriString")
-        return@launch
-      }
-
-      runCatching {
+      var source: PlayableSource? = null
+      var enqueued = false
+      try {
+        if (!isCurrent()) return@launch
+        val uriString = uri.toString()
         val fileName = getFileNameFromUri(uri) ?: "subtitle.srt"
-
         if (!isValidSubtitleFile(fileName)) {
-          return@launch withContext(Dispatchers.Main) {
-            showToast(host.context.getString(R.string.invalid_subtitle_format))
+          if (!silent) withContext(Dispatchers.Main) {
+            if (isCurrent()) showToast(host.context.getString(R.string.invalid_subtitle_format))
           }
+          return@launch
         }
-
-        // Take persistent URI permission for content:// URIs
         if (uri.scheme == "content") {
           try {
-            host.context.contentResolver.takePersistableUriPermission(
-              uri,
-              Intent.FLAG_GRANT_READ_URI_PERMISSION
-            )
-          } catch (e: SecurityException) {
-            // Permission already granted, not available, or not needed (e.g. from tree).
-            android.util.Log.i("PlayerViewModel", "Persistent permission not taken for $uri (may already have it via tree)")
-          }
+            host.context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+          } catch (_: SecurityException) { /* Tree/temporary grants can still allow reading. */ }
         }
-
-        val mpvPath = uri.resolveUri(host.context) ?: uri.toString()
-        val mode = if (select) "select" else "auto"
-        
-        // IO may complete after a new file or user choice has superseded this request.
-        withContext(Dispatchers.Main.immediate) {
-          if (generation != playbackSession.generation || !canApply()) return@withContext
-          mpvPathToUriMap[mpvPath] = uriString
-          MpvGateway.command("sub-add", mpvPath, mode)
-          if (!_externalSubtitles.contains(uriString)) _externalSubtitles.add(uriString)
-          if (!silent) {
-            val displayName = fileName.take(30).let { if (fileName.length > 30) "$it..." else it }
-            showToast(host.context.getString(R.string.subtitle_added, displayName))
+        val resolved = uri.openPlayableSource(host.context) ?: return@launch
+        source = resolved
+        var retained = false
+        val accepted = playbackCommands.auxiliary(
+          isValid = ::isCurrent,
+          cleanup = { if (!retained) resolved.close() },
+        ) {
+          val alreadyAdded = withContext(Dispatchers.Main) { _externalSubtitles.contains(uriString) }
+          if (!isCurrent()) return@auxiliary
+          if (!alreadyAdded) {
+            if (!MpvGateway.retainExtraSource(resolved)) return@auxiliary
+            retained = true
+            MpvGateway.command("sub-add", resolved.path, if (select) "select" else "auto")
           }
-        }
-      }.onFailure {
-        if (!silent) {
           withContext(Dispatchers.Main) {
-            showToast(host.context.getString(R.string.failed_load_subtitle))
+            if (!isCurrent()) return@withContext
+            if (!alreadyAdded) {
+              mpvPathToUriMap[resolved.path] = uriString
+              _externalSubtitles.add(uriString)
+            }
+            onAdded()
+            if (!silent) {
+              val displayName = fileName.take(30).let { if (fileName.length > 30) "$it..." else it }
+              showToast(host.context.getString(R.string.subtitle_added, displayName))
+            }
           }
         }
+        enqueued = true
+        if (!accepted && !silent) withContext(Dispatchers.Main) {
+          if (isCurrent()) showToast(host.context.getString(R.string.failed_load_subtitle))
+        }
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (_: Exception) {
+        if (!silent) withContext(Dispatchers.Main) {
+          if (isCurrent()) showToast(host.context.getString(R.string.failed_load_subtitle))
+        }
+      } finally {
+        if (!enqueued) source?.close()
       }
     }
   }
 
+  internal fun stableTrackSource(path: String): String? = mpvPathToUriMap[path]
+
   private fun scanLocalSubtitles(mediaTitle: String) {
+    val generation = playbackSession.generation
     viewModelScope.launch(Dispatchers.IO) {
       val saveFolderUri = subtitlesPreferences.subtitleSaveFolder.get()
       if (saveFolderUri.isBlank()) return@launch
@@ -637,6 +652,7 @@ class PlayerViewModel(
             movieDir.listFiles().forEach { file ->
               if (file.isFile && isValidSubtitleFile(file.name ?: "")) {
                 withContext(Dispatchers.Main) {
+                  if (generation != playbackSession.generation) return@withContext
                   // Don't auto-select during scan, just make available
                   addSubtitle(file.uri, select = false, silent = true)
                 }
@@ -650,8 +666,11 @@ class PlayerViewModel(
     }
   }
 
+  private var subtitleScanGeneration = -1L
+
   fun setMediaTitle(mediaTitle: String) {
-    if (currentMediaTitle != mediaTitle) {
+    if (currentMediaTitle != mediaTitle || subtitleScanGeneration != playbackSession.generation) {
+      subtitleScanGeneration = playbackSession.generation
       currentMediaTitle = mediaTitle
       lastAutoSelectedMediaTitle = null
       // Clear external subtitles when media changes

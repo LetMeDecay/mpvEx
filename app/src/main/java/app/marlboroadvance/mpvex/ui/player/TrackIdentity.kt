@@ -13,6 +13,8 @@ internal object TrackIdentity {
       .joinToString("") { "%02x".format(it) }
   }
 
+  fun externalKey(type: String, uri: String): String = key(listOf("external-uri", type, uri))
+
   fun capture(selected: Int, tracks: List<Track>): String =
     if (selected <= 0) OFF else tracks.singleOrNull { it.id == selected }?.key.orEmpty()
 

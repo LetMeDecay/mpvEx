@@ -4,6 +4,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TrackIdentityTest {
+  @Test fun externalTracksMatchOriginalUriAcrossNativeIds() {
+    val key = TrackIdentity.externalKey("sub", "content://provider/document/subtitle")
+    val before = TrackIdentity.capture(5, listOf(TrackIdentity.Track(5, key)))
+    assertEquals(12, TrackIdentity.resolve(before, listOf(TrackIdentity.Track(12, key))))
+    assertNotEquals(key, TrackIdentity.externalKey("sub", "content://other/document/subtitle"))
+  }
   @Test fun reorderedIdsRestoreByDescriptor() {
     val key = TrackIdentity.key(listOf("audio", "en", "Main"))
     val saved = TrackIdentity.capture(1, listOf(TrackIdentity.Track(1, key)))

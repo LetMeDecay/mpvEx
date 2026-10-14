@@ -17,6 +17,69 @@ import kotlin.coroutines.ContinuationInterceptor
 
 class PlaybackCommandQueueTest {
   @Test(timeout = 5000)
+  fun auxiliaryResourcesAreBoundedAndReleasedWhenReplacedOrInvalid() = runBlocking {
+    val owner = Job()
+    val entered = CompletableDeferred<Unit>()
+    val release = CompletableDeferred<Unit>()
+    var cleaned = 0
+    var executed = 0
+    val queue = PlaybackCommandQueue(CoroutineScope(coroutineContext + owner),
+      coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
+      execute = {}, onFailure = { throw AssertionError(it) })
+    try {
+      queue.loadAction({ true }) { entered.complete(Unit); release.await() }
+      entered.await()
+      repeat(16) {
+        assertEquals(true, queue.auxiliary({ true }, { cleaned++ }) { executed++ })
+      }
+      assertEquals(false, queue.auxiliary({ true }, { cleaned++ }) { executed++ })
+      assertEquals(1, cleaned)
+      queue.load(listOf("loadfile", "next")) { true }
+      assertEquals(17, cleaned)
+      queue.auxiliary({ false }, { cleaned++ }) { executed++ }
+      release.complete(Unit)
+      yield()
+      assertEquals(18, cleaned)
+      assertEquals(0, executed)
+      queue.auxiliary({ true }, { cleaned++ }) { executed++ }
+      yield()
+      assertEquals(19, cleaned)
+      assertEquals(1, executed)
+      queue.retire()
+      queue.awaitRetired()
+      assertEquals(false, queue.auxiliary({ true }, { cleaned++ }) { executed++ })
+      assertEquals(20, cleaned)
+    } finally { owner.cancelAndJoin() }
+  }
+
+  @Test(timeout = 5000)
+  fun inFlightAuxiliaryFinishesBeforeNextLoadAndRetirementCleanup() = runBlocking {
+    val owner = Job()
+    val entered = CompletableDeferred<Unit>()
+    val release = CompletableDeferred<Unit>()
+    val order = mutableListOf<String>()
+    val queue = PlaybackCommandQueue(CoroutineScope(coroutineContext + owner),
+      coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
+      execute = { order.add("load") }, onFailure = { throw AssertionError(it) })
+    try {
+      queue.auxiliary({ true }, { order.add("cleanup") }) {
+        withContext(NonCancellable) { entered.complete(Unit); release.await(); order.add("subtitle") }
+      }
+      entered.await()
+      queue.load(listOf("loadfile", "next")) { true }
+      yield()
+      assertEquals(emptyList<String>(), order)
+      release.complete(Unit)
+      yield()
+      assertEquals(listOf("subtitle", "cleanup", "load"), order)
+      queue.auxiliary({ true }, { order.add("discard") }) { error("must not run") }
+      queue.retire()
+      queue.awaitRetired()
+      assertEquals("discard", order.last())
+    } finally { owner.cancelAndJoin() }
+  }
+
+  @Test(timeout = 5000)
   fun pauseIsBoundedAndRetiredWithItsFile() = runBlocking {
     val owner = Job()
     val entered = CompletableDeferred<Unit>()

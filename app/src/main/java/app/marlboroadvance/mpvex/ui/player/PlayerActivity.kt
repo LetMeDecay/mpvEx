@@ -1657,10 +1657,10 @@ class PlayerActivity :
       // Apply track selection logic (defaults only apply when no saved state)
       trackSelector.onFileLoaded(
         preserveAudio = playerPreferences.restoreTracks.get() && state?.audioTrackKey?.let {
-          TrackIdentity.resolve(it, MpvGateway.trackIdentities("audio")) != null
+          TrackIdentity.resolve(it, MpvGateway.trackIdentities("audio", viewModel::stableTrackSource)) != null
         } == true,
         preserveSubtitles = playerPreferences.restoreTracks.get() && state?.subtitleTrackKey?.let {
-          TrackIdentity.resolve(it, MpvGateway.trackIdentities("sub")) != null
+          TrackIdentity.resolve(it, MpvGateway.trackIdentities("sub", viewModel::stableTrackSource)) != null
         } == true,
         isCurrent = ::canRestore,
       )
@@ -1983,9 +1983,9 @@ class PlayerActivity :
     val watchedThreshold = browserPreferences.watchedThreshold.get() / 100f
     val snapshot = PlaybackStateEntity(
       mediaTitle = identifier,
-      audioTrackKey = TrackIdentity.capture(player.aid, MpvGateway.trackIdentities("audio")),
-      subtitleTrackKey = TrackIdentity.capture(player.sid, MpvGateway.trackIdentities("sub")),
-      secondarySubtitleTrackKey = TrackIdentity.capture(player.secondarySid, MpvGateway.trackIdentities("sub")),
+      audioTrackKey = TrackIdentity.capture(player.aid, MpvGateway.trackIdentities("audio", viewModel::stableTrackSource)),
+      subtitleTrackKey = TrackIdentity.capture(player.sid, MpvGateway.trackIdentities("sub", viewModel::stableTrackSource)),
+      secondarySubtitleTrackKey = TrackIdentity.capture(player.secondarySid, MpvGateway.trackIdentities("sub", viewModel::stableTrackSource)),
       lastPosition = if (duration > 0 && pos >= duration - 1) 0 else pos,
       playbackSpeed = MpvGateway.getPropertyDouble("speed") ?: DEFAULT_PLAYBACK_SPEED,
       videoZoom = MpvGateway.getPropertyDouble("video-zoom")?.toFloat() ?: 0f,
@@ -2050,6 +2050,16 @@ class PlayerActivity :
    *
    * @param state The saved playback state entity
    */
+  private fun restoreTrackSelection(state: PlaybackStateEntity) {
+    if (playerPreferences.restoreTracks.get()) {
+      val audioTracks = MpvGateway.trackIdentities("audio", viewModel::stableTrackSource)
+      val subtitleTracks = MpvGateway.trackIdentities("sub", viewModel::stableTrackSource)
+      TrackIdentity.resolve(state.audioTrackKey, audioTracks)?.let { player.aid = it }
+      TrackIdentity.resolve(state.subtitleTrackKey, subtitleTracks)?.let { player.sid = it }
+      TrackIdentity.resolve(state.secondarySubtitleTrackKey, subtitleTracks)?.let { player.secondarySid = it }
+    }
+  }
+
   private fun applyPlaybackState(
     state: PlaybackStateEntity?,
     canRestore: () -> Boolean,
@@ -2065,17 +2075,14 @@ class PlayerActivity :
       Log.d(TAG, "Restoring ${externalSubUris.size} external subtitle(s)")
 
       for (subUri in externalSubUris) {
-        viewModel.addSubtitle(Uri.parse(subUri), select = false, silent = true, canApply = canRestore)
+        viewModel.addSubtitle(
+          Uri.parse(subUri), select = false, silent = true, canApply = canRestore,
+          onAdded = { if (canRestore()) restoreTrackSelection(state) },
+        )
       }
     }
 
-    if (playerPreferences.restoreTracks.get()) {
-      val audioTracks = MpvGateway.trackIdentities("audio")
-      val subtitleTracks = MpvGateway.trackIdentities("sub")
-      TrackIdentity.resolve(state.audioTrackKey, audioTracks)?.let { player.aid = it }
-      TrackIdentity.resolve(state.subtitleTrackKey, subtitleTracks)?.let { player.sid = it }
-      TrackIdentity.resolve(state.secondarySubtitleTrackKey, subtitleTracks)?.let { player.secondarySid = it }
-    }
+    restoreTrackSelection(state)
 
     if (playerPreferences.restoreDelays.get()) {
       MpvGateway.setPropertyDouble("sub-delay", subDelay)
