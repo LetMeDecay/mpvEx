@@ -384,7 +384,7 @@ fun GestureHandler(
                 for (i in 1..steps) {
                   val t = i.toFloat() / steps
                   val intermediateSpeed = startSpeed + (targetSpeed - startSpeed) * t
-                  MpvGateway.setPropertyFloat("speed", intermediateSpeed)
+                  viewModel.controls.setSpeed(intermediateSpeed)
                   if (i < steps) delay(stepDelay)
                 }
 
@@ -487,7 +487,7 @@ fun GestureHandler(
                           if (abs(lastAppliedSpeed - newSpeed) > 0.01f) {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             lastAppliedSpeed = newSpeed
-                            MpvGateway.setPropertyFloat("speed", newSpeed)
+                            viewModel.controls.setSpeed(newSpeed)
                             viewModel.playerUpdate.update { PlayerUpdates.DynamicSpeedControl(newSpeed, true) }
                           }
                         }
@@ -618,7 +618,7 @@ fun GestureHandler(
               for (i in 1..steps) {
                 val t = i.toFloat() / steps
                 val intermediateSpeed = currentSpeed + (targetSpeed - currentSpeed) * t
-                MpvGateway.setPropertyFloat("speed", intermediateSpeed)
+                viewModel.controls.setSpeed(intermediateSpeed)
                 if (i < steps) delay(stepDelay)
               }
             }

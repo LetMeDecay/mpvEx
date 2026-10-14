@@ -180,9 +180,41 @@ class PlayerViewModel(
     }
     override fun seekBy(seconds: Int) = this@PlayerViewModel.seekBy(seconds)
     override fun seekTo(seconds: Int) = this@PlayerViewModel.seekTo(seconds)
+    override fun setSpeed(value: Float) {
+      if (value.isFinite() && value > 0) requestSetting("speed", value.toString())
+    }
+    override fun selectAudio(id: Int?) {
+      if (playbackSession.loaded) requestSetting("aid", id?.takeIf { it > 0 }?.toString() ?: "no")
+    }
+    override fun setChapter(index: Int) {
+      if (index < 0 || !playbackSession.loaded) return
+      playbackSession.interact()
+      val ticket = playbackSession.ticket()
+      playbackCommands.seek(listOf("set", "chapter", index.toString())) { playbackSession.isCurrent(ticket) }
+    }
+    override fun setDecoder(value: Decoder) = requestSetting("hwdec", value.value)
+    override fun setPitchCorrection(enabled: Boolean) = requestSetting("audio-pitch-correction", if (enabled) "yes" else "no")
+    override fun setAudioDelay(seconds: Double) {
+      if (seconds.isFinite()) requestSetting("audio-delay", seconds.toString())
+    }
+    override fun setSubtitleDelay(seconds: Double) {
+      if (seconds.isFinite()) requestSetting("sub-delay", seconds.toString())
+    }
+    override fun setSubtitleSpeed(value: Double) {
+      if (value.isFinite() && value > 0) requestSetting("sub-speed", value.toString())
+    }
     override fun stop() { (host as? PlayerActivity)?.stopFromSystem() }
   }
 
+
+  private fun requestSetting(property: String, value: String) {
+    if (stopPlaybackJob != null) return
+    playbackSession.cancelRestoration()
+    val generation = playbackSession.generation
+    playbackCommands.adjust(property, listOf("set", property, value)) {
+      playbackSession.generation == generation && stopPlaybackJob == null
+    }
+  }
 
   fun beginFileChange(path: String) {
     if (stopPlaybackJob != null) return

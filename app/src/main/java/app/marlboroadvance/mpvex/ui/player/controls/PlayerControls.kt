@@ -1218,27 +1218,27 @@ fun PlayerControls(
       onAddAudio = viewModel::addAudio,
       onSelectAudio = {
         if (MpvGateway.getPropertyInt("aid") == it.id) {
-          MpvGateway.setPropertyBoolean("aid", false)
+          viewModel.controls.selectAudio(null)
         } else {
-          MpvGateway.setPropertyInt("aid", it.id)
+          viewModel.controls.selectAudio(it.id)
         }
       },
       chapter = chapters.getOrNull(currentChapter ?: 0),
       chapters = chapters.toImmutableList(),
       onSeekToChapter = {
-        MpvGateway.setPropertyInt("chapter", it)
+        viewModel.controls.setChapter(it)
       },
       decoder = decoder,
-      onUpdateDecoder = { MpvGateway.setPropertyString("hwdec", it.value) },
+      onUpdateDecoder = { viewModel.controls.setDecoder(it) },
       speed = playbackSpeed ?: playerPreferences.defaultSpeed.get(),
-      onSpeedChange = { MpvGateway.setPropertyFloat("speed", it.toFixed(2)) },
+      onSpeedChange = { viewModel.controls.setSpeed(it.toFixed(2)) },
       onMakeDefaultSpeed = { playerPreferences.defaultSpeed.set(it.toFixed(2)) },
       onAddSpeedPreset = { playerPreferences.speedPresets += it.toFixed(2).toString() },
       onRemoveSpeedPreset = { playerPreferences.speedPresets -= it.toFixed(2).toString() },
       onResetSpeedPresets = playerPreferences.speedPresets::delete,
       speedPresets = speedPresets.map { it.toFloat() }.sorted(),
       onResetDefaultSpeed = {
-        MpvGateway.setPropertyFloat("speed", playerPreferences.defaultSpeed.deleteAndGet().toFixed(2))
+        viewModel.controls.setSpeed(playerPreferences.defaultSpeed.deleteAndGet().toFixed(2))
       },
       sleepTimerTimeRemaining = sleepTimerTimeRemaining,
       onStartSleepTimer = viewModel::startTimer,

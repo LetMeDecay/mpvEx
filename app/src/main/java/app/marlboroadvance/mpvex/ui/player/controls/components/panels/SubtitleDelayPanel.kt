@@ -62,6 +62,7 @@ fun SubtitleDelayPanel(
   onDismissRequest: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
+  val controls = app.marlboroadvance.mpvex.ui.player.LocalPlaybackControls.current
   val preferences = koinInject<SubtitlesPreferences>()
 
   DraggablePanel(
@@ -79,18 +80,18 @@ fun SubtitleDelayPanel(
     SubtitleDelayCardContent(
       delay = delayFloat,
       onDelayChange = {
-        MpvGateway.setPropertyDouble("sub-delay", it.toDouble())
+        controls.setSubtitleDelay( it.toDouble())
       },
       speed = speedFloat,
-      onSpeedChange = { MpvGateway.setPropertyDouble("sub-speed", it.toDouble()) },
+      onSpeedChange = { controls.setSubtitleSpeed( it.toDouble()) },
       onApply = {
         preferences.defaultSubDelay.set((delayFloat * 1000).roundToInt())
         val currentSpeed = speed ?: 1.0
         if (currentSpeed in 0.1..10.0) preferences.defaultSubSpeed.set(currentSpeed.toFloat())
       },
       onReset = {
-        MpvGateway.setPropertyDouble("sub-delay", preferences.defaultSubDelay.get() / 1000.0)
-        MpvGateway.setPropertyDouble("sub-speed", preferences.defaultSubSpeed.get().toDouble())
+        controls.setSubtitleDelay( preferences.defaultSubDelay.get() / 1000.0)
+        controls.setSubtitleSpeed( preferences.defaultSubSpeed.get().toDouble())
       },
     )
   }

@@ -17,6 +17,37 @@ import kotlin.coroutines.ContinuationInterceptor
 
 class PlaybackCommandQueueTest {
   @Test(timeout = 5000)
+  fun adjustmentsCoalescePerPropertyAndCannotCrossLoads() = runBlocking {
+    val owner = Job()
+    val entered = CompletableDeferred<Unit>()
+    val release = CompletableDeferred<Unit>()
+    val calls = mutableListOf<List<String>>()
+    val queue = PlaybackCommandQueue(CoroutineScope(coroutineContext + owner),
+      coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
+      execute = { calls.add(it) }, onFailure = { throw AssertionError(it) })
+    try {
+      queue.loadAction({ true }) { entered.complete(Unit); release.await() }
+      entered.await()
+      repeat(1000) { queue.adjust("speed", listOf("set", "speed", it.toString())) { true } }
+      queue.adjust("sub-delay", listOf("set", "sub-delay", "2")) { true }
+      release.complete(Unit)
+      yield()
+      assertEquals(listOf(listOf("set", "speed", "999"), listOf("set", "sub-delay", "2")), calls)
+      queue.adjust("speed", listOf("set", "speed", "stale")) { true }
+      queue.load(listOf("loadfile", "next")) { true }
+      yield()
+      assertEquals(listOf("loadfile", "next"), calls.last())
+      assertEquals(3, calls.size)
+      repeat(64) { assertEquals(true, queue.adjust("key$it", listOf("set", "key$it", "1")) { true }) }
+      assertEquals(false, queue.adjust("overflow", listOf("set", "overflow", "1")) { true })
+      assertEquals(true, queue.adjust("key0", listOf("set", "key0", "2")) { true })
+      queue.retire()
+      queue.awaitRetired()
+      assertEquals(3, calls.size)
+    } finally { owner.cancelAndJoin() }
+  }
+
+  @Test(timeout = 5000)
   fun auxiliaryResourcesAreBoundedAndReleasedWhenReplacedOrInvalid() = runBlocking {
     val owner = Job()
     val entered = CompletableDeferred<Unit>()

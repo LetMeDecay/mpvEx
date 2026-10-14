@@ -78,6 +78,7 @@ fun PlaybackSpeedSheet(
   onDismissRequest: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
+  val controls = app.marlboroadvance.mpvex.ui.player.LocalPlaybackControls.current
   PlayerSheet(onDismissRequest = onDismissRequest) {
     Column(
       modifier
@@ -251,7 +252,7 @@ fun PlaybackSpeedSheet(
                 .clickable { 
                     val newValue = !pitchCorrection
                     audioPreferences.audioPitchCorrection.set(newValue)
-                    MpvGateway.setPropertyBoolean("audio-pitch-correction", newValue)
+                    controls.setPitchCorrection( newValue)
                 }
                 .padding(horizontal = MaterialTheme.spacing.medium, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -273,7 +274,7 @@ fun PlaybackSpeedSheet(
                 checked = pitchCorrection,
                 onCheckedChange = { 
                     audioPreferences.audioPitchCorrection.set(it)
-                    MpvGateway.setPropertyBoolean("audio-pitch-correction", it)
+                    controls.setPitchCorrection( it)
                 },
                 modifier = Modifier.scale(0.8f) // Make switch slightly smaller
             )

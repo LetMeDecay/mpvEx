@@ -27,6 +27,7 @@ internal class PlaybackCommandQueue(
   private var pendingLoad: Command? = null
   private var pendingSeek: Command? = null
   private var pendingPause: Command? = null
+  private val adjustments = linkedMapOf<String, Command>()
   private val auxiliary = ArrayDeque<Command>()
 
   private val worker: Job
@@ -37,7 +38,8 @@ internal class PlaybackCommandQueue(
         while (true) {
           ensureActive()
           val command = synchronized(lock) {
-            val next = pendingLoad ?: pendingPause ?: pendingSeek ?: auxiliary.removeFirstOrNull()
+            val next = pendingLoad ?: pendingPause ?: pendingSeek ?:
+              adjustments.keys.firstOrNull()?.let { adjustments.remove(it) } ?: auxiliary.removeFirstOrNull()
             when {
               pendingLoad != null -> pendingLoad = null
               pendingPause != null -> pendingPause = null
@@ -76,6 +78,7 @@ internal class PlaybackCommandQueue(
       pendingLoad = command
       pendingSeek = null
       pendingPause = null
+      adjustments.clear()
       if (wakeup.trySend(Unit).isFailure) pendingLoad = null
       takeAuxiliary()
     }
@@ -96,6 +99,15 @@ internal class PlaybackCommandQueue(
     }
     if (!accepted) cleanup()
     return accepted
+  }
+
+  fun adjust(key: String, arguments: List<String>, isValid: () -> Boolean): Boolean = synchronized(lock) {
+    if (key !in adjustments && adjustments.size >= 64) return@synchronized false
+    adjustments[key] = Command(arguments.toList(), isValid)
+    if (wakeup.trySend(Unit).isSuccess) true else {
+      adjustments.remove(key)
+      false
+    }
   }
 
   fun pause(paused: Boolean, isValid: () -> Boolean) = synchronized(lock) {
@@ -121,6 +133,7 @@ internal class PlaybackCommandQueue(
       pendingLoad = null
       pendingSeek = null
       pendingPause = null
+      adjustments.clear()
       takeAuxiliary()
     }
     discarded.forEach { it.cleanup() }

@@ -40,6 +40,7 @@ fun AudioDelayPanel(
   onDismissRequest: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
+  val controls = app.marlboroadvance.mpvex.ui.player.LocalPlaybackControls.current
   val preferences = koinInject<AudioPreferences>()
   
   DraggablePanel(
@@ -55,10 +56,10 @@ fun AudioDelayPanel(
       delay = delayFloat,
       onDelayChange = {
         val delayInSeconds = it.toDouble()
-        MpvGateway.setPropertyDouble("audio-delay", delayInSeconds)
+        controls.setAudioDelay( delayInSeconds)
       },
       onApply = { preferences.defaultAudioDelay.set((delayFloat * 1000).roundToInt()) },
-      onReset = { MpvGateway.setPropertyDouble("audio-delay", 0.0) },
+      onReset = { controls.setAudioDelay( 0.0) },
       delayType = DelayType.Audio,
     )
   }

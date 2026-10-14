@@ -542,15 +542,17 @@ class PlayerActivity :
   @RequiresApi(Build.VERSION_CODES.P)
   private fun setupPlayerControls() {
     binding.controls.setContent {
-      MpvexTheme {
-        PlayerControls(
-          viewModel = viewModel,
-          onBackPress = {
-            isUserFinishing = true
-            finish()
-          },
-          modifier = Modifier,
-        )
+      androidx.compose.runtime.CompositionLocalProvider(LocalPlaybackControls provides viewModel.controls) {
+        MpvexTheme {
+          PlayerControls(
+            viewModel = viewModel,
+            onBackPress = {
+              isUserFinishing = true
+              finish()
+            },
+            modifier = Modifier,
+          )
+        }
       }
     }
   }
