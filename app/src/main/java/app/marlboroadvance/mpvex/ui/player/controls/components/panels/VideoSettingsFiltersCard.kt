@@ -1,6 +1,9 @@
 package app.marlboroadvance.mpvex.ui.player.controls.components.panels
 
 import app.marlboroadvance.mpvex.ui.player.MpvGateway
+import app.marlboroadvance.mpvex.ui.player.PlaybackTuning
+import app.marlboroadvance.mpvex.ui.player.PlaybackControls
+import app.marlboroadvance.mpvex.ui.player.LocalPlaybackControls
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -35,6 +38,7 @@ import org.koin.compose.koinInject
 
 @Composable
 fun VideoSettingsFiltersCard(modifier: Modifier = Modifier) {
+  val controls = LocalPlaybackControls.current
   val decoderPreferences = koinInject<DecoderPreferences>()
   var isExpanded by remember { mutableStateOf(true) }
 
@@ -57,7 +61,7 @@ fun VideoSettingsFiltersCard(modifier: Modifier = Modifier) {
         TextButton(
           onClick = {
             VideoFilters.entries.forEach {
-              MpvGateway.setPropertyInt(it.mpvProperty, it.preference(decoderPreferences).deleteAndGet())
+              controls.setVideoFilter(it, it.preference(decoderPreferences).deleteAndGet())
             }
           },
         ) {
@@ -72,7 +76,7 @@ fun VideoSettingsFiltersCard(modifier: Modifier = Modifier) {
             valueText = value.toString(),
             onChange = {
               filter.preference(decoderPreferences).set(it)
-              MpvGateway.setPropertyInt(filter.mpvProperty, it)
+              controls.setVideoFilter(filter, it)
             },
             max = filter.max,
             min = filter.min,

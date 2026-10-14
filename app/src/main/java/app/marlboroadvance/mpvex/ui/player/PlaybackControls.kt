@@ -21,5 +21,10 @@ internal interface PlaybackControls {
   fun setAudioDelay(seconds: Double)
   fun setSubtitleDelay(seconds: Double)
   fun setSubtitleSpeed(value: Double)
+  fun <T> setTuning(setting: PlaybackTuning<T>, value: T)
+  fun setVideoFilter(filter: VideoFilters, value: Int)
+  fun setDebandSetting(setting: DebandSettings, value: Int)
+  fun setDebanding(mode: Debanding)
+  fun setAudioChannels(channels: app.marlboroadvance.mpvex.preferences.AudioChannels)
   fun stop()
 }

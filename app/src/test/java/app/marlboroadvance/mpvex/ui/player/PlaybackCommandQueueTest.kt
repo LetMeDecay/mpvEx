@@ -17,6 +17,35 @@ import kotlin.coroutines.ContinuationInterceptor
 
 class PlaybackCommandQueueTest {
   @Test(timeout = 5000)
+  fun multiCommandAdjustmentsKeepOnlyLatestChoiceAndStayTogether() = runBlocking {
+    val owner = Job()
+    val entered = CompletableDeferred<Unit>()
+    val release = CompletableDeferred<Unit>()
+    val order = mutableListOf<String>()
+    val queue = PlaybackCommandQueue(CoroutineScope(coroutineContext + owner),
+      coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
+      execute = { order.add("other") }, onFailure = { throw AssertionError(it) })
+    try {
+      queue.loadAction({ true }) { entered.complete(Unit); release.await() }
+      entered.await()
+      repeat(1000) { choice ->
+        queue.adjustAction("mode", { true }) { order.add("first-$choice"); yield(); order.add("second-$choice") }
+      }
+      queue.adjust("other", listOf("set", "x", "1")) { true }
+      release.complete(Unit)
+      yield()
+      yield()
+      assertEquals(listOf("first-999", "second-999", "other"), order)
+      queue.adjustAction("mode", { true }) { error("old mode must be discarded") }
+      queue.load(listOf("loadfile", "next")) { true }
+      yield()
+      assertEquals("other", order.last())
+      queue.retire()
+      queue.awaitRetired()
+    } finally { owner.cancelAndJoin() }
+  }
+
+  @Test(timeout = 5000)
   fun adjustmentsCoalescePerPropertyAndCannotCrossLoads() = runBlocking {
     val owner = Job()
     val entered = CompletableDeferred<Unit>()

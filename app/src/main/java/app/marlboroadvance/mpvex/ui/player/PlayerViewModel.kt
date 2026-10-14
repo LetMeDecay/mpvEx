@@ -212,6 +212,29 @@ class PlayerViewModel(
     override fun setSubtitleSpeed(value: Double) {
       if (value.isFinite() && value > 0) requestSetting("sub-speed", value.toString())
     }
+    override fun <T> setTuning(setting: PlaybackTuning<T>, value: T) {
+      if (value is Number && !value.toDouble().isFinite()) return
+      requestSetting(setting.property, if (value is Boolean) { if (value) "yes" else "no" } else value.toString())
+    }
+    override fun setVideoFilter(filter: VideoFilters, value: Int) = requestSetting(filter.mpvProperty, value.toString())
+    override fun setDebandSetting(setting: DebandSettings, value: Int) = requestSetting(setting.mpvProperty, value.toString())
+    override fun setDebanding(mode: Debanding) {
+      playbackSession.cancelRestoration()
+      val generation = playbackSession.generation
+      playbackCommands.adjustAction("deband-mode", { playbackSession.generation == generation && stopPlaybackJob == null }) {
+        MpvGateway.setOptionString("deband", if (mode == Debanding.GPU) "yes" else "no")
+        if (mode == Debanding.CPU) MpvGateway.command("vf", "add", "@deband:gradfun=radius=12")
+        else MpvGateway.command("vf", "remove", "@deband")
+      }
+    }
+    override fun setAudioChannels(channels: app.marlboroadvance.mpvex.preferences.AudioChannels) {
+      val reverse = app.marlboroadvance.mpvex.preferences.AudioChannels.ReverseStereo
+      if (channels == reverse) {
+        val base = app.marlboroadvance.mpvex.preferences.AudioChannels.AutoSafe
+        requestSetting(base.property, base.value)
+      } else requestSetting(reverse.property, "")
+      requestSetting(channels.property, channels.value)
+    }
     override fun stop() { (host as? PlayerActivity)?.stopFromSystem() }
   }
 

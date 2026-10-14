@@ -1,0 +1,31 @@
+package app.marlboroadvance.mpvex.ui.player
+
+/** Closed, typed set of runtime adjustments exposed to presentation code. */
+internal sealed class PlaybackTuning<T>(internal val property: String) {
+  data object Brightness : PlaybackTuning<Int>("brightness")
+  data object Contrast : PlaybackTuning<Int>("contrast")
+  data object Gamma : PlaybackTuning<Int>("gamma")
+  data object Hue : PlaybackTuning<Int>("hue")
+  data object Saturation : PlaybackTuning<Int>("saturation")
+  data object SecondarySubAssOverride : PlaybackTuning<String>("secondary-sub-ass-override")
+  data object SecondarySubFont : PlaybackTuning<String>("secondary-sub-font")
+  data object Sharpen : PlaybackTuning<Int>("sharpen")
+  data object SubAssJustify : PlaybackTuning<Boolean>("sub-ass-justify")
+  data object SubAssOverride : PlaybackTuning<String>("sub-ass-override")
+  data object SubBackColor : PlaybackTuning<String>("sub-back-color")
+  data object SubBold : PlaybackTuning<Boolean>("sub-bold")
+  data object SubBorderColor : PlaybackTuning<String>("sub-border-color")
+  data object SubBorderSize : PlaybackTuning<Int>("sub-border-size")
+  data object SubBorderStyle : PlaybackTuning<String>("sub-border-style")
+  data object SubColor : PlaybackTuning<String>("sub-color")
+  data object SubFont : PlaybackTuning<String>("sub-font")
+  data object SubFontSize : PlaybackTuning<Int>("sub-font-size")
+  data object SubItalic : PlaybackTuning<Boolean>("sub-italic")
+  data object SubJustify : PlaybackTuning<String>("sub-justify")
+  data object SubOutlineSize : PlaybackTuning<Int>("sub-outline-size")
+  data object SubPos : PlaybackTuning<Int>("sub-pos")
+  data object SubScale : PlaybackTuning<Float>("sub-scale")
+  data object SubScaleByWindow : PlaybackTuning<String>("sub-scale-by-window")
+  data object SubShadowOffset : PlaybackTuning<Int>("sub-shadow-offset")
+  data object SubUseMargins : PlaybackTuning<String>("sub-use-margins")
+}

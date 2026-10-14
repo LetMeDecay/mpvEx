@@ -1,6 +1,9 @@
 package app.marlboroadvance.mpvex.ui.player.controls.components.panels
 
 import app.marlboroadvance.mpvex.ui.player.MpvGateway
+import app.marlboroadvance.mpvex.ui.player.PlaybackTuning
+import app.marlboroadvance.mpvex.ui.player.PlaybackControls
+import app.marlboroadvance.mpvex.ui.player.LocalPlaybackControls
 
 import android.annotation.SuppressLint
 import androidx.annotation.StringRes
@@ -67,6 +70,7 @@ import org.koin.compose.koinInject
 @SuppressLint("MutableCollectionMutableState")
 @Composable
 fun SubtitleSettingsTypographyCard(modifier: Modifier = Modifier) {
+  val controls = LocalPlaybackControls.current
   val context = LocalContext.current
   val preferences = koinInject<SubtitlesPreferences>()
   val fileManager = koinInject<FileManager>()
@@ -137,7 +141,7 @@ fun SubtitleSettingsTypographyCard(modifier: Modifier = Modifier) {
           checked = isBold == true,
           onCheckedChange = {
             preferences.bold.set(it)
-            MpvGateway.setPropertyBoolean("sub-bold", it)
+            controls.setTuning(PlaybackTuning.SubBold, it)
           },
         ) {
           Icon(
@@ -150,7 +154,7 @@ fun SubtitleSettingsTypographyCard(modifier: Modifier = Modifier) {
           checked = isItalic == true,
           onCheckedChange = {
             preferences.italic.set(it)
-            MpvGateway.setPropertyBoolean("sub-italic", it)
+            controls.setTuning(PlaybackTuning.SubItalic, it)
           },
         ) {
           Icon(
@@ -163,13 +167,13 @@ fun SubtitleSettingsTypographyCard(modifier: Modifier = Modifier) {
           IconToggleButton(
             checked = justify == justification,
             onCheckedChange = {
-              MpvGateway.setPropertyBoolean("sub-ass-justify", it)
+              controls.setTuning(PlaybackTuning.SubAssJustify, it)
               if (it) {
                 preferences.justification.set(justification)
-                MpvGateway.setPropertyString("sub-justify", justification.value)
+                controls.setTuning(PlaybackTuning.SubJustify, justification.value)
               } else {
                 preferences.justification.set(SubtitleJustification.Auto)
-                MpvGateway.setPropertyString("sub-justify", SubtitleJustification.Auto.value)
+                controls.setTuning(PlaybackTuning.SubJustify, SubtitleJustification.Auto.value)
               }
             },
           ) {
@@ -178,7 +182,7 @@ fun SubtitleSettingsTypographyCard(modifier: Modifier = Modifier) {
         }
         Spacer(Modifier.weight(1f))
         TextButton(
-          onClick = { resetTypography(preferences) },
+          onClick = { resetTypography(preferences, controls) },
         ) {
           Row(
             horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.extraSmall),
@@ -206,8 +210,8 @@ fun SubtitleSettingsTypographyCard(modifier: Modifier = Modifier) {
           onValueChangedEvent = {
             val actualFont = if (it == "Default") "" else it
             preferences.font.set(actualFont)
-            MpvGateway.setPropertyString("sub-font", actualFont)
-            MpvGateway.setPropertyString("secondary-sub-font", actualFont)
+            controls.setTuning(PlaybackTuning.SubFont, actualFont)
+            controls.setTuning(PlaybackTuning.SecondarySubFont, actualFont)
           },
           leadingIcon = fontsLoadingIndicator,
         )
@@ -220,7 +224,7 @@ fun SubtitleSettingsTypographyCard(modifier: Modifier = Modifier) {
         valueText = fontSize.toString(),
         onChange = {
           preferences.fontSize.set(it)
-          MpvGateway.setPropertyInt("sub-font-size", it)
+          controls.setTuning(PlaybackTuning.SubFontSize, it)
         },
       ) {
         Icon(Icons.Default.FormatSize, null)
@@ -232,7 +236,7 @@ fun SubtitleSettingsTypographyCard(modifier: Modifier = Modifier) {
           borderStyle,
           onValueChange = {
             preferences.borderStyle.set(it)
-            MpvGateway.setPropertyString("sub-border-style", it.value)
+            controls.setTuning(PlaybackTuning.SubBorderStyle, it.value)
           },
           title = { Text(stringResource(R.string.player_sheets_subtitles_border_style)) },
           valueToText = { AnnotatedString(context.getString(it.titleRes)) },
@@ -248,7 +252,7 @@ fun SubtitleSettingsTypographyCard(modifier: Modifier = Modifier) {
         valueText = (borderSize ?: preferences.borderSize.get()).toString(),
         onChange = {
           preferences.borderSize.set(it)
-          MpvGateway.setPropertyInt("sub-outline-size", it)
+          controls.setTuning(PlaybackTuning.SubOutlineSize, it)
         },
         max = 20,
         icon = { Icon(Icons.Default.BorderColor, null) },
@@ -259,7 +263,7 @@ fun SubtitleSettingsTypographyCard(modifier: Modifier = Modifier) {
         valueText = (shadowOffset ?: preferences.shadowOffset.get()).toString(),
         onChange = {
           preferences.shadowOffset.set(it)
-          MpvGateway.setPropertyInt("sub-shadow-offset", it)
+          controls.setTuning(PlaybackTuning.SubShadowOffset, it)
         },
         max = 100,
         icon = { Icon(painterResource(R.drawable.sharp_shadow_24), null) },
@@ -268,17 +272,17 @@ fun SubtitleSettingsTypographyCard(modifier: Modifier = Modifier) {
   }
 }
 
-fun resetTypography(preferences: SubtitlesPreferences) {
-  MpvGateway.setPropertyBoolean("sub-bold", preferences.bold.deleteAndGet())
-  MpvGateway.setPropertyBoolean("sub-italic", preferences.italic.deleteAndGet())
-  MpvGateway.setPropertyBoolean("sub-ass-justify", false)
-  MpvGateway.setPropertyString("sub-justify", preferences.justification.deleteAndGet().value)
-  MpvGateway.setPropertyString("sub-font", preferences.font.deleteAndGet())
-  MpvGateway.setPropertyString("secondary-sub-font", preferences.font.get())
-  MpvGateway.setPropertyInt("sub-font-size", preferences.fontSize.deleteAndGet())
-  MpvGateway.setPropertyInt("sub-border-size", preferences.borderSize.deleteAndGet())
-  MpvGateway.setPropertyInt("sub-shadow-offset", preferences.shadowOffset.deleteAndGet())
-  MpvGateway.setPropertyString("sub-border-style", preferences.borderStyle.deleteAndGet().value)
+internal fun resetTypography(preferences: SubtitlesPreferences, controls: PlaybackControls) {
+  controls.setTuning(PlaybackTuning.SubBold, preferences.bold.deleteAndGet())
+  controls.setTuning(PlaybackTuning.SubItalic, preferences.italic.deleteAndGet())
+  controls.setTuning(PlaybackTuning.SubAssJustify, false)
+  controls.setTuning(PlaybackTuning.SubJustify, preferences.justification.deleteAndGet().value)
+  controls.setTuning(PlaybackTuning.SubFont, preferences.font.deleteAndGet())
+  controls.setTuning(PlaybackTuning.SecondarySubFont, preferences.font.get())
+  controls.setTuning(PlaybackTuning.SubFontSize, preferences.fontSize.deleteAndGet())
+  controls.setTuning(PlaybackTuning.SubBorderSize, preferences.borderSize.deleteAndGet())
+  controls.setTuning(PlaybackTuning.SubShadowOffset, preferences.shadowOffset.deleteAndGet())
+  controls.setTuning(PlaybackTuning.SubBorderStyle, preferences.borderStyle.deleteAndGet().value)
 }
 
 enum class SubtitlesBorderStyle(

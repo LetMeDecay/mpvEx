@@ -101,9 +101,15 @@ internal class PlaybackCommandQueue(
     return accepted
   }
 
-  fun adjust(key: String, arguments: List<String>, isValid: () -> Boolean): Boolean = synchronized(lock) {
+  fun adjust(key: String, arguments: List<String>, isValid: () -> Boolean): Boolean =
+    enqueueAdjustment(key, Command(arguments.toList(), isValid))
+
+  fun adjustAction(key: String, isValid: () -> Boolean, action: suspend () -> Unit): Boolean =
+    enqueueAdjustment(key, Command(emptyList(), isValid, action))
+
+  private fun enqueueAdjustment(key: String, command: Command): Boolean = synchronized(lock) {
     if (key !in adjustments && adjustments.size >= 64) return@synchronized false
-    adjustments[key] = Command(arguments.toList(), isValid)
+    adjustments[key] = command
     if (wakeup.trySend(Unit).isSuccess) true else {
       adjustments.remove(key)
       false

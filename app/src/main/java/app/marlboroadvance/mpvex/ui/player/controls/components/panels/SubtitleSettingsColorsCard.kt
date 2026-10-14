@@ -1,6 +1,9 @@
 package app.marlboroadvance.mpvex.ui.player.controls.components.panels
 
 import app.marlboroadvance.mpvex.ui.player.MpvGateway
+import app.marlboroadvance.mpvex.ui.player.PlaybackTuning
+import app.marlboroadvance.mpvex.ui.player.PlaybackControls
+import app.marlboroadvance.mpvex.ui.player.LocalPlaybackControls
 
 import androidx.annotation.StringRes
 import androidx.compose.foundation.horizontalScroll
@@ -52,6 +55,7 @@ import org.koin.compose.koinInject
 
 @Composable
 fun SubtitleSettingsColorsCard(modifier: Modifier = Modifier) {
+  val controls = LocalPlaybackControls.current
   val preferences = koinInject<SubtitlesPreferences>()
   var isExpanded by remember { mutableStateOf(true) }
   ExpandableCard(
@@ -102,8 +106,8 @@ fun SubtitleSettingsColorsCard(modifier: Modifier = Modifier) {
         Spacer(Modifier.weight(1f))
         TextButton(
           onClick = {
-            resetColors(preferences, currentColorType)
-            currentColor = getCurrentMPVColor(currentColorType)
+            resetColors(preferences, currentColorType, controls)
+            currentColor = currentColorType.preference(preferences).get()
           },
         ) {
           Row(
@@ -120,7 +124,7 @@ fun SubtitleSettingsColorsCard(modifier: Modifier = Modifier) {
         onColorChange = {
           currentColor = it
           currentColorType.preference(preferences).set(it)
-          MpvGateway.setPropertyString(currentColorType.property, it.toColorHexString())
+          controls.setTuning(currentColorType.setting, it.toColorHexString())
         },
       )
     }
@@ -159,21 +163,29 @@ enum class SubColorType(
   ),
 }
 
-fun resetColors(
+private val SubColorType.setting: PlaybackTuning<String>
+  get() = when (this) {
+    SubColorType.Text -> PlaybackTuning.SubColor
+    SubColorType.Border -> PlaybackTuning.SubBorderColor
+    SubColorType.Background -> PlaybackTuning.SubBackColor
+  }
+
+internal fun resetColors(
   preferences: SubtitlesPreferences,
   type: SubColorType,
+  controls: PlaybackControls,
 ) {
   when (type) {
     SubColorType.Text -> {
-      MpvGateway.setPropertyString("sub-color", preferences.textColor.deleteAndGet().toColorHexString())
+      controls.setTuning(PlaybackTuning.SubColor, preferences.textColor.deleteAndGet().toColorHexString())
     }
 
     SubColorType.Border -> {
-      MpvGateway.setPropertyString("sub-border-color", preferences.borderColor.deleteAndGet().toColorHexString())
+      controls.setTuning(PlaybackTuning.SubBorderColor, preferences.borderColor.deleteAndGet().toColorHexString())
     }
 
     SubColorType.Background -> {
-      MpvGateway.setPropertyString("sub-back-color", preferences.backgroundColor.deleteAndGet().toColorHexString())
+      controls.setTuning(PlaybackTuning.SubBackColor, preferences.backgroundColor.deleteAndGet().toColorHexString())
     }
   }
 }

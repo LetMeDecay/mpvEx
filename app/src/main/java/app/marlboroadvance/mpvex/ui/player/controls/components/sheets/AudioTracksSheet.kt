@@ -46,6 +46,7 @@ fun AudioTracksSheet(
   onDismissRequest: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
+  val controls = app.marlboroadvance.mpvex.ui.player.LocalPlaybackControls.current
   val audioPreferences = koinInject<AudioPreferences>()
   val audioChannels by audioPreferences.audioChannels.collectAsState()
 
@@ -91,12 +92,7 @@ fun AudioTracksSheet(
               selected = audioChannels == it,
               onClick = {
                 audioPreferences.audioChannels.set(it)
-                if (it == AudioChannels.ReverseStereo) {
-                  MpvGateway.setPropertyString(AudioChannels.AutoSafe.property, AudioChannels.AutoSafe.value)
-                } else {
-                  MpvGateway.setPropertyString(AudioChannels.ReverseStereo.property, "")
-                }
-                MpvGateway.setPropertyString(it.property, it.value)
+                controls.setAudioChannels(it)
               },
               label = { Text(text = stringResource(id = it.title)) },
               leadingIcon = null,

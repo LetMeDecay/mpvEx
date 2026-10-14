@@ -1,6 +1,9 @@
 package app.marlboroadvance.mpvex.ui.player.controls.components.panels
 
 import app.marlboroadvance.mpvex.ui.player.MpvGateway
+import app.marlboroadvance.mpvex.ui.player.PlaybackTuning
+import app.marlboroadvance.mpvex.ui.player.PlaybackControls
+import app.marlboroadvance.mpvex.ui.player.LocalPlaybackControls
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -40,6 +43,7 @@ import org.koin.compose.koinInject
 
 @Composable
 fun SubtitlesMiscellaneousCard(modifier: Modifier = Modifier) {
+  val controls = LocalPlaybackControls.current
   val preferences = koinInject<SubtitlesPreferences>()
   var isExpanded by remember { mutableStateOf(true) }
   ExpandableCard(
@@ -64,8 +68,8 @@ fun SubtitlesMiscellaneousCard(modifier: Modifier = Modifier) {
           onValueChange = {
             overrideAssSubs = it
             preferences.overrideAssSubs.set(it)
-            MpvGateway.setPropertyString("sub-ass-override", if (it) "force" else "scale")
-            MpvGateway.setPropertyString("secondary-sub-ass-override", if (it) "force" else "scale")
+            controls.setTuning(PlaybackTuning.SubAssOverride, if (it) "force" else "scale")
+            controls.setTuning(PlaybackTuning.SecondarySubAssOverride, if (it) "force" else "scale")
           },
           { Text(stringResource(R.string.player_sheets_sub_override_ass)) },
         )
@@ -78,8 +82,8 @@ fun SubtitlesMiscellaneousCard(modifier: Modifier = Modifier) {
             scaleByWindow = it
             preferences.scaleByWindow.set(it)
             val value = if (it) "yes" else "no"
-            MpvGateway.setPropertyString("sub-scale-by-window", value)
-            MpvGateway.setPropertyString("sub-use-margins", value)
+            controls.setTuning(PlaybackTuning.SubScaleByWindow, value)
+            controls.setTuning(PlaybackTuning.SubUseMargins, value)
           },
           { Text(stringResource(R.string.player_sheets_sub_scale_by_window)) },
           summary = { Text(stringResource(R.string.player_sheets_sub_scale_by_window_summary)) },
@@ -92,7 +96,7 @@ fun SubtitlesMiscellaneousCard(modifier: Modifier = Modifier) {
           valueText = (subScale ?: preferences.subScale.get()).toFixed(2).toString(),
           onChange = {
             preferences.subScale.set(it)
-            MpvGateway.setPropertyFloat("sub-scale", it)
+            controls.setTuning(PlaybackTuning.SubScale, it)
           },
           max = 5f,
           icon = {
@@ -108,7 +112,7 @@ fun SubtitlesMiscellaneousCard(modifier: Modifier = Modifier) {
           valueText = (subPos ?: preferences.subPos.get()).toString(),
           onChange = {
             preferences.subPos.set(it)
-            MpvGateway.setPropertyInt("sub-pos", it)
+            controls.setTuning(PlaybackTuning.SubPos, it)
           },
           max = 150,
           icon = {
@@ -128,20 +132,20 @@ fun SubtitlesMiscellaneousCard(modifier: Modifier = Modifier) {
           TextButton(
             onClick = {
               preferences.subPos.deleteAndGet().let {
-                MpvGateway.setPropertyInt("sub-pos", it)
+                controls.setTuning(PlaybackTuning.SubPos, it)
               }
               preferences.subScale.deleteAndGet().let {
-                MpvGateway.setPropertyFloat("sub-scale", it)
+                controls.setTuning(PlaybackTuning.SubScale, it)
               }
               val defaultOverride = preferences.overrideAssSubs.deleteAndGet()
               overrideAssSubs = defaultOverride
-              MpvGateway.setPropertyString("sub-ass-override", if (defaultOverride) "force" else "scale")
-              MpvGateway.setPropertyString("secondary-sub-ass-override", if (defaultOverride) "force" else "scale")
+              controls.setTuning(PlaybackTuning.SubAssOverride, if (defaultOverride) "force" else "scale")
+              controls.setTuning(PlaybackTuning.SecondarySubAssOverride, if (defaultOverride) "force" else "scale")
               val defaultScaleByWindow = preferences.scaleByWindow.deleteAndGet()
               scaleByWindow = defaultScaleByWindow
               val scaleValue = if (defaultScaleByWindow) "yes" else "no"
-              MpvGateway.setPropertyString("sub-scale-by-window", scaleValue)
-              MpvGateway.setPropertyString("sub-use-margins", scaleValue)
+              controls.setTuning(PlaybackTuning.SubScaleByWindow, scaleValue)
+              controls.setTuning(PlaybackTuning.SubUseMargins, scaleValue)
             },
           ) {
             Row {

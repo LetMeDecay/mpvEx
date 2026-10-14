@@ -1,6 +1,9 @@
 package app.marlboroadvance.mpvex.ui.player.controls.components.panels
 
 import app.marlboroadvance.mpvex.ui.player.MpvGateway
+import app.marlboroadvance.mpvex.ui.player.PlaybackTuning
+import app.marlboroadvance.mpvex.ui.player.PlaybackControls
+import app.marlboroadvance.mpvex.ui.player.LocalPlaybackControls
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -37,6 +40,7 @@ import org.koin.compose.koinInject
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun VideoSettingsFilterPresetsCard(modifier: Modifier = Modifier) {
+  val controls = LocalPlaybackControls.current
   val decoderPreferences = koinInject<DecoderPreferences>()
   var isExpanded by remember { mutableStateOf(true) }
 
@@ -96,12 +100,12 @@ fun VideoSettingsFilterPresetsCard(modifier: Modifier = Modifier) {
               decoderPreferences.sharpnessFilter.set(preset.sharpness)
 
               // Apply to MPV
-              MpvGateway.setPropertyInt("brightness", preset.brightness)
-              MpvGateway.setPropertyInt("saturation", preset.saturation)
-              MpvGateway.setPropertyInt("contrast", preset.contrast)
-              MpvGateway.setPropertyInt("gamma", preset.gamma)
-              MpvGateway.setPropertyInt("hue", preset.hue)
-              MpvGateway.setPropertyInt("sharpen", preset.sharpness)
+              controls.setTuning(PlaybackTuning.Brightness, preset.brightness)
+              controls.setTuning(PlaybackTuning.Saturation, preset.saturation)
+              controls.setTuning(PlaybackTuning.Contrast, preset.contrast)
+              controls.setTuning(PlaybackTuning.Gamma, preset.gamma)
+              controls.setTuning(PlaybackTuning.Hue, preset.hue)
+              controls.setTuning(PlaybackTuning.Sharpen, preset.sharpness)
             },
             label = { Text(preset.displayName) },
             leadingIcon = null,
