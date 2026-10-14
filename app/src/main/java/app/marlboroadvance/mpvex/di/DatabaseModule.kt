@@ -526,6 +526,12 @@ val MIGRATION_11_12 = object : Migration(11, 12) {
   }
 }
 
+val MIGRATION_12_13 = object : Migration(12, 13) {
+  override fun migrate(db: SupportSQLiteDatabase) {
+    db.execSQL("CREATE TABLE IF NOT EXISTS `network_favorites` (`connectionId` INTEGER NOT NULL, `path` TEXT NOT NULL, PRIMARY KEY(`connectionId`, `path`), FOREIGN KEY(`connectionId`) REFERENCES `network_connections`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)")
+  }
+}
+
 val DatabaseModule =
   module {
     single<Json> {
@@ -540,7 +546,7 @@ val DatabaseModule =
       Room
         .databaseBuilder(context, MpvExDatabase::class.java, "mpvex.db")
         .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
         .fallbackToDestructiveMigration(true) // Fallback if migration fails (last resort)
         .build()
     }
@@ -559,6 +565,8 @@ val DatabaseModule =
         dao = get<MpvExDatabase>().videoMetadataDao(),
       )
     }
+
+    single { get<MpvExDatabase>().networkFavoriteDao() }
 
     // MediaFileRepository is a singleton object - no DI needed
 

@@ -13,6 +13,10 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Folder
@@ -94,6 +98,7 @@ data class NetworkBrowserScreen(
       onDispose { viewModel.releaseBrowserThumbnails() }
     }
 
+    val isFavorite by viewModel.isFavorite.collectAsState()
     val files by viewModel.files.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
@@ -151,6 +156,14 @@ data class NetworkBrowserScreen(
       topBar = {
         BrowserTopBar(
           title = connectionName,
+          additionalActions = {
+            IconButton(onClick = viewModel::toggleFavorite) {
+              Icon(
+                if (isFavorite) Icons.Filled.Star else Icons.Filled.StarBorder,
+                contentDescription = stringResource(if (isFavorite) R.string.network_favorite_remove else R.string.network_favorite_add),
+              )
+            }
+          },
           isInSelectionMode = isInSelectionMode,
           selectedCount = selectedPaths.size,
           totalCount = files.size,

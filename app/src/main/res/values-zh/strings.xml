@@ -847,4 +847,7 @@
     <string name="pref_restore_tracks">恢复音轨和字幕轨道</string>
     <string name="pref_restore_delays">恢复音频和字幕同步设置</string>
     <string name="pref_restore_zoom">恢复视频缩放</string>
+    <string name="network_favorites">收藏目录</string>
+    <string name="network_favorite_add">收藏当前目录</string>
+    <string name="network_favorite_remove">取消收藏</string>
 </resources>

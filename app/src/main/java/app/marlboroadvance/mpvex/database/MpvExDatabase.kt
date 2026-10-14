@@ -1,5 +1,7 @@
 package app.marlboroadvance.mpvex.database
 
+import app.marlboroadvance.mpvex.database.entities.NetworkFavoriteEntity
+import app.marlboroadvance.mpvex.database.dao.NetworkFavoriteDao
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
@@ -22,10 +24,11 @@ import app.marlboroadvance.mpvex.domain.network.NetworkConnection
     RecentlyPlayedEntity::class,
     VideoMetadataEntity::class,
     NetworkConnection::class,
+    NetworkFavoriteEntity::class,
     PlaylistEntity::class,
     PlaylistItemEntity::class,
   ],
-  version = 12,
+  version = 13,
   exportSchema = true,
 )
 @TypeConverters(NetworkProtocolConverter::class)
@@ -37,6 +40,8 @@ abstract class MpvExDatabase : RoomDatabase() {
   abstract fun videoMetadataDao(): VideoMetadataDao
 
   abstract fun networkConnectionDao(): NetworkConnectionDao
+
+  abstract fun networkFavoriteDao(): NetworkFavoriteDao
 
   abstract fun playlistDao(): PlaylistDao
 }

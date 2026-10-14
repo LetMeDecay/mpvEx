@@ -15,6 +15,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentPaste
@@ -82,6 +86,7 @@ object NetworkStreamingScreen : Screen {
     val viewModel: NetworkStreamingViewModel =
       viewModel(factory = NetworkStreamingViewModel.factory(context.applicationContext as android.app.Application))
 
+    val favorites by viewModel.favorites.collectAsState()
     val connections by viewModel.connections.collectAsState()
     val connectionStatuses by viewModel.connectionStatuses.collectAsState()
     val browserPreferences = koinInject<app.marlboroadvance.mpvex.preferences.BrowserPreferences>()
@@ -177,6 +182,33 @@ object NetworkStreamingScreen : Screen {
                 MediaUtils.playFile(url, context, "network_stream")
               },
             )
+          }
+
+          if (favorites.isNotEmpty()) {
+            item {
+              Text(
+                stringResource(R.string.network_favorites),
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(vertical = 16.dp),
+              )
+            }
+            items(favorites, key = { "favorite:${it.connectionId}:${it.path}" }) { favorite ->
+              val connection = connections.firstOrNull { it.id == favorite.connectionId }
+              if (connection != null) {
+                ListItem(
+                  headlineContent = { Text(connection.name) },
+                  supportingContent = { Text(favorite.path) },
+                  trailingContent = {
+                    IconButton(onClick = { viewModel.removeFavorite(favorite.connectionId, favorite.path) }) {
+                      Icon(Icons.Filled.Star, contentDescription = stringResource(R.string.network_favorite_remove))
+                    }
+                  },
+                  modifier = Modifier.clickable {
+                    backstack.add(NetworkBrowserScreen(connection.id, connection.name, favorite.path))
+                  },
+                )
+              }
+            }
           }
 
           // Section 2: Local Network header

@@ -857,4 +857,7 @@
     <string name="pref_restore_tracks">Restore audio and subtitle tracks</string>
     <string name="pref_restore_delays">Restore audio and subtitle timing</string>
     <string name="pref_restore_zoom">Restore video zoom</string>
+    <string name="network_favorites">Favorite directories</string>
+    <string name="network_favorite_add">Save directory</string>
+    <string name="network_favorite_remove">Remove favorite</string>
 </resources>

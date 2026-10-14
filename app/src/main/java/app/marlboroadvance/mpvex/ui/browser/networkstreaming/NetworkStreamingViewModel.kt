@@ -1,5 +1,6 @@
 package app.marlboroadvance.mpvex.ui.browser.networkstreaming
 
+import app.marlboroadvance.mpvex.database.dao.NetworkFavoriteDao
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -25,6 +26,14 @@ class NetworkStreamingViewModel(
 ) : AndroidViewModel(application),
   KoinComponent {
   private val repository: NetworkRepository by inject()
+
+  private val favoriteDao: NetworkFavoriteDao by inject()
+  val favorites = favoriteDao.observeAll()
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+  fun removeFavorite(connectionId: Long, path: String) {
+    viewModelScope.launch { favoriteDao.remove(connectionId, path) }
+  }
 
   /**
    * Observable list of all saved network connections

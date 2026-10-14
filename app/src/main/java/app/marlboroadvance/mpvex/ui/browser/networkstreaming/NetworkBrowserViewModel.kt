@@ -23,6 +23,9 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
+import app.marlboroadvance.mpvex.database.dao.NetworkFavoriteDao
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -46,6 +49,15 @@ class NetworkBrowserViewModel(
 ) : AndroidViewModel(application),
   KoinComponent {
   private val repository: NetworkRepository by inject()
+  private val favoriteDao: NetworkFavoriteDao by inject()
+  private val favoritePath = currentPath.trimEnd('/').ifEmpty { "/" }
+  val isFavorite = favoriteDao.observeSaved(connectionId, favoritePath)
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+  fun toggleFavorite() {
+    viewModelScope.launch { favoriteDao.toggle(connectionId, favoritePath) }
+  }
+
   private val browserPreferences: BrowserPreferences by inject()
   private val appearancePreferences: AppearancePreferences by inject()
 
