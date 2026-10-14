@@ -1,10 +1,22 @@
 package app.marlboroadvance.mpvex.ui.player
 
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
 internal enum class PlaybackPhase { Idle, Preparing, Opening, Ready, Stopping, Failed }
+
+internal data class PlaybackMetadata(
+  val tracks: List<TrackNode> = emptyList(),
+  val chapters: List<ChapterNode> = emptyList(),
+  val audioId: Int = -1,
+  val subtitleId: Int = -1,
+  val secondarySubtitleId: Int = -1,
+  val chapter: Int? = null,
+  val speed: Float? = null,
+  val decoder: String? = null,
+)
 
 internal data class PlaybackUiState(
   val generation: Long = 0,
@@ -14,9 +26,10 @@ internal data class PlaybackUiState(
   val paused: Boolean = true,
   val seeking: Boolean = false,
   val buffering: Boolean = false,
+  val metadata: PlaybackMetadata = PlaybackMetadata(),
 )
 
-/** One atomic timeline snapshot; late IO cannot publish into a replacement file. */
+/** One atomic timeline and metadata snapshot; late IO cannot publish into a replacement file. */
 internal class PlaybackStateStore {
   private val mutable = MutableStateFlow(PlaybackUiState())
   val state = mutable.asStateFlow()
@@ -38,7 +51,7 @@ internal class PlaybackStateStore {
   }
 
   fun sample(generation: Long, position: Float, duration: Float?, paused: Boolean,
-             seeking: Boolean, buffering: Boolean) = mutable.update {
+             seeking: Boolean, buffering: Boolean, metadata: PlaybackMetadata? = null) = mutable.update {
     if (it.generation != generation || it.phase !in activePhases) it else it.copy(
       phase = PlaybackPhase.Ready,
       position = position.takeIf { value -> value.isFinite() && value >= 0f } ?: 0f,
@@ -46,6 +59,11 @@ internal class PlaybackStateStore {
       paused = paused,
       seeking = seeking,
       buffering = buffering,
+      metadata = metadata?.copy(
+        tracks = metadata.tracks.toImmutableList(),
+        chapters = metadata.chapters.toImmutableList(),
+        speed = metadata.speed?.takeIf { value -> value.isFinite() && value > 0f },
+      ) ?: it.metadata,
     )
   }
 

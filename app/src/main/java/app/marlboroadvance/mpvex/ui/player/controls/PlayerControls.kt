@@ -177,16 +177,17 @@ fun PlayerControls(
   val position = playback.position.toInt().takeIf { playback.phase == PlaybackPhase.Ready }
   val precisePosition = playback.position
   val preciseDuration = playback.duration ?: 0f
-  val playbackSpeed by MpvGateway.propFloat["speed"].collectAsState()
+  val playbackSpeed = playback.metadata.speed
   val doubleTapSeekAmount by viewModel.doubleTapSeekAmount.collectAsState()
   val showDoubleTapOvals by playerPreferences.showDoubleTapOvals.collectAsState()
   val showSeekTime by playerPreferences.showSeekTimeWhileSeeking.collectAsState()
   var isSeeking by remember { mutableStateOf(false) }
   var resetControlsTimestamp by remember { mutableStateOf(0L) }
   val seekText by viewModel.seekText.collectAsState()
-  val currentChapter by MpvGateway.propInt["chapter"].collectAsState()
-  val mpvDecoder by MpvGateway.propString["hwdec-current"].collectAsState()
-  val decoder by remember { derivedStateOf { getDecoderFromValue(mpvDecoder ?: "auto") } }
+  val currentChapter = playback.metadata.chapter
+  val decoder = app.marlboroadvance.mpvex.ui.player.Decoder.entries.firstOrNull {
+    it.value == playback.metadata.decoder
+  } ?: app.marlboroadvance.mpvex.ui.player.Decoder.Auto
   val isSpeedNonOne by remember(playbackSpeed) {
     derivedStateOf { abs((playbackSpeed ?: 1f) - 1f) > 0.001f }
   }
@@ -1216,13 +1217,7 @@ fun PlayerControls(
       onRemoveSubtitle = viewModel::removeSubtitle,
       audioTracks = audioTracks.toImmutableList(),
       onAddAudio = viewModel::addAudio,
-      onSelectAudio = {
-        if (MpvGateway.getPropertyInt("aid") == it.id) {
-          viewModel.controls.selectAudio(null)
-        } else {
-          viewModel.controls.selectAudio(it.id)
-        }
-      },
+      onSelectAudio = { viewModel.controls.toggleAudio(it.id) },
       chapter = chapters.getOrNull(currentChapter ?: 0),
       chapters = chapters.toImmutableList(),
       onSeekToChapter = {

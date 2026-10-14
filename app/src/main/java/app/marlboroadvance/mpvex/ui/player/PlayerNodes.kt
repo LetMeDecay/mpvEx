@@ -7,7 +7,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class ChapterNode(
   val time: Float,
-  val title: String,
+  val title: String = "",
 ) {
   fun toSegment(): Segment = Segment(title, time)
 }

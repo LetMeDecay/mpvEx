@@ -34,6 +34,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -171,6 +172,9 @@ class PlayerViewModel(
   )
   private val playbackStateStore = PlaybackStateStore()
   internal val playbackState = playbackStateStore.state
+  private val pendingTracks = PendingTrackSelections()
+  private var metadataDirty = true
+  private var trackListsDirty = true
   private var requestedPause: Pair<Long, Boolean>? = null
   internal val controls = object : PlaybackControls {
     override val state = playbackState
@@ -184,7 +188,12 @@ class PlayerViewModel(
       if (value.isFinite() && value > 0) requestSetting("speed", value.toString())
     }
     override fun selectAudio(id: Int?) {
-      if (playbackSession.loaded) requestSetting("aid", id?.takeIf { it > 0 }?.toString() ?: "no")
+      requestTrack(PlaybackTrack.Audio, id ?: -1)
+    }
+    override fun toggleAudio(id: Int) {
+      val selected = pendingTracks.selected(PlaybackTrack.Audio, playbackState.value.metadata.audioId,
+        android.os.SystemClock.elapsedRealtime())
+      selectAudio(if (selected == id) null else id)
     }
     override fun setChapter(index: Int) {
       if (index < 0 || !playbackSession.loaded) return
@@ -207,6 +216,13 @@ class PlayerViewModel(
   }
 
 
+  private fun requestTrack(track: PlaybackTrack, id: Int) {
+    if (!playbackSession.loaded || stopPlaybackJob != null) return
+    val selected = id.takeIf { it > 0 } ?: -1
+    pendingTracks.choose(track, selected, android.os.SystemClock.elapsedRealtime())
+    requestSetting(track.property, if (selected == -1) "no" else selected.toString())
+  }
+
   private fun requestSetting(property: String, value: String) {
     if (stopPlaybackJob != null) return
     playbackSession.cancelRestoration()
@@ -221,6 +237,9 @@ class PlayerViewModel(
     app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
       .existingInstance()?.setPlaybackUrl(path)
     playbackSession.begin(path)
+    pendingTracks.clear()
+    metadataDirty = true
+    trackListsDirty = true
     _externalSubtitles.clear()
     mpvPathToUriMap.clear()
     playbackRequest = playbackEvents.begin(playbackSession.generation)
@@ -264,7 +283,11 @@ class PlayerViewModel(
     }
   }
 
-  internal fun nativeFileReady() = playbackStateStore.ready(playbackSession.generation)
+  internal fun nativeFileReady() {
+    metadataDirty = true
+    trackListsDirty = true
+    playbackStateStore.ready(playbackSession.generation)
+  }
 
   internal fun nativeFileFailed(generation: Long) {
     playbackSession.failed(generation)
@@ -315,24 +338,57 @@ class PlayerViewModel(
   private val volumeBoostCap by MpvGateway.propInt["volume-max"].collectAsState(viewModelScope)
 
   init {
-    // Read both values for the loaded file. Missing values clear the old timeline.
+    // Event values are only invalidation hints. Read current native state, never
+    // attach a cached property event from an older file to the new generation.
+    viewModelScope.launch {
+      kotlinx.coroutines.flow.merge(
+        MpvGateway.propNode["track-list"].map { true },
+        MpvGateway.propNode["chapter-list"].map { true },
+        MpvGateway.propInt["aid"].map { false },
+        MpvGateway.propInt["sid"].map { false },
+        MpvGateway.propInt["secondary-sid"].map { false },
+        MpvGateway.propInt["chapter"].map { false },
+        MpvGateway.propFloat["speed"].map { false },
+        MpvGateway.propString["hwdec-current"].map { false },
+      ).collect { listsChanged ->
+        metadataDirty = true
+        if (listsChanged) trackListsDirty = true
+      }
+    }
     viewModelScope.launch {
       while (isActive) {
         if (playbackSession.loaded) {
           val generation = playbackSession.generation
-          val time = MpvGateway.getPropertyDouble("time-pos")?.toFloat()
-          val duration = MpvGateway.getPropertyDouble("duration")?.toFloat()
-          val seeking = MpvGateway.getPropertyBoolean("seeking") == true
-          val paused = MpvGateway.getPropertyBoolean("pause") != false
-          if (requestedPause == (generation to paused)) requestedPause = null
-          playbackStateStore.sample(
-            generation,
-            playbackSession.displayPosition(time, seeking, android.os.SystemClock.elapsedRealtime()),
-            duration,
-            paused,
-            seeking,
-            MpvGateway.getPropertyBoolean("paused-for-cache") == true,
-          )
+          val refreshMetadata = metadataDirty
+          val refreshLists = trackListsDirty
+          val previousMetadata = playbackState.value.metadata
+          metadataDirty = false
+          trackListsDirty = false
+          val sample = withContext(Dispatchers.IO) {
+            PlaybackUiState(
+              generation = generation,
+              position = MpvGateway.getPropertyDouble("time-pos")?.toFloat() ?: Float.NaN,
+              duration = MpvGateway.getPropertyDouble("duration")?.toFloat(),
+              paused = MpvGateway.getPropertyBoolean("pause") != false,
+              seeking = MpvGateway.getPropertyBoolean("seeking") == true,
+              buffering = MpvGateway.getPropertyBoolean("paused-for-cache") == true,
+              metadata = if (refreshMetadata) MpvGateway.playbackMetadata(json, previousMetadata, refreshLists)
+                ?: PlaybackMetadata() else previousMetadata,
+            )
+          }
+          if (generation == playbackSession.generation && playbackSession.loaded) {
+            if (requestedPause == (generation to sample.paused)) requestedPause = null
+            if (refreshMetadata) {
+              pendingTracks.acknowledge(PlaybackTrack.Audio, sample.metadata.audioId)
+              pendingTracks.acknowledge(PlaybackTrack.Subtitle, sample.metadata.subtitleId)
+              pendingTracks.acknowledge(PlaybackTrack.SecondarySubtitle, sample.metadata.secondarySubtitleId)
+            }
+            playbackStateStore.sample(
+              generation,
+              playbackSession.displayPosition(sample.position.takeIf { it.isFinite() }, sample.seeking, android.os.SystemClock.elapsedRealtime()),
+              sample.duration, sample.paused, sample.seeking, sample.buffering, sample.metadata,
+            )
+          }
         }
         delay(42)
       }
@@ -341,26 +397,20 @@ class PlayerViewModel(
 
   val maxVolume = host.audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
 
-  val subtitleTracks: StateFlow<List<TrackNode>> =
-    MpvGateway.propNode["track-list"]
-      .map { node ->
-        node?.toObject<List<TrackNode>>(json)?.filter { it.isSubtitle }?.toImmutableList()
-          ?: persistentListOf()
-      }.stateIn(viewModelScope, SharingStarted.Lazily, persistentListOf())
+  val subtitleTracks: StateFlow<List<TrackNode>> = playbackState
+    .map { it.metadata.tracks }.distinctUntilChanged()
+    .map { it.filter { track -> track.isSubtitle }.toImmutableList() }
+    .stateIn(viewModelScope, SharingStarted.Lazily, persistentListOf())
 
-  val audioTracks: StateFlow<List<TrackNode>> =
-    MpvGateway.propNode["track-list"]
-      .map { node ->
-        node?.toObject<List<TrackNode>>(json)?.filter { it.isAudio }?.toImmutableList()
-          ?: persistentListOf()
-      }.stateIn(viewModelScope, SharingStarted.Lazily, persistentListOf())
+  val audioTracks: StateFlow<List<TrackNode>> = playbackState
+    .map { it.metadata.tracks }.distinctUntilChanged()
+    .map { it.filter { track -> track.isAudio }.toImmutableList() }
+    .stateIn(viewModelScope, SharingStarted.Lazily, persistentListOf())
 
-  val chapters: StateFlow<List<dev.vivvvek.seeker.Segment>> =
-    MpvGateway.propNode["chapter-list"]
-      .map { node ->
-        node?.toObject<List<ChapterNode>>(json)?.map { it.toSegment() }?.toImmutableList()
-          ?: persistentListOf()
-      }.stateIn(viewModelScope, SharingStarted.Lazily, persistentListOf())
+  val chapters: StateFlow<List<dev.vivvvek.seeker.Segment>> = playbackState
+    .map { it.metadata.chapters }.distinctUntilChanged()
+    .map { it.map { chapter -> chapter.toSegment() }.toImmutableList() }
+    .stateIn(viewModelScope, SharingStarted.Lazily, persistentListOf())
 
   // UI state
   private val _controlsShown = MutableStateFlow(false)
@@ -920,22 +970,23 @@ class PlayerViewModel(
 
 
   fun toggleSubtitle(id: Int) {
-    val primarySid = MpvGateway.getPropertyInt("sid") ?: 0
-    val secondarySid = MpvGateway.getPropertyInt("secondary-sid") ?: 0
-
+    if (!playbackSession.loaded) return
+    val metadata = playbackState.value.metadata
+    val now = android.os.SystemClock.elapsedRealtime()
+    val primary = pendingTracks.selected(PlaybackTrack.Subtitle, metadata.subtitleId, now)
+    val secondary = pendingTracks.selected(PlaybackTrack.SecondarySubtitle, metadata.secondarySubtitleId, now)
     when {
-      id == primarySid -> MpvGateway.setPropertyString("sid", "no")
-      id == secondarySid -> MpvGateway.setPropertyString("secondary-sid", "no")
-      primarySid <= 0 -> MpvGateway.setPropertyInt("sid", id)
-      secondarySid <= 0 -> MpvGateway.setPropertyInt("secondary-sid", id)
-      else -> MpvGateway.setPropertyInt("sid", id)
+      id == primary -> requestTrack(PlaybackTrack.Subtitle, -1)
+      id == secondary -> requestTrack(PlaybackTrack.SecondarySubtitle, -1)
+      primary <= 0 -> requestTrack(PlaybackTrack.Subtitle, id)
+      secondary <= 0 -> requestTrack(PlaybackTrack.SecondarySubtitle, id)
+      else -> requestTrack(PlaybackTrack.Subtitle, id)
     }
   }
 
   fun isSubtitleSelected(id: Int): Boolean {
-    val primarySid = MpvGateway.getPropertyInt("sid") ?: 0
-    val secondarySid = MpvGateway.getPropertyInt("secondary-sid") ?: 0
-    return (id == primarySid && primarySid > 0) || (id == secondarySid && secondarySid > 0)
+    val metadata = playbackState.value.metadata
+    return id > 0 && (id == metadata.subtitleId || id == metadata.secondarySubtitleId)
   }
 
   private fun getFileNameFromUri(uri: Uri): String? =

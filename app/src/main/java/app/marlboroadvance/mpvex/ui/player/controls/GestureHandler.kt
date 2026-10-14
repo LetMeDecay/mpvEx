@@ -91,7 +91,7 @@ fun GestureHandler(
   val duration = playback.duration ?: 0f
   val mediaGeneration = playback.generation
   val position = playback.position
-  val playbackSpeed by MpvGateway.propFloat["speed"].collectAsState()
+  val playbackSpeed = playback.metadata.speed
   val controlsShown by viewModel.controlsShown.collectAsState()
   val areControlsLocked by viewModel.areControlsLocked.collectAsState()
   val seekAmount by viewModel.doubleTapSeekAmount.collectAsState()
@@ -437,7 +437,7 @@ fun GestureHandler(
                     when (gestureType) {
                       "speed_control" -> {
                         dynamicSpeedStartX = currentPosition.x
-                        dynamicSpeedStartValue = MpvGateway.getPropertyFloat("speed") ?: multipleSpeedGesture
+                        dynamicSpeedStartValue = viewModel.playbackState.value.metadata.speed ?: multipleSpeedGesture
                       }
                       "vertical" -> {
                         if ((brightnessGesture || volumeGesture) && !isLongPressing) {
@@ -610,7 +610,7 @@ fun GestureHandler(
             isDynamicSpeedControlActive = false
             hasSwipedEnough = false
             // Ramp speed back down incrementally to avoid audio filter stutter
-            val currentSpeed = MpvGateway.getPropertyFloat("speed") ?: multipleSpeedGesture
+            val currentSpeed = viewModel.playbackState.value.metadata.speed ?: multipleSpeedGesture
             val targetSpeed = originalSpeed
             val steps = 5
             val stepDelay = 16L

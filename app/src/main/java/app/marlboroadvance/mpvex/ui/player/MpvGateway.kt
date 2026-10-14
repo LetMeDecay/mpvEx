@@ -47,6 +47,27 @@ internal object MpvGateway {
     entry["id"]?.asInt().takeIf { entry["playing"]?.asBoolean() == true }
   }
 
+  fun playbackMetadata(
+    json: kotlinx.serialization.json.Json,
+    previous: PlaybackMetadata,
+    refreshLists: Boolean,
+  ): PlaybackMetadata? = access.call {
+    PlaybackMetadata(
+      tracks = if (refreshLists) runCatching {
+        MPVLib.getPropertyNode("track-list")?.toObject<List<TrackNode>>(json)
+      }.getOrNull().orEmpty() else previous.tracks,
+      chapters = if (refreshLists) runCatching {
+        MPVLib.getPropertyNode("chapter-list")?.toObject<List<ChapterNode>>(json)
+      }.getOrNull().orEmpty() else previous.chapters,
+      audioId = MPVLib.getPropertyInt("aid") ?: -1,
+      subtitleId = MPVLib.getPropertyInt("sid") ?: -1,
+      secondarySubtitleId = MPVLib.getPropertyInt("secondary-sid") ?: -1,
+      chapter = MPVLib.getPropertyInt("chapter")?.takeIf { it >= 0 },
+      speed = MPVLib.getPropertyDouble("speed")?.toFloat(),
+      decoder = MPVLib.getPropertyString("hwdec-current"),
+    )
+  }
+
   fun trackIdentities(type: String, stableSource: (String) -> String? = { null }): List<TrackIdentity.Track> = access.call {
     val count = MPVLib.getPropertyInt("track-list/count") ?: 0
     (0 until count).mapNotNull { index ->

@@ -14,6 +14,7 @@ internal interface PlaybackControls {
   fun seekTo(seconds: Int)
   fun setSpeed(value: Float)
   fun selectAudio(id: Int?)
+  fun toggleAudio(id: Int)
   fun setChapter(index: Int)
   fun setDecoder(value: Decoder)
   fun setPitchCorrection(enabled: Boolean)

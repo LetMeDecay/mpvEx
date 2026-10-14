@@ -5,6 +5,30 @@ import org.junit.Test
 
 class PlaybackStateStoreTest {
   @Test
+  fun metadataBelongsToItsGenerationAndCannotLeakAcrossReplacement() {
+    val store = PlaybackStateStore()
+    val tracks = mutableListOf(TrackNode(id = 1, type = "audio", lang = "en"))
+    val metadata = PlaybackMetadata(tracks = tracks, chapters = listOf(ChapterNode(0f, "Opening")), audioId = 1, speed = 1.5f)
+    store.begin(1)
+    store.ready(1)
+    store.sample(1, 10f, 100f, false, false, false, metadata)
+    tracks.clear()
+    assertEquals(1, store.state.value.metadata.tracks.size)
+    assertEquals(1, store.state.value.metadata.audioId)
+    store.begin(2)
+    assertTrue(store.state.value.metadata.tracks.isEmpty())
+    assertNull(store.state.value.metadata.speed)
+    store.sample(1, 11f, 100f, false, false, false, metadata)
+    assertTrue(store.state.value.metadata.chapters.isEmpty())
+    store.ready(2)
+    store.sample(2, 0f, null, true, false, false, PlaybackMetadata(speed = Float.NaN))
+    assertNull(store.state.value.metadata.speed)
+    store.stopping(3)
+    store.sample(2, 12f, 100f, false, false, false, metadata)
+    assertTrue(store.state.value.metadata.tracks.isEmpty())
+  }
+
+  @Test
   fun replacingFileResetsTimelineInTheSameSnapshotAsGeneration() {
     val store = PlaybackStateStore()
     store.begin(1)
