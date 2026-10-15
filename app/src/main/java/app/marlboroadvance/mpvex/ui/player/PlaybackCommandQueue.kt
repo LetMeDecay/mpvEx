@@ -20,7 +20,7 @@ internal class PlaybackCommandQueue(
   private val onFailure: (Exception) -> Unit,
 ) {
   private data class Command(val arguments: List<String>, val isValid: () -> Boolean,
-    val action: (suspend () -> Unit)? = null, val cleanup: () -> Unit = {})
+    val action: (suspend () -> Unit)? = null, val cleanup: () -> Unit = {}, val survivesLoad: Boolean = false)
 
   private val lock = Any()
   private val wakeup = Channel<Unit>(Channel.CONFLATED)
@@ -78,7 +78,7 @@ internal class PlaybackCommandQueue(
       pendingLoad = command
       pendingSeek = null
       pendingPause = null
-      adjustments.clear()
+      adjustments.entries.removeAll { !it.value.survivesLoad }
       if (wakeup.trySend(Unit).isFailure) pendingLoad = null
       takeAuxiliary()
     }
@@ -128,6 +128,10 @@ internal class PlaybackCommandQueue(
   fun adjustAction(key: String, isValid: () -> Boolean, action: suspend () -> Unit): Boolean =
     enqueueAdjustment(key, Command(emptyList(), isValid, action))
 
+  /** Engine-wide choices survive file replacement, but never engine retirement. */
+  fun adjustEngine(key: String, isValid: () -> Boolean, action: suspend () -> Unit): Boolean =
+    enqueueAdjustment(key, Command(emptyList(), isValid, action, survivesLoad = true))
+
   private fun enqueueAdjustment(key: String, command: Command): Boolean = synchronized(lock) {
     if (key !in adjustments && adjustments.size >= 64) return@synchronized false
     adjustments[key] = command
@@ -160,7 +164,7 @@ internal class PlaybackCommandQueue(
       pendingLoad = null
       pendingSeek = null
       pendingPause = null
-      adjustments.clear()
+      adjustments.entries.removeAll { close || !it.value.survivesLoad }
       takeAuxiliary()
     }
     discarded.forEach { it.cleanup() }

@@ -16,6 +16,8 @@ internal data class PlaybackMetadata(
   val chapter: Int? = null,
   val speed: Float? = null,
   val decoder: String? = null,
+  val videoWidth: Int? = null,
+  val videoHeight: Int? = null,
 )
 
 internal data class PlaybackUiState(

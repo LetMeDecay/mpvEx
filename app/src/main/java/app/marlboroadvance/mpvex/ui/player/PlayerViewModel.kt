@@ -1,5 +1,7 @@
 package app.marlboroadvance.mpvex.ui.player
 
+import app.marlboroadvance.mpvex.domain.anime4k.Anime4KManager
+import app.marlboroadvance.mpvex.preferences.DecoderPreferences
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
@@ -89,6 +91,9 @@ class PlayerViewModel(
   private val gesturePreferences: GesturePreferences by inject()
   private val audioPreferences: AudioPreferences by inject()
   private val subtitlesPreferences: SubtitlesPreferences by inject()
+  private val decoderPreferences: DecoderPreferences by inject()
+  private val anime4kManager: Anime4KManager by inject()
+  private val statisticsController by lazy { StatisticsPageController(advancedPreferences.enabledStatisticsPage.get()) }
   private val advancedPreferences: AdvancedPreferences by inject()
   private val json: Json by inject()
   private val playbackStateDao: app.marlboroadvance.mpvex.database.dao.PlaybackStateDao by inject()
@@ -253,9 +258,34 @@ class PlayerViewModel(
         MpvGateway.command("screenshot-to-file", path, if (includeSubtitles) "subtitles" else "video")
       }
     }
+    override fun setStatisticsPage(page: Int) {
+      if (page !in 0..5 || !playbackSession.loaded || stopPlaybackJob != null) return
+      val controller = statisticsController // Snapshot the initialized script state before changing intent.
+      if (playbackCommands.adjustEngine("statistics", { stopPlaybackJob == null }) {
+        controller.apply(page) { MpvGateway.command(*it.toTypedArray()) }
+      }) advancedPreferences.enabledStatisticsPage.set(page)
+    }
+    override fun setAnime4KMode(mode: Anime4KManager.Mode) {
+      val quality = runCatching { Anime4KManager.Quality.valueOf(decoderPreferences.anime4kQuality.get()) }
+        .getOrDefault(Anime4KManager.Quality.BALANCED)
+      if (requestAnime4K(mode, quality)) decoderPreferences.anime4kMode.set(mode.name)
+    }
+    override fun setAnime4KQuality(quality: Anime4KManager.Quality) {
+      val mode = runCatching { Anime4KManager.Mode.valueOf(decoderPreferences.anime4kMode.get()) }
+        .getOrDefault(Anime4KManager.Mode.OFF)
+      if (requestAnime4K(mode, quality)) decoderPreferences.anime4kQuality.set(quality.name)
+    }
     override fun stop() { (host as? PlayerActivity)?.stopFromSystem() }
   }
 
+
+  private fun requestAnime4K(mode: Anime4KManager.Mode, quality: Anime4KManager.Quality): Boolean {
+    if (!playbackSession.loaded || stopPlaybackJob != null) return false
+    return playbackCommands.adjustEngine("anime4k", { stopPlaybackJob == null }) {
+      val chain = anime4kManager.getShaderChain(mode, quality)
+      MpvGateway.setPropertyString("glsl-shaders", chain)
+    }
+  }
 
   private fun requestTrack(track: PlaybackTrack, id: Int) {
     if (!playbackSession.loaded || stopPlaybackJob != null) return
@@ -385,6 +415,8 @@ class PlayerViewModel(
       kotlinx.coroutines.flow.merge(
         MpvGateway.propNode["track-list"].map { true },
         MpvGateway.propNode["chapter-list"].map { true },
+        MpvGateway.propInt["video-params/w"].map { false },
+        MpvGateway.propInt["video-params/h"].map { false },
         MpvGateway.propInt["aid"].map { false },
         MpvGateway.propInt["sid"].map { false },
         MpvGateway.propInt["secondary-sid"].map { false },

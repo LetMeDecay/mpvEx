@@ -65,6 +65,8 @@ internal object MpvGateway {
       chapter = MPVLib.getPropertyInt("chapter")?.takeIf { it >= 0 },
       speed = MPVLib.getPropertyDouble("speed")?.toFloat(),
       decoder = MPVLib.getPropertyString("hwdec-current"),
+      videoWidth = MPVLib.getPropertyInt("video-params/w")?.takeIf { it > 0 },
+      videoHeight = MPVLib.getPropertyInt("video-params/h")?.takeIf { it > 0 },
     )
   }
 

@@ -28,5 +28,8 @@ internal interface PlaybackControls {
   fun setAudioChannels(channels: app.marlboroadvance.mpvex.preferences.AudioChannels)
   suspend fun stepFrame(backwards: Boolean, generation: Long): Boolean
   suspend fun captureFrame(path: String, includeSubtitles: Boolean, generation: Long): Boolean
+  fun setStatisticsPage(page: Int)
+  fun setAnime4KMode(mode: app.marlboroadvance.mpvex.domain.anime4k.Anime4KManager.Mode)
+  fun setAnime4KQuality(quality: app.marlboroadvance.mpvex.domain.anime4k.Anime4KManager.Quality)
   fun stop()
 }

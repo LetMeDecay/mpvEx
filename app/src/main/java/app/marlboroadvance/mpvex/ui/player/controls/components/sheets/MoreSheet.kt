@@ -1,6 +1,7 @@
 package app.marlboroadvance.mpvex.ui.player.controls.components.sheets
 
-import app.marlboroadvance.mpvex.ui.player.MpvGateway
+import app.marlboroadvance.mpvex.ui.player.LocalPlaybackControls
+import androidx.compose.runtime.collectAsState
 
 import android.text.format.DateUtils
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -37,11 +38,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -50,12 +49,9 @@ import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.domain.anime4k.Anime4KManager
 import app.marlboroadvance.mpvex.preferences.AdvancedPreferences
 import app.marlboroadvance.mpvex.preferences.DecoderPreferences
-import app.marlboroadvance.mpvex.preferences.PlayerPreferences
 import app.marlboroadvance.mpvex.preferences.preference.collectAsState
 import app.marlboroadvance.mpvex.presentation.components.PlayerSheet
 import app.marlboroadvance.mpvex.ui.theme.spacing
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
@@ -65,13 +61,12 @@ fun MoreSheet(
   onStartTimer: (Int) -> Unit,
   onDismissRequest: () -> Unit,
   onEnterFiltersPanel: () -> Unit,
-  onAnime4KChanged: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val advancedPreferences = koinInject<AdvancedPreferences>()
   val decoderPreferences = koinInject<DecoderPreferences>()
-  val anime4kManager = koinInject<Anime4KManager>()
-  koinInject<PlayerPreferences>()
+  val controls = LocalPlaybackControls.current
+  val playback by controls.state.collectAsState()
   val statisticsPage by advancedPreferences.enabledStatisticsPage.collectAsState()
   
   val enableAnime4K by decoderPreferences.enableAnime4K.collectAsState()
@@ -80,8 +75,6 @@ fun MoreSheet(
   val gpuNext by decoderPreferences.gpuNext.collectAsState()
   val useVulkan by decoderPreferences.useVulkan.collectAsState()
   
-  val context = LocalContext.current
-val scope = rememberCoroutineScope()
 
   PlayerSheet(
     onDismissRequest,
@@ -170,9 +163,7 @@ val scope = rememberCoroutineScope()
               )
             },
             onClick = {
-              if ((page == 0) xor (statisticsPage == 0)) MpvGateway.command("script-binding", "stats/display-stats-toggle")
-              if (page != 0) MpvGateway.command("script-binding", "stats/display-page-$page")
-              advancedPreferences.enabledStatisticsPage.set(page)
+              controls.setStatisticsPage(page)
             },
             selected = statisticsPage == page,
             leadingIcon = null,
@@ -183,8 +174,8 @@ val scope = rememberCoroutineScope()
       // Shaders Controls
       if (enableAnime4K && (!gpuNext || useVulkan)) {
         // Auto-detect resolution to disable for 4K+
-        val width = MpvGateway.getPropertyInt("video-params/w") ?: 0
-        val height = MpvGateway.getPropertyInt("video-params/h") ?: 0
+        val width = playback.metadata.videoWidth ?: 0
+        val height = playback.metadata.videoHeight ?: 0
         val isHighRes = width >= 3840 || height >= 2160
 
         // Presets (Mode) - Now on Top
@@ -213,30 +204,7 @@ val scope = rememberCoroutineScope()
               enabled = !isHighRes,
               leadingIcon = null,
               onClick = {
-                decoderPreferences.anime4kMode.set(mode.name)
-                
-                // Apply shaders immediately (runtime change)
-                scope.launch(Dispatchers.IO) {
-                  runCatching {
-                    val qualityStr = decoderPreferences.anime4kQuality.get()
-                    val quality = try {
-                      Anime4KManager.Quality.valueOf(qualityStr)
-                    } catch (e: IllegalArgumentException) {
-                      Anime4KManager.Quality.BALANCED
-                    }
-                    val currentMode = try {
-                        Anime4KManager.Mode.valueOf(mode.name)
-                    } catch (e: IllegalArgumentException) {
-                        Anime4KManager.Mode.OFF
-                    }
-
-                    val shaderChain = anime4kManager.getShaderChain(currentMode, quality)
-
-                    // Use setPropertyString for runtime changes
-                    MpvGateway.setPropertyString("glsl-shaders", if (shaderChain.isNotEmpty()) shaderChain else "")
-                    onAnime4KChanged()
-                  }
-                }
+                controls.setAnime4KMode(mode)
               }
             )
           }
@@ -257,30 +225,7 @@ val scope = rememberCoroutineScope()
               enabled = anime4kMode != "OFF" && !isHighRes,
               leadingIcon = null,
               onClick = {
-                decoderPreferences.anime4kQuality.set(quality.name)
-
-                // Apply shaders immediately (runtime change)
-                scope.launch(Dispatchers.IO) {
-                  runCatching {
-                    val modeStr = decoderPreferences.anime4kMode.get()
-                    val modeEnum = try {
-                      Anime4KManager.Mode.valueOf(modeStr)
-                    } catch (e: IllegalArgumentException) {
-                      Anime4KManager.Mode.OFF
-                    }
-                    val currentQuality = try {
-                        Anime4KManager.Quality.valueOf(quality.name)
-                    } catch (e: IllegalArgumentException) {
-                        Anime4KManager.Quality.BALANCED
-                    }
-
-                    val shaderChain = anime4kManager.getShaderChain(modeEnum, currentQuality)
-
-                    // Use setPropertyString for runtime changes
-                    MpvGateway.setPropertyString("glsl-shaders", if (shaderChain.isNotEmpty()) shaderChain else "")
-                    onAnime4KChanged()
-                  }
-                }
+                controls.setAnime4KQuality(quality)
               }
             )
           }

@@ -17,6 +17,40 @@ import kotlin.coroutines.ContinuationInterceptor
 
 class PlaybackCommandQueueTest {
   @Test(timeout = 5000)
+  fun engineChoicesCoalesceAcrossLoadsButAreDiscardedAtRetirement() = runBlocking {
+    val owner = Job()
+    val entered = CompletableDeferred<Unit>()
+    val release = CompletableDeferred<Unit>()
+    val calls = mutableListOf<List<String>>()
+    val stats = StatisticsPageController(0)
+    val queue = PlaybackCommandQueue(CoroutineScope(coroutineContext + owner),
+      coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
+      execute = { calls.add(it) }, onFailure = { throw AssertionError(it) })
+    try {
+      queue.loadAction({ true }) { entered.complete(Unit); release.await() }
+      entered.await()
+      queue.adjustEngine("stats", { true }) { stats.apply(1) { calls.add(it) } }
+      queue.adjustEngine("stats", { true }) { stats.apply(0) { calls.add(it) } }
+      queue.clearPending() // beginFileChange precedes the native load submission.
+      queue.load(listOf("loadfile", "next")) { true }
+      queue.adjustEngine("shader", { true }) { calls.add(listOf("shader", "old")) }
+      queue.adjustEngine("shader", { true }) { calls.add(listOf("shader", "new")) }
+      release.complete(Unit)
+      yield()
+      assertEquals(listOf(listOf("loadfile", "next"), listOf("shader", "new")), calls)
+      queue.adjustEngine("stats", { true }) { stats.apply(2) { calls.add(it) } }
+      yield()
+      assertEquals(listOf("script-binding", "stats/display-stats-toggle"), calls[2])
+      assertEquals(listOf("script-binding", "stats/display-page-2"), calls[3])
+      queue.adjustEngine("shader", { true }) { error("retired engine choice") }
+      queue.retire()
+      queue.awaitRetired()
+      assertEquals(false, queue.adjustEngine("shader", { true }) { error("closed queue") })
+      assertEquals(4, calls.size)
+    } finally { release.complete(Unit); owner.cancelAndJoin() }
+  }
+
+  @Test(timeout = 5000)
   fun cancelledAwaiterKeepsResourcesUntilActiveWorkFinishes() = runBlocking {
     val owner = Job()
     val entered = CompletableDeferred<Unit>()
