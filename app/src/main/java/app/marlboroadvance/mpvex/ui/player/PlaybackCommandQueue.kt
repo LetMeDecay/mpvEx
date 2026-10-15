@@ -101,6 +101,27 @@ internal class PlaybackCommandQueue(
     return accepted
   }
 
+  /** Returns only after the worker releases the caller's resources, even on cancellation. */
+  suspend fun awaitAuxiliary(isValid: () -> Boolean, action: suspend () -> Unit): Boolean {
+    val completion = kotlinx.coroutines.CompletableDeferred<Boolean>()
+    val interested = java.util.concurrent.atomic.AtomicBoolean(true)
+    var succeeded = false
+    auxiliary(
+      isValid = { interested.get() && isValid() },
+      cleanup = { completion.complete(succeeded) },
+    ) {
+      action()
+      succeeded = true
+    }
+    try {
+      return completion.await()
+    } finally {
+      interested.set(false)
+      // JNI can keep writing after the requesting UI disappears. Its file must remain alive.
+      kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { completion.await() }
+    }
+  }
+
   fun adjust(key: String, arguments: List<String>, isValid: () -> Boolean): Boolean =
     enqueueAdjustment(key, Command(arguments.toList(), isValid))
 

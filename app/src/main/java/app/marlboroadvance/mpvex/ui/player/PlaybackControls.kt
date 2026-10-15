@@ -26,5 +26,7 @@ internal interface PlaybackControls {
   fun setDebandSetting(setting: DebandSettings, value: Int)
   fun setDebanding(mode: Debanding)
   fun setAudioChannels(channels: app.marlboroadvance.mpvex.preferences.AudioChannels)
+  suspend fun stepFrame(backwards: Boolean, generation: Long): Boolean
+  suspend fun captureFrame(path: String, includeSubtitles: Boolean, generation: Long): Boolean
   fun stop()
 }

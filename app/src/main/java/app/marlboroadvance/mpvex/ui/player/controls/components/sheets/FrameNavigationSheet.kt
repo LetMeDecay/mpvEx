@@ -1,6 +1,8 @@
 package app.marlboroadvance.mpvex.ui.player.controls.components.sheets
 
-import app.marlboroadvance.mpvex.ui.player.MpvGateway
+import app.marlboroadvance.mpvex.ui.player.LocalPlaybackControls
+import app.marlboroadvance.mpvex.ui.player.PlaybackControls
+import kotlinx.coroutines.CancellationException
 
 import android.content.Context
 import android.widget.Toast
@@ -59,6 +61,7 @@ import app.marlboroadvance.mpvex.preferences.preference.collectAsState
 import app.marlboroadvance.mpvex.presentation.components.PlayerSheet
 import app.marlboroadvance.mpvex.ui.theme.spacing
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -80,6 +83,9 @@ fun FrameNavigationSheet(
   onDismissRequest: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
+  val controls = LocalPlaybackControls.current
+  val playback by controls.state.collectAsState()
+  val generation = playback.generation
   val context = LocalContext.current
   val coroutineScope = rememberCoroutineScope()
   var isSnapshotLoading by remember { mutableStateOf(false) }
@@ -96,18 +102,10 @@ fun FrameNavigationSheet(
   val currentOnUnpause by rememberUpdatedState(onUnpause)
   val currentOnUpdateFrameInfo by rememberUpdatedState(onUpdateFrameInfo)
 
-  // Use the same logic as PlayerControls for pause state
-  val paused by MpvGateway.propBoolean["pause"].collectAsState()
-  val isPaused = paused ?: false
-
-  // Remember the initial pause state when the sheet opens
-  val wasPausedInitially = remember { isPaused }
-
-  // Use the same logic as PlayerControls for position and duration
-  val position by MpvGateway.propInt["time-pos"].collectAsState()
-  val duration by MpvGateway.propInt["duration"].collectAsState()
-  val pos = position ?: 0
-  val dur = duration ?: 0
+  val isPaused = playback.paused
+  val wasPausedInitially = remember(generation) { isPaused }
+  val pos = playback.position.toInt()
+  val dur = playback.duration?.toInt() ?: 0
 
   // Format timestamp based on current position
   val timestamp =
@@ -119,12 +117,12 @@ fun FrameNavigationSheet(
     }
 
   // Pause playback when the sheet opens
-  LaunchedEffect(Unit) {
+  LaunchedEffect(generation) {
     currentOnPause()
   }
 
   // Continuously update frame info as video plays
-  LaunchedEffect(Unit) {
+  LaunchedEffect(generation) {
     while (true) {
       currentOnUpdateFrameInfo()
       delay(100L)
@@ -132,9 +130,9 @@ fun FrameNavigationSheet(
   }
 
   // Only resume playback when closing if it wasn't paused initially
-  DisposableEffect(Unit) {
+  DisposableEffect(generation) {
     onDispose {
-      if (!wasPausedInitially) {
+      if (!wasPausedInitially && controls.state.value.generation == generation) {
         currentOnUnpause()
       }
     }
@@ -144,29 +142,21 @@ fun FrameNavigationSheet(
     FrameNavigationCard(
       onPreviousFrame = {
         if (!isFrameStepping) {
+          isFrameStepping = true
           coroutineScope.launch {
-            // Pause if not already paused
-            if (!isPaused) {
-              currentOnPause()
-              delay(50)
-            }
-            MpvGateway.command("no-osd", "frame-back-step")
-            delay(100)
-            currentOnUpdateFrameInfo()
+            try {
+              if (controls.stepFrame(true, generation)) currentOnUpdateFrameInfo()
+            } finally { isFrameStepping = false }
           }
         }
       },
       onNextFrame = {
         if (!isFrameStepping) {
+          isFrameStepping = true
           coroutineScope.launch {
-            // Pause if not already paused
-            if (!isPaused) {
-              currentOnPause()
-              delay(50)
-            }
-            MpvGateway.command("no-osd", "frame-step")
-            delay(100)
-            currentOnUpdateFrameInfo()
+            try {
+              if (controls.stepFrame(false, generation)) currentOnUpdateFrameInfo()
+            } finally { isFrameStepping = false }
           }
         }
       },
@@ -180,7 +170,7 @@ fun FrameNavigationSheet(
         coroutineScope.launch {
           isSnapshotLoading = true
           try {
-            takeSnapshot(context, includeSubtitlesInSnapshot)
+            takeSnapshot(context, includeSubtitlesInSnapshot, controls, generation)
           } finally {
             isSnapshotLoading = false
           }
@@ -596,138 +586,59 @@ private fun IncludeSubsToggle(
 private suspend fun takeSnapshot(
   context: Context,
   includeSubtitles: Boolean,
-) {
-  withContext(Dispatchers.IO) {
-    try {
-      // Note: This function relies on the app's permission infrastructure:
-      // - READ_EXTERNAL_STORAGE (all versions)
-      // - WRITE_EXTERNAL_STORAGE (Android 9 and below, maxSdkVersion="28")
-      // - MANAGE_EXTERNAL_STORAGE (Android 11+, provides full file access)
-      // Permissions are handled at the app level before reaching player functionality.
-
-      // Generate filename with timestamp
-      val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-      val filename = "mpv_snapshot_$timestamp.png"
-
-      // Create a temporary file first
-      val tempFile = File(context.cacheDir, filename)
-
-      // Take screenshot using MPV to temp file, with or without subtitles
-      if (includeSubtitles) {
-        MpvGateway.command("screenshot-to-file", tempFile.absolutePath, "subtitles")
-      } else {
-        MpvGateway.command("screenshot-to-file", tempFile.absolutePath, "video")
+  controls: PlaybackControls,
+  generation: Long,
+) = withContext(Dispatchers.IO) {
+  var tempFile: File? = null
+  var pendingImage: android.net.Uri? = null
+  var pendingLegacy: File? = null
+  val resolver = context.contentResolver
+  try {
+    val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.getDefault()).format(Date())
+    val file = File.createTempFile("mpv_snapshot_", ".png", context.cacheDir)
+    tempFile = file
+    val filename = "mpv_snapshot_${timestamp}_${file.name.removePrefix("mpv_snapshot_")}"
+    if (!controls.captureFrame(file.absolutePath, includeSubtitles, generation)) return@withContext
+    check(file.length() > 0L) { context.getString(R.string.snapshot_create_failed) }
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+      val values = android.content.ContentValues().apply {
+        put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, filename)
+        put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png")
+        put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "${android.os.Environment.DIRECTORY_PICTURES}/mpvSnaps")
+        put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
       }
-
-      // Wait a bit for MPV to finish writing the file
-      delay(200)
-
-      // Check if file was created
-      if (!tempFile.exists() || tempFile.length() == 0L) {
-        withContext(Dispatchers.Main) {
-          Toast.makeText(
-            context,
-            context.getString(R.string.snapshot_create_failed),
-            Toast.LENGTH_SHORT,
-          ).show()
-        }
-        return@withContext
+      val uri = checkNotNull(resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)) {
+        context.getString(R.string.snapshot_media_store_entry_failed)
       }
-
-      // Use different methods based on Android version
-      if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-        // Android 10+ - Use MediaStore with RELATIVE_PATH
-        val contentValues =
-          android.content.ContentValues().apply {
-            put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, filename)
-            put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png")
-            put(
-              android.provider.MediaStore.Images.Media.RELATIVE_PATH,
-              "${android.os.Environment.DIRECTORY_PICTURES}/mpvSnaps",
-            )
-            put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
-          }
-
-        val resolver = context.contentResolver
-        val imageUri =
-          resolver.insert(
-            android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            contentValues,
-          )
-
-        if (imageUri != null) {
-          // Copy temp file to MediaStore
-          resolver.openOutputStream(imageUri)?.use { outputStream ->
-            tempFile.inputStream().use { inputStream ->
-              inputStream.copyTo(outputStream)
-            }
-          }
-
-          // Mark as finished
-          contentValues.clear()
-          contentValues.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
-          resolver.update(imageUri, contentValues, null, null)
-
-          // Delete temp file
-          tempFile.delete()
-
-          // Show success toast
-          withContext(Dispatchers.Main) {
-            Toast
-              .makeText(
-                context,
-                context.getString(R.string.player_sheets_frame_navigation_snapshot_saved),
-                Toast.LENGTH_SHORT,
-              ).show()
-          }
-        } else {
-          throw Exception(context.getString(R.string.snapshot_media_store_entry_failed))
-        }
-      } else {
-        // Android 9 and below - Use legacy external storage
-        val picturesDir =
-          android.os.Environment.getExternalStoragePublicDirectory(
-            android.os.Environment.DIRECTORY_PICTURES,
-          )
-        val snapshotsDir = File(picturesDir, "mpvSnaps")
-
-        // Create directory if it doesn't exist
-        if (!snapshotsDir.exists()) {
-          val created = snapshotsDir.mkdirs()
-          if (!created && !snapshotsDir.exists()) {
-              throw Exception(context.getString(R.string.snapshot_directory_create_failed))
-          }
-        }
-
-        val destFile = File(snapshotsDir, filename)
-        tempFile.copyTo(destFile, overwrite = true)
-        tempFile.delete()
-
-        // Notify media scanner about the new file
-        android.media.MediaScannerConnection.scanFile(
-          context,
-          arrayOf(destFile.absolutePath),
-          arrayOf("image/png"),
-          null,
-        )
-
-        withContext(Dispatchers.Main) {
-          Toast
-            .makeText(
-              context,
-              context.getString(R.string.player_sheets_frame_navigation_snapshot_saved),
-              Toast.LENGTH_SHORT,
-            ).show()
-        }
-      }
-    } catch (e: Exception) {
-      withContext(Dispatchers.Main) {
-        Toast.makeText(
-          context,
-          context.getString(R.string.snapshot_save_failed, e.message.orEmpty()),
-          Toast.LENGTH_LONG,
-        ).show()
-      }
+      pendingImage = uri
+      checkNotNull(resolver.openOutputStream(uri)).use { output -> file.inputStream().use { it.copyTo(output) } }
+      kotlinx.coroutines.currentCoroutineContext().ensureActive()
+      values.clear()
+      values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
+      check(resolver.update(uri, values, null, null) > 0)
+      pendingImage = null
+    } else {
+      val directory = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES), "mpvSnaps")
+      check(directory.isDirectory || directory.mkdirs()) { context.getString(R.string.snapshot_directory_create_failed) }
+      val destination = File(directory, filename)
+      pendingLegacy = destination
+      file.copyTo(destination)
+      kotlinx.coroutines.currentCoroutineContext().ensureActive()
+      android.media.MediaScannerConnection.scanFile(context, arrayOf(destination.absolutePath), arrayOf("image/png"), null)
+      pendingLegacy = null
     }
+    withContext(Dispatchers.Main) {
+      Toast.makeText(context, context.getString(R.string.player_sheets_frame_navigation_snapshot_saved), Toast.LENGTH_SHORT).show()
+    }
+  } catch (cancelled: CancellationException) {
+    throw cancelled
+  } catch (_: Exception) {
+    withContext(Dispatchers.Main) {
+      Toast.makeText(context, context.getString(R.string.snapshot_create_failed), Toast.LENGTH_LONG).show()
+    }
+  } finally {
+    pendingImage?.let { runCatching { resolver.delete(it, null, null) } }
+    pendingLegacy?.delete()
+    tempFile?.delete()
   }
 }

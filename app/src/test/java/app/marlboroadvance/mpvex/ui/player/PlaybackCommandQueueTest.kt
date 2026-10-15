@@ -17,6 +17,59 @@ import kotlin.coroutines.ContinuationInterceptor
 
 class PlaybackCommandQueueTest {
   @Test(timeout = 5000)
+  fun cancelledAwaiterKeepsResourcesUntilActiveWorkFinishes() = runBlocking {
+    val owner = Job()
+    val entered = CompletableDeferred<Unit>()
+    val release = CompletableDeferred<Unit>()
+    var released = false
+    val queue = PlaybackCommandQueue(CoroutineScope(coroutineContext + owner),
+      coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
+      execute = {}, onFailure = { throw AssertionError(it) })
+    try {
+      val caller = async {
+        try {
+          queue.awaitAuxiliary({ true }) {
+            withContext(NonCancellable) { entered.complete(Unit); release.await() }
+            assertEquals(false, released)
+          }
+        } finally { released = true }
+      }
+      entered.await()
+      caller.cancel()
+      yield()
+      assertEquals(false, caller.isCompleted)
+      assertEquals(false, released)
+      release.complete(Unit)
+      caller.join()
+      assertEquals(true, released)
+      queue.retire()
+      queue.awaitRetired()
+    } finally { release.complete(Unit); owner.cancelAndJoin() }
+  }
+
+  @Test(timeout = 5000)
+  fun replacementReleasesPendingAwaiterWithoutRunningItsAction() = runBlocking {
+    val owner = Job()
+    val entered = CompletableDeferred<Unit>()
+    val release = CompletableDeferred<Unit>()
+    val queue = PlaybackCommandQueue(CoroutineScope(coroutineContext + owner),
+      coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
+      execute = {}, onFailure = { throw AssertionError(it) })
+    try {
+      queue.loadAction({ true }) { entered.complete(Unit); release.await() }
+      entered.await()
+      val caller = async { queue.awaitAuxiliary({ true }) { error("stale capture executed") } }
+      yield()
+      queue.load(listOf("loadfile", "next")) { true }
+      assertEquals(false, caller.await())
+      release.complete(Unit)
+      queue.retire()
+      queue.awaitRetired()
+    } finally { release.complete(Unit); owner.cancelAndJoin() }
+  }
+
+
+  @Test(timeout = 5000)
   fun multiCommandAdjustmentsKeepOnlyLatestChoiceAndStayTogether() = runBlocking {
     val owner = Job()
     val entered = CompletableDeferred<Unit>()

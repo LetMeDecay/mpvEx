@@ -235,6 +235,24 @@ class PlayerViewModel(
       } else requestSetting(reverse.property, "")
       requestSetting(channels.property, channels.value)
     }
+    override suspend fun stepFrame(backwards: Boolean, generation: Long): Boolean = withContext(Dispatchers.Main) {
+      if (generation != playbackSession.generation || !playbackSession.loaded || stopPlaybackJob != null) return@withContext false
+      playbackSession.cancelRestoration()
+      playbackCommands.awaitAuxiliary(
+        isValid = { generation == playbackSession.generation && playbackSession.loaded && stopPlaybackJob == null },
+      ) {
+        MpvGateway.command("set", "pause", "yes")
+        MpvGateway.command("no-osd", if (backwards) "frame-back-step" else "frame-step")
+      }
+    }
+    override suspend fun captureFrame(path: String, includeSubtitles: Boolean, generation: Long): Boolean = withContext(Dispatchers.Main) {
+      if (generation != playbackSession.generation || !playbackSession.loaded || stopPlaybackJob != null) return@withContext false
+      playbackCommands.awaitAuxiliary(
+        isValid = { generation == playbackSession.generation && playbackSession.loaded && stopPlaybackJob == null },
+      ) {
+        MpvGateway.command("screenshot-to-file", path, if (includeSubtitles) "subtitles" else "video")
+      }
+    }
     override fun stop() { (host as? PlayerActivity)?.stopFromSystem() }
   }
 
