@@ -645,23 +645,51 @@ class PlayerViewModel(
   // ==================== Audio/Subtitle Management ====================
 
   fun addAudio(uri: Uri) {
+    val generation = playbackSession.generation
+    fun isCurrent() = generation == playbackSession.generation
+    suspend fun showFailure() = withContext(Dispatchers.Main) {
+      if (isCurrent()) showToast(host.context.getString(R.string.failed_load_audio_invalid_uri))
+    }
     viewModelScope.launch(Dispatchers.IO) {
-      runCatching {
-        val path =
-          uri.resolveUri(host.context)
-            ?: return@launch withContext(Dispatchers.Main) {
-              showToast(host.context.getString(R.string.failed_load_audio_invalid_uri))
+      var source: PlayableSource? = null
+      var enqueued = false
+      try {
+        if (!isCurrent()) return@launch
+        val resolved = uri.openPlayableSource(host.context)
+        if (resolved == null) {
+          showFailure()
+          return@launch
+        }
+        source = resolved
+        var retained = false
+        val accepted = playbackCommands.auxiliary(
+          isValid = ::isCurrent,
+          cleanup = { if (!retained) resolved.close() },
+        ) {
+          try {
+            if (!isCurrent() || !MpvGateway.retainExtraSource(resolved)) return@auxiliary
+            retained = true
+            MpvGateway.command("audio-add", resolved.path, "cached")
+            withContext(Dispatchers.Main) {
+              if (!isCurrent()) return@withContext
+              mpvPathToUriMap[resolved.path] = uri.toString()
+              showToast(host.context.getString(R.string.audio_track_added))
             }
-
-        MpvGateway.command("audio-add", path, "cached")
-        withContext(Dispatchers.Main) {
-          showToast(host.context.getString(R.string.audio_track_added))
+          } catch (cancelled: CancellationException) {
+            throw cancelled
+          } catch (_: Exception) {
+            showFailure()
+          }
         }
-      }.onFailure { e ->
-        withContext(Dispatchers.Main) {
-          showToast(host.context.getString(R.string.failed_load_audio, e.message.orEmpty()))
-        }
-        android.util.Log.e("PlayerViewModel", "Error adding audio", e)
+        // The queue takes ownership even when capacity or retirement rejects it.
+        enqueued = true
+        if (!accepted) showFailure()
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (_: Exception) {
+        showFailure()
+      } finally {
+        if (!enqueued) source?.close()
       }
     }
   }
