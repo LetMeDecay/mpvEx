@@ -19,5 +19,6 @@
 - 本批验证：21 项队列、统计控制和状态检查通过；146 / 1.2.9-rev1015.2 完整 Release/R8/lintVital 编译通过（合计 2m31s），已签名交付。日志/清单见 `.tmp/controls-146/`，前批检查查 Git 与 `.tmp/remaining-20261013/`。
 - 本批 P7 WebDAV 播放失效排查：用户日志显示 WebDAV 服务器用 Basic 401 质询（Sardine 元数据路径经质询重试可用），播放黑屏无进度；代理 WebDAV 通道未随日志给出状态。按最可能机制加固：忽略 Range 的 200 响应仅对「起点 0 且 >2MiB」的大请求放行（播放），有界请求仍拒绝 200 以免缩略图整文件下载；文件大小未知（Sardine 缺 getcontentlength 返回 -1）时不再一律 416，起点 0 改为整段流；WebDAV range 失败日志附带异常消息（含远端状态）。认证预置头已发送，未改认证策略。新增 2 项 WebDavRangeSource 检查。
 - 本批验证：全量 Standard Debug 单元测试通过（含新增 2 项），未连接设备。
+- 最新已交付：代码 `642f7b2`，Release 1.2.9-rev1016，versionCode 147（ABI 1470–1474）；`../release/` 五种已签名 APK + idsig，原证书与版本递增校验通过。清单/日志见 `.tmp/webdav-playback-20261016/`。
 - 当前 PATH 无可用 ADB 命令；未安装、未做启动健康或功能/性能验收，WebDAV 1–2 秒等待与进度恢复尚无设备结论。不要把首次 UI 绘制当视频首帧。
 - 下一步：其余业务控制与完整元数据入口、外部音轨重启恢复；P5 native 生命周期接口缺失的具体阻塞见 ISSUES，不能把现有兼容层称为完整 Coordinator。方案见 REFACTOR_PLAN.md，未解决项仅见 PROJECT_ISSUES.md；历史查 Git。
