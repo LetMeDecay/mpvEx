@@ -73,6 +73,20 @@ class WebDavRangeSourceTest {
     assertEquals(0, cache.entryCount())
   }
 
+  @Test fun ignoredRangeIsStreamedForLargeFromStartRequest() {
+    // A server that ignores Range answers 200 with the whole body. A large read
+    // from 0 (player playback) must stream it instead of failing with 500.
+    assertArrayEquals(data, source(status = 200).open(0, data.lastIndex.toLong()).use { it.readBytes() })
+    assertEquals(0, cache.entryCount())
+  }
+
+  @Test fun ignoredRangeAtNonZeroOffsetIsStillRejected() {
+    try {
+      source(status = 200).open(32, data.lastIndex.toLong()).use { it.readBytes() }
+      fail("Ignored range accepted at non-zero offset")
+    } catch (_: IOException) { }
+  }
+
   @Test fun cachedInteriorRangeStartsAtRequestedOffset() {
     cache.put("file-v1", 0, 31, data.copyOfRange(0, 32))
     assertArrayEquals(data.copyOfRange(7, 48), source().open(7, 47).use { it.readBytes() })

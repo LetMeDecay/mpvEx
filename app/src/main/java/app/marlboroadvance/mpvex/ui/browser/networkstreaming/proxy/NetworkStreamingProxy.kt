@@ -294,7 +294,19 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
       }
     }
 
-    if (fileSize <= 0 || start >= fileSize) {
+    if (fileSize <= 0) {
+      // Some WebDAV servers omit getcontentlength and the PROPFIND re-probe
+      // returns the same unknown value. A range cannot be validated without a
+      // total, so a read from the beginning is served in full (chunked) instead
+      // of failing every player request with 416 Range Not Satisfiable.
+      if (start == 0L) return handleFullRequest(session, streamInfo, owner)
+      return newFixedLengthResponse(
+        Response.Status.RANGE_NOT_SATISFIABLE,
+        MIME_PLAINTEXT,
+        "Range out of bounds",
+      )
+    }
+    if (start >= fileSize) {
       return newFixedLengthResponse(
         Response.Status.RANGE_NOT_SATISFIABLE,
         MIME_PLAINTEXT,
@@ -783,7 +795,9 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     return try {
       webDavSource(streamInfo, owner).open(offset, end)
     } catch (e: Exception) {
-      Log.w(TAG, "Unable to open WebDAV range (${e.javaClass.simpleName})")
+      // Include the message: it carries the remote HTTP status/mismatch reason
+      // needed to diagnose playback failures without a device request trace.
+      Log.w(TAG, "Unable to open WebDAV range (${e.javaClass.simpleName}: ${e.message})")
       null
     }
   }

@@ -65,6 +65,16 @@ internal class WebDavRangeSource(
     val builder = request.newBuilder().header("Range", "bytes=$start-$end").header("Accept-Encoding", "identity")
     strongEtag?.let { builder.header("If-Match", it) }
     return execute(builder.build(), requestOwner) { response ->
+      // A server that ignores Range answers 200. For a large read from the start
+      // (player playback) streaming that body is correct; bounded reads keep
+      // rejecting 200 so a thumbnail/probe cannot trigger a full-file download.
+      val ignoredRange = response.code == 200 && start == 0L && count > RangeSegmentCache.MAX_SEGMENT_BYTES
+      if (ignoredRange) {
+        if (response.header("Content-Encoding")?.let { it != "identity" } == true) {
+          throw IOException("Encoded response rejected")
+        }
+        return@execute
+      }
       if (response.code != 206) throw IOException("Range rejected (HTTP ${response.code})")
       if (response.header("Content-Range") != "bytes $start-$end/$size") throw IOException("Mismatched range")
       val returnedEtag = response.header("ETag")

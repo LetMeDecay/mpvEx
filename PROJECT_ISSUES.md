@@ -5,6 +5,7 @@
 ## 待设备证据
 
 - WebDAV 点击后界面等待 1–2 秒：已有 native 库预加载与 PlayerStartup 分段日志；没有冷/热启动耗时结果，不能宣称已解决。分析见 REEX_STARTUP_REVIEW.md。重构按 REFACTOR_PLAN.md 分阶段推进。
+- WebDAV 播放黑屏无进度（2026-10-16）：用户日志确认服务器需 Basic 质询认证、播放黑屏、无异常栈；播放尝试窗口的 main buffer 已被 verbose 日志覆盖，未见代理状态。已加固代理的 WebDAV Range/大小处理（见 PROJECT_CONTEXT P7），但**根因未由设备日志确认**；应复现后抓 `NetworkStreamingProxy`（含异常消息）与 mpv `END_FILE reason`。认证预置头在调用前已发送；未改认证/直连策略。
 - 进度两侧为 0：`b031b1d` 已增加 RESTART 加载确认恢复；首次 FILE_LOADED 未被接受的具体条件和设备验收结果仍未知。
 
 ## 代码修复状态
