@@ -73,10 +73,11 @@ class WebDavRangeSourceTest {
     assertEquals(0, cache.entryCount())
   }
 
-  @Test fun ignoredRangeIsStreamedForLargeFromStartRequest() {
-    // A server that ignores Range answers 200 with the whole body. A large read
-    // from 0 (player playback) must stream it instead of failing with 500.
-    assertArrayEquals(data, source(status = 200).open(0, data.lastIndex.toLong()).use { it.readBytes() })
+  @Test fun ignoredRangeRemainsRejectedForLargeProbeReads() {
+    try {
+      source(status = 200).open(0, data.lastIndex.toLong()).use { it.readBytes() }
+      fail("Probe accepted full response")
+    } catch (_: IOException) { }
     assertEquals(0, cache.entryCount())
   }
 

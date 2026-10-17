@@ -41,6 +41,63 @@ internal class WebDavRangeSource(
     })
   }
 
+  data class PlaybackResponse(val status: Int, val length: Long, val contentRange: String?,
+    val acceptRanges: String?, val stream: InputStream)
+
+  /** Playback preserves upstream HTTP semantics; probe/cache reads remain strictly bounded. */
+  fun openPlayback(range: String?, head: Boolean = false): PlaybackResponse {
+    val requested = range?.let { Regex("bytes=([0-9]*)-([0-9]*)").matchEntire(it) }
+    if (range != null && (requested == null || requested.groupValues.drop(1).all { it.isEmpty() } ||
+      requested.groupValues.drop(1).any { it.isNotEmpty() && it.toLongOrNull() == null })) {
+      throw IOException("Invalid playback range")
+    }
+    val builder = request.newBuilder().header("Accept-Encoding", "identity")
+    if (head) builder.head() else builder.get()
+    if (range != null && !head) builder.header("Range", range) else builder.removeHeader("Range")
+    strongEtag?.let { builder.header("If-Match", it) }
+    var status = 0
+    var length = -1L
+    var contentRange: String? = null
+    var acceptRanges: String? = null
+    val stream = execute(builder.build(), owner) { response ->
+      status = response.code
+      if (status != 200 && status != 206 && status != 416) throw WebDavHttpStatusException(status)
+      if (response.header("Content-Encoding")?.equals("identity", ignoreCase = true) == false) {
+        throw IOException("Encoded playback response rejected")
+      }
+      val returnedEtag = response.header("ETag")
+      if (strongEtag != null && returnedEtag != null && returnedEtag != strongEtag) throw IOException("File version changed")
+      length = if (head) response.header("Content-Length")?.toLongOrNull() ?: -1L
+        else response.body?.contentLength() ?: -1L
+      acceptRanges = response.header("Accept-Ranges")?.takeIf { it == "bytes" || it == "none" }
+      if (status == 416) {
+        contentRange = response.header("Content-Range")?.takeIf { Regex("bytes \\*/[0-9]+").matches(it) }
+        return@execute
+      }
+      if (status == 206) {
+        val header = response.header("Content-Range") ?: throw IOException("Missing playback range")
+        val actual = Regex("bytes ([0-9]+)-([0-9]+)/([0-9]+|\\*)").matchEntire(header)
+          ?: throw IOException("Invalid playback range response")
+        val start = actual.groupValues[1].toLongOrNull() ?: throw IOException("Invalid range start")
+        val end = actual.groupValues[2].toLongOrNull() ?: throw IOException("Invalid range end")
+        val total = actual.groupValues[3].takeUnless { it == "*" }?.toLongOrNull()
+        if (requested == null || head || end < start || end == Long.MAX_VALUE ||
+          (actual.groupValues[3] != "*" && (total == null || total <= end))) throw IOException("Invalid range bounds")
+        val expectedStart = if (requested.groupValues[1].isNotEmpty()) requested.groupValues[1].toLongOrNull()
+          else requested.groupValues[2].toLongOrNull()?.takeIf { it > 0 }?.let { suffix -> total?.let { (it - suffix).coerceAtLeast(0) } }
+        val expectedEnd = if (requested.groupValues[1].isNotEmpty()) requested.groupValues[2].takeIf { it.isNotEmpty() }?.toLongOrNull() else null
+        if (start != expectedStart || (expectedEnd != null && end > expectedEnd)) throw IOException("Mismatched playback range")
+        val count = end - start + 1
+        if (length >= 0 && length != count) throw IOException("Mismatched playback length")
+        length = count
+        contentRange = header
+      }
+      // A 200 response to Range means the whole representation, even for nonzero offsets.
+      // Forward it as 200 so the demuxer can decide whether sequential playback is possible.
+    }
+    return PlaybackResponse(status, length, contentRange, acceptRanges, owner.own(stream))
+  }
+
   private fun openRemote(start: Long, end: Long): InputStream {
     val count = end - start + 1
     if (count <= RangeSegmentCache.MAX_SEGMENT_BYTES) {
@@ -65,16 +122,6 @@ internal class WebDavRangeSource(
     val builder = request.newBuilder().header("Range", "bytes=$start-$end").header("Accept-Encoding", "identity")
     strongEtag?.let { builder.header("If-Match", it) }
     return execute(builder.build(), requestOwner) { response ->
-      // A server that ignores Range answers 200. For a large read from the start
-      // (player playback) streaming that body is correct; bounded reads keep
-      // rejecting 200 so a thumbnail/probe cannot trigger a full-file download.
-      val ignoredRange = response.code == 200 && start == 0L && count > RangeSegmentCache.MAX_SEGMENT_BYTES
-      if (ignoredRange) {
-        if (response.header("Content-Encoding")?.let { it != "identity" } == true) {
-          throw IOException("Encoded response rejected")
-        }
-        return@execute
-      }
       if (response.code != 206) throw IOException("Range rejected (HTTP ${response.code})")
       if (response.header("Content-Range") != "bytes $start-$end/$size") throw IOException("Mismatched range")
       val returnedEtag = response.header("ETag")
@@ -106,3 +153,5 @@ internal class WebDavRangeSource(
     }
   }
 }
+
+internal class WebDavHttpStatusException(val status: Int) : IOException("WebDAV HTTP $status")

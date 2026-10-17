@@ -240,7 +240,10 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
       return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Stream retired")
     }
     return try {
-      val response = if (session.method != Method.HEAD && rangeHeader != null && rangeHeader.startsWith("bytes=")) {
+      val response = if (playingStreamId == streamId &&
+        streamInfo.client is app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.WebDavClient) {
+        handleWebDavPlayback(session, streamInfo, owner)
+      } else if (session.method != Method.HEAD && rangeHeader != null && rangeHeader.startsWith("bytes=")) {
         handleRangeRequest(session, streamInfo, rangeHeader, owner)
       } else {
         handleFullRequest(session, streamInfo, owner)
@@ -249,13 +252,29 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
       response
     } catch (e: Exception) {
       owner.close()
-      Log.e(TAG, "Proxy request failed (${e.javaClass.simpleName})")
+      Log.e(TAG, "Proxy request failed (${if (e is WebDavHttpStatusException) "WebDAV HTTP ${e.status}" else e.javaClass.simpleName})")
       newFixedLengthResponse(
         Response.Status.INTERNAL_ERROR,
         MIME_PLAINTEXT,
         "Unable to read stream",
       )
     }
+  }
+
+  private fun handleWebDavPlayback(session: IHTTPSession, info: StreamInfo, owner: ProxyRequestScope): Response {
+    // GET/HEAD metadata is authoritative for playback. Do not block on PROPFIND size,
+    // fabricate seek support, or reuse the probe cache's exact-range validation.
+    val remote = webDavSource(info, owner).openPlayback(session.headers["range"], session.method == Method.HEAD)
+    val status = when (remote.status) {
+      206 -> Response.Status.PARTIAL_CONTENT
+      416 -> Response.Status.RANGE_NOT_SATISFIABLE
+      else -> Response.Status.OK
+    }
+    val response = if (remote.length >= 0) newFixedLengthResponse(status, info.mimeType, remote.stream, remote.length)
+      else newChunkedResponse(status, info.mimeType, remote.stream)
+    remote.contentRange?.let { response.addHeader("Content-Range", it) }
+    remote.acceptRanges?.let { response.addHeader("Accept-Ranges", it) }
+    return response
   }
 
   private fun handleRangeRequest(
@@ -795,9 +814,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     return try {
       webDavSource(streamInfo, owner).open(offset, end)
     } catch (e: Exception) {
-      // Include the message: it carries the remote HTTP status/mismatch reason
-      // needed to diagnose playback failures without a device request trace.
-      Log.w(TAG, "Unable to open WebDAV range (${e.javaClass.simpleName}: ${e.message})")
+      Log.w(TAG, "Unable to open WebDAV probe range (${e.javaClass.simpleName})")
       null
     }
   }
