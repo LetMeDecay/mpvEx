@@ -15,8 +15,8 @@
 - 附加音轨已改为 IO 打开独立资源租约，audio-add 按代次进入同一有界队列；迟到结果不写入新视频，未交付资源确定关闭，原 URI 映射供稳定轨道描述使用。外部音轨 URI 尚未持久化，不能宣称重启后自动恢复。
 - 逐帧/截图接入 typed 控制和同一串行队列；暂停与单帧命令按组执行，截图等待命令完成并核对非空文件，不再固定等待。调用方取消后等待正在执行的 native 工作结束才释放文件；MediaStore 空输出/发布失败及取消会清理未发布条目，临时文件使用独立名称。面板时间线改用当前代次快照，旧面板关闭不恢复新视频。
 - 统计页按已执行选择计算显示切换，连续点击合并后不误切换；Anime4K 着色器准备与应用串行，移除面板独立 IO 作业及空回调。视频宽高随代次发布，用于面板分辨率判断；换片清空，旧代次结果不回填。
-- 最新已交付：代码 `642f7b2`，Release 1.2.9-rev1016，versionCode 147（ABI 1470–1474）；`../release/` 五种已签名 APK + idsig，原证书与版本递增校验通过。清单/日志见 `.tmp/webdav-playback-20261016/`。
+- 最新已交付：代码 `c0be40e`，Release 1.2.9-rev1017，versionCode 148（ABI 1480–1484）；`../release/` 五种 APK + idsig，原证书、包名、版本递增、签名、16KB ZIP 对齐及交付哈希均通过。清单/日志见 `.tmp/webdav-black-screen-20261017/`。
 - 当前 PATH 无可用 ADB 命令；未安装、未做启动健康或功能/性能验收，WebDAV 1–2 秒等待与进度恢复尚无设备结论。不要把首次 UI 绘制当视频首帧。
 - 当前黑屏修复：审查 OpenCode 的 147 版；用户尚未测试该版，原设备根因仍未确认。实际播放按活动 streamId 使用独立 HTTP 适配：直接 GET/HEAD，不以 PROPFIND 大小校验；保留上游 200/206/416、长度和范围，接受合法缩短 206，未知长度使用 chunked，不伪造定位能力。播放不再拼接探测缓存；后台探测继续严格 Range/缓存边界。认证策略未变，HTTP 失败只记录状态码，不记录远端异常消息。
-- 本批验证：20 项 WebDAV 播放/探测与请求资源检查通过（47s）；148 / 1.2.9-rev1017 首次 Release 在 R8/lintVital 阶段遭内核 OOM kill（pid 已核对）；改用单 worker、1536MiB heap 和 2 个 JVM 处理器重试，Release/R8/lintVital 已通过（3m12s），待签名交付。日志/清单见 `.tmp/webdav-black-screen-20261017/`；前批历史查 Git。
+- 本批验证：20 项 WebDAV 播放/探测与请求资源检查通过（47s）；148 / 1.2.9-rev1017 首次 Release 在 R8/lintVital 阶段遭内核 OOM kill（pid 已核对）；改用单 worker、1536MiB heap 和 2 个 JVM 处理器重试，Release/R8/lintVital 已通过（3m12s），已签名交付。日志/清单见 `.tmp/webdav-black-screen-20261017/`；前批历史查 Git。
 - 下一步：用户验证同一 WebDAV 文件的画面/声音/进度与定位；若仍失败，按代理 HTTP 状态和 native END_FILE/Surface 日志定位。其余重构待本问题确认后继续，边界见 PROJECT_ISSUES.md。
