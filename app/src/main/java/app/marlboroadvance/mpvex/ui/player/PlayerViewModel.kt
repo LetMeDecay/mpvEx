@@ -1164,20 +1164,19 @@ class PlayerViewModel(
     brightnessSliderTimestamp.value = System.currentTimeMillis()
   }
 
-  fun changeVolumeBy(change: Int) {
-    val mpvVolume = MpvGateway.getPropertyInt("volume")
-    val absoluteMaxVolume = volumeBoostCap ?: (audioPreferences.volumeBoostCap.get() + 100)
-
-    if (absoluteMaxVolume > 100 && currentVolume.value == maxVolume) {
-      if (mpvVolume == 100 && change < 0) {
-        changeVolumeTo(currentVolume.value + change)
-      }
-      val finalMPVVolume = (mpvVolume?.plus(change))?.coerceAtLeast(100) ?: 100
-      if (finalMPVVolume in 100..absoluteMaxVolume) {
-        return changeMPVVolumeTo(finalMPVVolume)
-      }
+  /**
+   * Hardware volume keys follow the system media stream exactly: one step per key
+   * press, clamped to the system range, and never boosting mpv above 100. The
+   * gesture volume path keeps [changeVolumeTo] and [changeMPVVolumeTo] with its
+   * own boost handling.
+   */
+  fun changeSystemVolumeBy(change: Int) {
+    if (change == 0) return
+    val direction = if (change > 0) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
+    repeat(if (change > 0) change else -change) {
+      host.audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, 0)
     }
-    changeVolumeTo(currentVolume.value + change)
+    currentVolume.value = host.audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
   }
 
   fun changeVolumeTo(volume: Int) {

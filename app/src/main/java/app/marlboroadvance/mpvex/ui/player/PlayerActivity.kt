@@ -2496,13 +2496,13 @@ class PlayerActivity :
       }
 
       KeyEvent.KEYCODE_VOLUME_UP -> {
-        viewModel.changeVolumeBy(1)
+        viewModel.changeSystemVolumeBy(1)
         viewModel.displayVolumeSlider()
         return true
       }
 
       KeyEvent.KEYCODE_VOLUME_DOWN -> {
-        viewModel.changeVolumeBy(-1)
+        viewModel.changeSystemVolumeBy(-1)
         viewModel.displayVolumeSlider()
         return true
       }
