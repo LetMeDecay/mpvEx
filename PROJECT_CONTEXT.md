@@ -17,6 +17,7 @@
 - 统计页按已执行选择计算显示切换，连续点击合并后不误切换；Anime4K 着色器准备与应用串行，移除面板独立 IO 作业及空回调。视频宽高随代次发布，用于面板分辨率判断；换片清空，旧代次结果不回填。
 - 最新已交付：代码 `9e4a522`，Release 1.2.9-rev1020.3，versionCode 152（ABI 1520–1524）；`../release-rev1020.3/` 五种 APK + idsig，原证书、包名、版本递增、签名、对齐与交付哈希见 `delivery-rev1020.3.json`。历史交付在 `../release-rev1020.2/`、`release-rev1020.1/`、`release-rev1020/`、`release/`。
 - 当前 PATH 无可用 ADB 命令；未安装、未做启动健康或功能/性能验收，WebDAV 1–2 秒等待与进度恢复尚无设备结论。不要把首次 UI 绘制当视频首帧。
+- 已发布：GitHub Release `v1.2.9-rev1020.3`（LetMeDecay/mpvEx），7 个 APK（Standard 5 ABI + Play Store universal + F-Droid arm64）与 SHA-256 清单；tag 指向 `123bc3b`，`master` 已推送。
 - 死代码与方向修正（2026-10-20，rev1020.3）：删除不可达的 NetworkStreamingProvider（所有协议都走代理，provider 的 getUri 分支恒不执行）、NetworkClient.getFileUri、代理内未使用的 getStream/getStreamWithOffsetGeneric、CircularRevealShape、未使用的视频工厂与 seek-with-text、11 个无人处理的 user-data 观察；删除下一集预取链路（它写入的 RangeSegmentCache 播放路径并不读取，切集白下约 4MB）。时长/分辨率探测新增 MP4/Matroska 容器头直接解析（WebDAV 有界 head 1MB + tail 2MB，带鉴权），解析失败仍回退原有 MMR+代理路径；用真实 rclone 文件验证 S01E01/S01E00 时长与分辨率解析正确。
 - 浏览器/播放健壮性（2026-10-20，rev1020.2）：目录列表改为派生排序流（不再把排序结果写回源流，避免每次元数据更新二次排序）；列目录按 href 路径剔除集合自身，不再假设服务器把自身排第一；加载 20s 未就绪时标记 Failed，控件显示加载失败而不是一直转圈；WebDAV 播放请求在 408/429/5xx 或传输失败时、且响应体尚未交付前重试一次（客户端错误不重试）。设备验证：Bangumi→Fate→Season 1 列表无自身条目、14 集正常显示，WebDAV 播放正常；单测新增重试 3 例通过。
 - 启动/预览优化（2026-10-20，rev1020.1）：无外部配置目录时用输入指纹复用配置快照，未变更启动不再拷贝/哈希 15MB 字体（设备上 copy+sha256 约 40ms，冷盘更高）；内置资源每版本解包一次并硬链接进快照；点击播放时取消该目录的时长/缩略图探测并预热 WebDAV 上游连接；缩略图失败回退按解码模式批量取时间戳（批量不可用时回退单张）；磁盘预览缓存限制 256MB 并按 mtime 淘汰。设备验证：连续两次启动第二次无 stage 目录、快照目录 mtime 不变，本地与 WebDAV 播放正常。
