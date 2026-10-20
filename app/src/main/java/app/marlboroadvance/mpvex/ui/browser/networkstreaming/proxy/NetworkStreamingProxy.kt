@@ -3,6 +3,7 @@ package app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy
 import android.util.Log
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
+import app.marlboroadvance.mpvex.domain.network.NetworkProtocol
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkPlaybackPolicy
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.RangeSegmentCache
@@ -174,6 +175,26 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     if (playingStreamId != id) playingStreamId?.let { activeStreams[it]?.requests?.cancelActive() }
     playingStreamId = id
     NetworkPlaybackPolicy.shared.setPlayback(id)
+  }
+
+  /**
+   * Opens a WebDAV stream's upstream connection before the player asks for it.
+   * A HEAD keeps the pooled connection warm, so the first playback request only
+   * pays for its own response instead of connect + first byte.
+   */
+  fun warmStream(streamId: String) {
+    val info = activeStreams[streamId] ?: return
+    if (info.connection.protocol != NetworkProtocol.WEBDAV) return
+    cleanupScope.launch {
+      val owner = ProxyRequestScope()
+      try {
+        webDavSource(info, owner).openPlayback(range = null, head = true).stream.use { it.readBytes() }
+      } catch (e: Exception) {
+        Log.d(TAG, "Playback warm-up skipped (${e.javaClass.simpleName})")
+      } finally {
+        owner.close()
+      }
+    }
   }
 
   /**

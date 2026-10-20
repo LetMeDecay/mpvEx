@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 import java.io.File
+import java.nio.file.Files
+import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -23,11 +25,14 @@ internal object PlayerConfigRepository {
     try {
       return withContext(Dispatchers.IO) {
         val operationContext = coroutineContext
-        store(context).acquire { target ->
+        val snapshots = store(context)
+        // The fallback path (no external config tree) can be matched by a cheap
+        // fingerprint, which skips copying and hashing the bundled fonts entirely.
+        val fingerprint = fastFingerprint(context, request)
+        if (fingerprint != null) snapshots.reuse(fingerprint)?.let { return@withContext it }
+        snapshots.acquire { target ->
           operationContext.ensureActive()
-          for (asset in listOf("cacert.pem", "subfont.ttf")) {
-            context.assets.open(asset).use { input -> File(target, asset).outputStream().use(input::copyTo) }
-          }
+          copyAssets(context, target)
           val tree = request.directoryUri.takeIf { it.isNotBlank() }?.let {
             checkNotNull(DocumentFile.fromTreeUri(context, it.toUri()))
               .also { dir -> check(dir.exists() && dir.canRead()) { "Configuration directory unavailable" } }
@@ -57,8 +62,6 @@ internal object PlayerConfigRepository {
           val fonts = File(target, "fonts").apply { mkdirs() }
           val fontTree = children.firstOrNull { it.isDirectory && it.name.equals("fonts", true) }
           val fontFiles = fontTree?.let { listChildren(context, it) } ?: children
-          fun isFont(name: String) = name.substringAfterLast('.', "").lowercase() in
-            setOf("ttf", "otf", "ttc", "woff", "woff2")
           // Preserve fonts selected/imported through the existing preferences UI.
           File(context.filesDir, "fonts").takeIf { tree == null && request.fontsUri.isBlank() }?.listFiles()?.filter { it.isFile && isFont(it.name) }
             ?.forEach { it.copyTo(File(fonts, it.name), overwrite = true) }
@@ -73,7 +76,10 @@ internal object PlayerConfigRepository {
             }
           }
           operationContext.ensureActive()
-        }.also { acquired = it }
+        }.also { lease ->
+          acquired = lease
+          if (fingerprint != null && !lease.usedFallback) snapshots.remember(fingerprint, lease.directory)
+        }
       }
     } catch (failure: Throwable) {
       withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { acquired?.close() }
@@ -106,6 +112,72 @@ internal object PlayerConfigRepository {
     check(target.name != "." && target.name != "..")
     checkNotNull(context.contentResolver.openInputStream(source.uri)).use { input ->
       target.outputStream().use { output -> input.copyTo(output) }
+    }
+  }
+
+  private val fontExtensions = setOf("ttf", "otf", "ttc", "woff", "woff2")
+
+  private fun isFont(name: String): Boolean =
+    name.substringAfterLast('.', "").lowercase() in fontExtensions
+
+  /**
+   * Cheap identity for the common no-external-tree configuration, which lets an
+   * unchanged launch reuse its snapshot instead of copying and hashing the bundled
+   * fonts (about 15MB) again. Returns null when a SAF tree is configured, because
+   * its contents cannot be identified without reading them.
+   */
+  private fun fastFingerprint(context: Context, request: Request): String? {
+    if (request.directoryUri.isNotBlank() || request.fontsUri.isNotBlank()) return null
+    val digest = MessageDigest.getInstance("SHA-256")
+    fun put(value: String) {
+      digest.update(value.toByteArray(Charsets.UTF_8))
+      digest.update(0)
+    }
+    put("player-config-v1")
+    put(appUpdateStamp(context))
+    put(request.mpvConf)
+    put(request.inputConf)
+    File(context.filesDir, "fonts").listFiles().orEmpty()
+      .filter { it.isFile && isFont(it.name) }
+      .sortedBy { it.name }
+      .forEach { put("${it.name}:${it.length()}:${it.lastModified()}") }
+    return digest.digest().joinToString("") { "%02x".format(it) }
+  }
+
+  /** Changes on every app update, which is when bundled assets can change. */
+  private fun appUpdateStamp(context: Context): String = runCatching {
+    @Suppress("DEPRECATION")
+    context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime.toString()
+  }.getOrDefault("unknown")
+
+  private fun copyAssets(context: Context, target: File) {
+    val assets = File(context.filesDir, "player-assets/${appUpdateStamp(context)}")
+    for (name in listOf("cacert.pem", "subfont.ttf")) {
+      linkOrCopy(cachedAsset(context, assets, name), File(target, name))
+    }
+  }
+
+  /** Extracts a bundled asset once per app update, then hard-links it into snapshots. */
+  private fun cachedAsset(context: Context, directory: File, name: String): File {
+    val cached = File(directory, name)
+    if (cached.isFile && cached.length() > 0L) return cached
+    check(directory.isDirectory || directory.mkdirs())
+    val temporary = File(directory, "$name.tmp")
+    try {
+      context.assets.open(name).use { input -> temporary.outputStream().use(input::copyTo) }
+      check(temporary.renameTo(cached)) { "Unable to cache $name" }
+    } finally {
+      temporary.delete()
+    }
+    return cached
+  }
+
+  private fun linkOrCopy(source: File, target: File) {
+    target.delete()
+    try {
+      Files.createLink(target.toPath(), source.toPath())
+    } catch (_: Exception) {
+      source.copyTo(target, overwrite = true)
     }
   }
 }

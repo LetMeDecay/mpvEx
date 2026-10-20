@@ -67,8 +67,36 @@ internal class ConfigSnapshotStore(private val root: File) {
 
   private fun current(): File? {
     val name = File(root, "current").takeIf { it.isFile }?.readText() ?: return null
-    if (!name.matches(Regex("[0-9a-f]{64}"))) return null
+    if (!name.matches(DIRECTORY_NAME)) return null
     return File(root, name).takeIf { it.isDirectory }
+  }
+
+  /**
+   * Reuses the snapshot published for an identical input fingerprint without
+   * rebuilding (and re-hashing) the whole directory. Callers must only pass a
+   * fingerprint that covers every input the populate step would copy.
+   */
+  @Synchronized
+  fun reuse(fingerprint: String): Lease? {
+    val record = File(root, FINGERPRINT_FILE).takeIf { it.isFile }?.readLines() ?: return null
+    if (record.size != 2 || record[0] != fingerprint || !record[1].matches(DIRECTORY_NAME)) return null
+    val directory = File(root, record[1]).takeIf { it.isDirectory } ?: return null
+    val name = directory.name
+    readers[name] = (readers[name] ?: 0) + 1
+    return Lease(directory, false) { release(name) }
+  }
+
+  /** Records which fingerprint the currently published snapshot represents. */
+  @Synchronized
+  fun remember(fingerprint: String, directory: File) {
+    if (!directory.name.matches(DIRECTORY_NAME)) return
+    val record = File(root, ".fingerprint-${UUID.randomUUID()}")
+    try {
+      record.writeText(fingerprint + "\n" + directory.name)
+      Files.move(record.toPath(), File(root, FINGERPRINT_FILE).toPath(), ATOMIC_MOVE, REPLACE_EXISTING)
+    } finally {
+      record.delete()
+    }
   }
 
   @Synchronized
@@ -80,8 +108,13 @@ internal class ConfigSnapshotStore(private val root: File) {
 
   private fun prune() {
     val current = current()?.name
-    root.listFiles()?.filter { it.isDirectory && it.name.matches(Regex("[0-9a-f]{64}")) }
+    root.listFiles()?.filter { it.isDirectory && it.name.matches(DIRECTORY_NAME) }
       ?.filter { it.name != current && it.name !in readers }
       ?.forEach { it.deleteRecursively() }
+  }
+
+  private companion object {
+    const val FINGERPRINT_FILE = "fingerprint"
+    val DIRECTORY_NAME = Regex("[0-9a-f]{64}")
   }
 }

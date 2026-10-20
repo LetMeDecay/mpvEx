@@ -13,9 +13,39 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 /** Serialize file changes, but decode at most two immutable file snapshots outside the lock. */
-internal class ThumbnailDiskStore(private val root: File) {
+internal class ThumbnailDiskStore(
+  private val root: File,
+  private val maxBytes: Long = DEFAULT_MAX_BYTES,
+) {
+  companion object {
+    const val DEFAULT_MAX_BYTES = 256L * 1024 * 1024
+  }
+
   private val mutex = Mutex()
   private val decoders = Semaphore(2)
+
+  /**
+   * Evicts the oldest previews once the cache exceeds its budget. Runs under the
+   * same lock as writes, so it never deletes a file that is being published.
+   */
+  suspend fun trim(): Int = withContext(Dispatchers.IO) {
+    mutex.withLock {
+      val files = root.walkTopDown().filter { it.isFile }.toList()
+      var total = files.sumOf { it.length() }
+      if (total <= maxBytes) return@withLock 0
+      val target = (maxBytes * 85 / 100)
+      var removed = 0
+      for (file in files.sortedBy { it.lastModified() }) {
+        if (total <= target) break
+        val size = file.length()
+        if (file.delete()) {
+          total -= size
+          removed++
+        }
+      }
+      removed
+    }
+  }
 
   suspend fun <T> transaction(block: Transaction.() -> T): T = withContext(Dispatchers.IO) {
     mutex.withLock { Transaction(root).block() }

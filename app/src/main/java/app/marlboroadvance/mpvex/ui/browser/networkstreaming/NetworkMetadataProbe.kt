@@ -134,6 +134,10 @@ object NetworkMetadataProbe {
     onFailure = { Log.w(TAG, "Unable to persist thumbnail", it) },
   )
 
+  // Preview cache maintenance runs off the probe path and never blocks a caller.
+  private val maintenanceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+  private val thumbnailWriteCount = java.util.concurrent.atomic.AtomicInteger()
+
   @Volatile
   private var appContext: Context? = null
 
@@ -157,6 +161,8 @@ object NetworkMetadataProbe {
         cacheInitialized = true
       }
     }
+    // Keep the preview cache within its budget without delaying startup.
+    maintenanceScope.launch { runCatching { thumbnailDisk.trim() } }
   }
 
   private val prefs by lazy {
@@ -405,13 +411,14 @@ object NetworkMetadataProbe {
       cacheGeneration.token(key) == item.generation && keyIndex[indexKey] == key
     }
     // Never republish memory here: clear/invalidation can happen during encoding.
-    thumbnailDisk.write(item.connection.id, key, ::canPublish) { temporary ->
+    val written = thumbnailDisk.write(item.connection.id, key, ::canPublish) { temporary ->
       val format = if (Build.VERSION.SDK_INT >= 30) Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.WEBP
       fun encode(format: Bitmap.CompressFormat): Boolean = FileOutputStream(temporary).use { out ->
         item.bitmap.compress(format, THUMBNAIL_JPEG_QUALITY, out)
       }
       runCatching { encode(format) }.getOrDefault(false) || encode(Bitmap.CompressFormat.JPEG)
     }
+    if (written && thumbnailWriteCount.incrementAndGet() % 64 == 0) thumbnailDisk.trim()
   }
 
   private suspend fun <T> withProxyCancellation(
@@ -432,6 +439,11 @@ object NetworkMetadataProbe {
     thumbnailDispatcher.cancelBackgroundExcept(retained.mapTo(mutableSetOf()) { "${cacheKey(it.first, it.second)}#${cacheToken(it.first, it.second)}" }, ThumbnailPriority.PREFETCH.ordinal)
   }
 
+  /** Drops every queued or running preview so playback owns the network. */
+  fun cancelThumbnails() {
+    thumbnailDispatcher.cancelBackgroundExcept(emptySet(), 0)
+  }
+
   /** Promote an already queued request without creating another native job. */
   fun promoteThumbnail(
     connection: NetworkConnection,
@@ -449,28 +461,55 @@ object NetworkMetadataProbe {
   )
 
   /**
-   * Generate a thumbnail trying hardware decode first, then software, and
-   * advancing through candidate timestamps only when the current frame is
-   * unusable (null or detected as black/empty).
+   * One hardware-decoded frame at the default timestamp covers the common case.
+   * Failures are expensive (every attempt creates a fresh native instance), so the
+   * remaining candidate timestamps are fetched together in one instance per decode
+   * mode instead of one instance per timestamp.
    */
   private suspend fun generateThumbnailWithFallbacks(url: String): ThumbnailResult? {
-    for (timestamp in thumbnailTimestamps) {
-      for (useHwDec in hardwareDecodeAttempts) {
-        val bitmap = try {
-          FastThumbnails.generateAsync(url, timestamp, THUMBNAIL_SIZE, useHwDec = useHwDec)
-        } catch (e: CancellationException) {
-          throw e
-        } catch (e: Exception) {
-          Log.d(TAG, "Thumbnail decode failed ts=${timestamp}s hw=$useHwDec: ${e.message}")
-          null
+    val primaryHardware = hardwareDecodeAttempts.first()
+    singleThumbnail(url, thumbnailTimestamps.first(), primaryHardware)?.let { return it }
+    for (useHwDec in hardwareDecodeAttempts) {
+      val candidates =
+        if (useHwDec == primaryHardware) thumbnailTimestamps.drop(1) else thumbnailTimestamps.toList()
+      if (candidates.isEmpty()) continue
+      val frames: List<Bitmap?>? = try {
+        FastThumbnails.generateMultipleAsync(url, candidates, THUMBNAIL_SIZE, useHwDec = useHwDec)
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        Log.d(TAG, "Thumbnail batch decode failed hw=$useHwDec: ${e.message}")
+        null
+      }
+      if (frames != null) {
+        frames.forEachIndexed { index, bitmap ->
+          if (bitmap != null && isUsableThumbnail(bitmap)) {
+            return ThumbnailResult(bitmap, candidates.getOrElse(index) { thumbnailTimestamps.first() }, useHwDec)
+          }
+          bitmap?.recycle()
         }
-        if (bitmap != null && isUsableThumbnail(bitmap)) {
-          return ThumbnailResult(bitmap, timestamp, useHwDec)
-        }
-        // Invalid frame: recycle and try the next candidate
-        bitmap?.recycle()
+        continue
+      }
+      // Batch decoding is an optimization only: fall back to one instance per
+      // timestamp so a build without it behaves exactly as before.
+      for (timestamp in candidates) {
+        singleThumbnail(url, timestamp, useHwDec)?.let { return it }
       }
     }
+    return null
+  }
+
+  private suspend fun singleThumbnail(url: String, timestamp: Double, useHwDec: Boolean): ThumbnailResult? {
+    val bitmap = try {
+      FastThumbnails.generateAsync(url, timestamp, THUMBNAIL_SIZE, useHwDec = useHwDec)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      Log.d(TAG, "Thumbnail decode failed ts=${timestamp}s hw=$useHwDec: ${e.message}")
+      null
+    }
+    if (bitmap != null && isUsableThumbnail(bitmap)) return ThumbnailResult(bitmap, timestamp, useHwDec)
+    bitmap?.recycle()
     return null
   }
 

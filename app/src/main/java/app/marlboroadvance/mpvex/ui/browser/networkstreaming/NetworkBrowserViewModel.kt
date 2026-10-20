@@ -407,6 +407,16 @@ class NetworkBrowserViewModel(
     }
   }
 
+  /** Drops queued and running preview work so playback start is not competing for bandwidth. */
+  private fun cancelThumbnailWork() {
+    synchronized(thumbnailLock) {
+      thumbnailJobs.values.forEach { it.cancel() }
+      thumbnailJobs.clear()
+      thumbnailPriorities.clear()
+    }
+    NetworkMetadataProbe.cancelThumbnails()
+  }
+
   fun releaseBrowserThumbnails() {
     retainedThumbnailPaths = emptySet()
     thumbnailVersions.clear()
@@ -540,6 +550,10 @@ class NetworkBrowserViewModel(
    */
   fun playVideo(file: NetworkFile) {
     val clickedAt = android.os.SystemClock.elapsedRealtime()
+    // Playback owns the link now: stop the folder's duration/thumbnail probes so
+    // they cannot compete with the first frame.
+    durationProbeJob?.cancel()
+    cancelThumbnailWork()
     viewModelScope.launch {
       val registeredStreams = mutableListOf<String>()
       var queueToken: String? = null
@@ -559,8 +573,9 @@ class NetworkBrowserViewModel(
 
         // Register a proxy stream for every item so the player can switch to the
         // next file without re-registering. The player releases retired queues.
+        var startStreamId: String? = null
         val uris =
-          withContext(Dispatchers.IO) { queue.map { queued ->
+          withContext(Dispatchers.IO) { queue.mapIndexed { index, queued ->
             if (useProxy) {
               val streamId = "${connectionId}_${System.nanoTime()}_${queued.path.hashCode()}"
               val proxyUrl =
@@ -570,6 +585,7 @@ class NetworkBrowserViewModel(
                   file = queued,
                 )
               registeredStreams.add(streamId)
+              if (index == startIndex) startStreamId = streamId
               android.net.Uri.parse(proxyUrl)
             } else {
               NetworkStreamingProvider.setConnection(connectionId, connection)
@@ -580,6 +596,8 @@ class NetworkBrowserViewModel(
         }
 
         val startUri = uris[startIndex]
+        // Warm the upstream connection while the player activity starts.
+        startStreamId?.let(proxy::warmStream)
 
         // Launch the player
         val intent = Intent(Intent.ACTION_VIEW, startUri)
