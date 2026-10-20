@@ -60,6 +60,24 @@ class MPVView(
     if (!engineReleased) super.surfaceDestroyed(holder)
   }
 
+  /**
+   * BaseMPVView registers its SurfaceHolder callback at the end of initialize(), so a
+   * surface created before that point never delivers surfaceCreated. The engine would
+   * then wait for a surface that already exists and never start playback. Adopt the
+   * current surface once initialization has finished.
+   */
+  fun adoptExistingSurface() {
+    if (engineReleased || surfaceReady) return
+    val surface = holder.surface ?: return
+    if (!surface.isValid) return
+    surfaceCreated(holder)
+    val frame = holder.surfaceFrame
+    if (frame.width() > 0 && frame.height() > 0) {
+      // The format argument is unused by BaseMPVView (only width/height matter).
+      surfaceChanged(holder, 0, frame.width(), frame.height())
+    }
+  }
+
   fun releaseEngineSurface() {
     pendingOpen = null
     if (surfaceReady) surfaceDestroyed(holder)

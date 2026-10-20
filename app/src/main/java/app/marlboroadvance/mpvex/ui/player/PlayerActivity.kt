@@ -948,6 +948,8 @@ class PlayerActivity :
     val initializeStarted = android.os.SystemClock.elapsedRealtime()
     MpvGateway.open()
     player.initialize(snapshot.directory.path, cacheDir.path)
+    // The surface may have been created before initialize() registered its callback.
+    player.adoptExistingSurface()
     Log.d("PlayerStartup", "mpvInitializationMs=${android.os.SystemClock.elapsedRealtime() - initializeStarted}")
     mpvInitialized = true
     Log.d(TAG, "MPV initialized")
