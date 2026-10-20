@@ -61,8 +61,9 @@ class NetworkBrowserViewModel(
   private val browserPreferences: BrowserPreferences by inject()
   private val appearancePreferences: AppearancePreferences by inject()
 
-  private val _files = MutableStateFlow<List<NetworkFile>>(emptyList())
-  val files: StateFlow<List<NetworkFile>> = _files.asStateFlow()
+  // Server order; the public flow applies the folder's sort without writing the
+  // sorted list back, so sorting does not re-trigger itself on every update.
+  private val _rawFiles = MutableStateFlow<List<NetworkFile>>(emptyList())
 
   private val _isLoading = MutableStateFlow(false)
   val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
@@ -102,6 +103,12 @@ class NetworkBrowserViewModel(
 
   private val _sortOrder = MutableStateFlow<SortOrder>(loadSortOrder())
   val sortOrder: StateFlow<SortOrder> = _sortOrder.asStateFlow()
+
+  /** The listing in the user's sort order. Derived once per change, never fed back. */
+  val files: StateFlow<List<NetworkFile>> =
+    combine(_rawFiles, _sortType, _sortOrder) { list, sortType, sortOrder ->
+      SortUtils.sortNetworkFiles(list, sortType, sortOrder)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
   private fun loadSortType(): NetworkSortType =
     sortPrefs
@@ -146,7 +153,7 @@ class NetworkBrowserViewModel(
         }
         // Preferences are initialized at startup; only affected files need a memory lookup.
         val durations = targets.associate { it.path to NetworkMetadataProbe.getCachedDuration(connection, it) }
-        _files.update { current ->
+        _rawFiles.update { current ->
           var changed = false
           val updated = current.map { file ->
             val duration = durations[file.path]
@@ -157,19 +164,6 @@ class NetworkBrowserViewModel(
           }
           if (changed) updated else current
         }
-      }
-    }
-
-    // Apply sorting whenever files or this folder's sort settings change
-    viewModelScope.launch {
-      combine(
-        _files,
-        _sortType,
-        _sortOrder,
-      ) { fileList, sortType, sortOrder ->
-        SortUtils.sortNetworkFiles(fileList, sortType, sortOrder)
-      }.collectLatest { sortedFiles ->
-        _files.value = sortedFiles
       }
     }
   }
@@ -206,7 +200,7 @@ class NetworkBrowserViewModel(
             }
             // Pre-load cached durations so the list displays instantly without re-probing
             val cachedDurations = NetworkMetadataProbe.getCachedDurations(connection, fileList)
-            _files.value = fileList.map { file ->
+            _rawFiles.value = fileList.map { file ->
               file.copy(
                 duration = cachedDurations[file.path]?.takeIf { it > 0 } ?: file.duration,
               )
@@ -231,7 +225,7 @@ class NetworkBrowserViewModel(
    * Called when the "Video Thumbnails" option is enabled in the sort & view dialog.
    */
   fun reloadWithThumbnails() {
-    val currentFiles = _files.value
+    val currentFiles = files.value
     if (currentFiles.isEmpty()) {
       loadFiles()
       return
@@ -265,7 +259,7 @@ class NetworkBrowserViewModel(
           if (duration > 0) {
             withContext(Dispatchers.Main) {
               if (!file.sameVersion(listedFilesByPath[file.path]) || NetworkMetadataProbe.cacheToken(connection, file) != generation) return@withContext
-              _files.update { current ->
+              _rawFiles.update { current ->
                 if (current.any { it.path == file.path && it.duration != duration }) {
                   current.map {
                     if (it.path == file.path) {
@@ -400,7 +394,7 @@ class NetworkBrowserViewModel(
     }
     loadedConnection?.let { connection ->
       NetworkMetadataProbe.cancelBackgroundThumbnailsExcept(
-        _files.value
+        files.value
           .filter { !it.isDirectory && it.path in keepPaths }
           .map { connection to it },
       )
@@ -462,7 +456,7 @@ class NetworkBrowserViewModel(
       val duration = NetworkMetadataProbe.probeDuration(connection, file)
       withContext(Dispatchers.Main) {
         if (!file.sameVersion(listedFilesByPath[file.path]) || NetworkMetadataProbe.cacheToken(connection, file) != generation) return@withContext
-        _files.value = _files.value.map {
+        _rawFiles.value = _rawFiles.value.map {
           if (it.path == file.path) it.copy(duration = duration) else it
         }
       }
@@ -502,7 +496,7 @@ class NetworkBrowserViewModel(
           val bitmap = if (showThumbnails) NetworkMetadataProbe.probeThumbnail(connection, file) else null
           withContext(Dispatchers.Main) {
             if (!file.sameVersion(listedFilesByPath[file.path]) || NetworkMetadataProbe.cacheToken(connection, file) != generation) return@withContext
-            _files.update { current -> current.map { if (it.path == file.path) it.copy(duration = newDuration) else it } }
+            _rawFiles.update { current -> current.map { if (it.path == file.path) it.copy(duration = newDuration) else it } }
             if (bitmap != null) {
               retainThumbnail(connection, file, bitmap, generation)
             } else {
@@ -563,7 +557,7 @@ class NetworkBrowserViewModel(
 
         // Build the playback queue from the current directory listing
         val queue =
-          _files.value.filter { !it.isDirectory && it.mimeType?.startsWith("video/") == true }
+          files.value.filter { !it.isDirectory && it.mimeType?.startsWith("video/") == true }
         val startIndex = queue.indexOfFirst { it.path == file.path }.takeIf { it >= 0 } ?: 0
         if (queue.isEmpty()) return@launch
 
@@ -657,3 +651,4 @@ class NetworkBrowserViewModel(
       }
   }
 }
+

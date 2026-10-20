@@ -65,10 +65,19 @@ class WebDavClient(private val connection: NetworkConnection) : NetworkClient {
 
         val url = buildUrl(path)
         val resources = client.list(url)
+        // Servers are not required to list the requested collection first, so drop the
+        // entry that refers to this directory instead of blindly dropping index 0.
+        // The URL may contain raw spaces, so decode the path instead of parsing a URI.
+        val rawSelfPath = url.substringAfter("://", url).substringAfter('/', "")
+        val selfPath = runCatching { java.net.URLDecoder.decode(rawSelfPath, "UTF-8") }
+          .getOrDefault(rawSelfPath).trim('/')
 
         val files =
           resources
-            .drop(1) // Skip the directory itself
+            .filterNot { resource ->
+              resource.isDirectory &&
+                runCatching { resource.href.path }.getOrNull()?.trim('/') == selfPath
+            }
             .map { resource: DavResource ->
               val resourceName = resource.name ?: ""
               
