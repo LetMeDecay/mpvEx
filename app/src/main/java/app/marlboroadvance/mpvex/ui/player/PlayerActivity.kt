@@ -492,7 +492,26 @@ class PlayerActivity :
   }
 
   override fun attachBaseContext(newBase: Context?) {
-    super.attachBaseContext(newBase)
+    if (newBase == null) {
+      super.attachBaseContext(null)
+      return
+    }
+
+    val originalConfiguration = newBase.resources.configuration
+    val contextToUse =
+      if (originalConfiguration.fontScale == 1f) {
+        newBase
+      } else {
+        val updatedConfiguration = Configuration(originalConfiguration).apply { fontScale = 1f }
+        val configurationContext = newBase.createConfigurationContext(updatedConfiguration)
+        val configurationDisplayMetrics = configurationContext.resources.displayMetrics
+        @Suppress("DEPRECATION")
+        configurationDisplayMetrics.scaledDensity =
+          updatedConfiguration.fontScale * configurationDisplayMetrics.density
+        configurationContext
+      }
+
+    super.attachBaseContext(contextToUse)
   }
 
   private fun setupBackPressHandler() {
@@ -736,8 +755,9 @@ class PlayerActivity :
       val shouldPause = (!audioPreferences.automaticBackgroundPlayback.get() && !isManualBackgroundPlayback) || 
                         (isUserFinishing && !isManualBackgroundPlayback)
 
-      // Capture native state before retiring the session or sending stop.
-      saveVideoPlaybackState(fileName)
+      // Capture native state before retiring the session or sending stop. When
+      // finishing, write synchronously so the browser sees the new progress.
+      saveVideoPlaybackState(fileName, isSync = isFinishing || isUserFinishing)
       if (isFinishing && !isManualBackgroundPlayback) {
         player.isExiting = true
         viewModel.stopPlayback()
@@ -805,7 +825,9 @@ class PlayerActivity :
     if (!mpvInitialized) { super.onStop(); return }
     runCatching {
       pipHelper.onStop()
-      saveVideoPlaybackState(fileName)
+      if (!isFinishing && !isUserFinishing) {
+        saveVideoPlaybackState(fileName)
+      }
 
       if (noisyReceiverRegistered) {
         unregisterReceiver(noisyReceiver)
@@ -1119,12 +1141,17 @@ class PlayerActivity :
    * @param intent The intent containing the file URI
    * @return A source address without opening the content provider
    */
-  private fun parsePathFromIntent(intent: Intent): String? =
-    when (intent.action) {
+  private fun parsePathFromIntent(intent: Intent): String? {
+    val explicitFilePath = intent.getStringExtra("file_path")
+    if (!explicitFilePath.isNullOrBlank() && File(explicitFilePath).exists()) {
+      return explicitFilePath
+    }
+    return when (intent.action) {
       Intent.ACTION_VIEW -> intent.data?.toString()
       Intent.ACTION_SEND -> parsePathFromSendIntent(intent)
       else -> intent.getStringExtra("uri")
     }
+  }
 
   /**
    * Parses the file path from a SEND intent.
@@ -1963,7 +1990,7 @@ class PlayerActivity :
    *
    * @param mediaTitle The title of the media being played
    */
-  private fun saveVideoPlaybackState(mediaTitle: String) {
+  private fun saveVideoPlaybackState(mediaTitle: String, isSync: Boolean = false) {
     val identifier = mediaIdentifier
     if (identifier.isBlank()) return
 
@@ -1990,11 +2017,8 @@ class PlayerActivity :
       externalSubtitles = viewModel.externalSubtitles.joinToString("|"),
       hasBeenWatched = duration > 0 && (pos >= duration - 1 || pos.toFloat() / duration >= watchedThreshold),
     )
-    // Preserve saves for different files and their order; never read mpv after suspension.
-    val previousSave = savePlaybackStateJob
-    savePlaybackStateJob = CoroutineScope(Dispatchers.IO).launch {
+    suspend fun persist() {
       try {
-        previousSave?.join()
         val oldState = playbackStateRepository.getVideoDataByTitle(identifier)
         val lastPosition = if (savePosition) snapshot.lastPosition else oldState?.lastPosition ?: 0
         playbackStateRepository.upsert(snapshot.copy(
@@ -2006,6 +2030,18 @@ class PlayerActivity :
         throw e
       } catch (e: Exception) {
         Log.e(TAG, "Error saving playback state for $mediaTitle", e)
+      }
+    }
+
+    // Preserve saves for different files and their order; never read mpv after suspension.
+    if (isSync) {
+      savePlaybackStateJob?.cancel()
+      kotlinx.coroutines.runBlocking(Dispatchers.IO) { persist() }
+    } else {
+      val previousSave = savePlaybackStateJob
+      savePlaybackStateJob = CoroutineScope(Dispatchers.IO).launch {
+        previousSave?.join()
+        persist()
       }
     }
   }
@@ -2953,13 +2989,44 @@ class PlayerActivity :
     val queue = databaseQueue
     queueSelectionJob = lifecycleScope.launch {
       try {
-        val uri = withContext(Dispatchers.IO) { resolveQueueUri(index) } ?: return@launch
-        if (generation != viewModel.playbackSession.generation || databaseQueue !== queue || isFinishing) return@launch
-        loadPlaylistItemInternal(index, uri)
-        showPlaylistPage(index)
+        var candidate = index
+        while (candidate < queueSize) {
+          val uri = withContext(Dispatchers.IO) { resolveQueueUri(candidate) } ?: return@launch
+          if (isLocalFileMissing(uri)) {
+            Log.w(TAG, "Skipping missing playlist item at index $candidate: $uri")
+            viewModel.showToast(getString(app.marlboroadvance.mpvex.R.string.toast_file_no_longer_exists))
+            candidate++
+            continue
+          }
+          if (generation != viewModel.playbackSession.generation || databaseQueue !== queue || isFinishing) return@launch
+          loadPlaylistItemInternal(candidate, uri)
+          showPlaylistPage(candidate)
+          return@launch
+        }
+        if (playerPreferences.closeAfterReachingEndOfVideo.get()) {
+          finishAndRemoveTask()
+        }
       } catch (cancelled: CancellationException) { throw cancelled }
       catch (_: Exception) { viewModel.showToast(getString(app.marlboroadvance.mpvex.R.string.playlist_changed)) }
     }
+  }
+
+  /**
+   * True only when the URI points at a local file that no longer exists. Network
+   * streams and content URIs we cannot map to a path are never treated as missing.
+   */
+  private fun isLocalFileMissing(uri: Uri): Boolean {
+    if (uri.scheme?.startsWith("http") == true ||
+      uri.scheme == "rtmp" || uri.scheme == "rtsp" ||
+      uri.scheme == "mms" || uri.scheme == "ftp" || uri.scheme == "ftps"
+    ) {
+      return false
+    }
+    val path = when (uri.scheme) {
+      "file" -> uri.path
+      else -> uri.path?.takeIf { it.startsWith("/") }
+    } ?: return false
+    return runCatching { !File(path).exists() }.getOrDefault(false)
   }
 
   private fun loadPlaylistItemInternal(index: Int, uri: Uri) {
