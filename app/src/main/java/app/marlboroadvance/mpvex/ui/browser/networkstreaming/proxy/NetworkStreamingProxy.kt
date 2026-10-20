@@ -649,24 +649,6 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     }
   }
 
-  private fun getStream(streamInfo: StreamInfo): InputStream? {
-    return runBlocking {
-      try {
-        // Connect if needed
-        if (!streamInfo.client.isConnected()) {
-          streamInfo.client.connect().getOrThrow()
-        }
-
-        // Get file stream
-        val result = streamInfo.client.getFileStream(streamInfo.filePath)
-        result.getOrNull()
-      } catch (e: Exception) {
-        Log.e(TAG, "Error getting stream", e)
-        null
-      }
-    }
-  }
-
   private fun getStreamWithOffset(streamInfo: StreamInfo, offset: Long, end: Long, owner: ProxyRequestScope): InputStream? {
     return runBlocking {
       try {
@@ -683,9 +665,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
             getStreamWithOffsetWebDAV(streamInfo, offset, end, owner)
           }
 
-          else -> {
-            getStreamWithOffsetGeneric(streamInfo, offset)
-          }
+          else -> null
         }
       } catch (e: Exception) {
         null
@@ -1012,31 +992,4 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     }
   }
 
-  /**
-   * Generic stream with offset using skip (less efficient, for other protocols)
-   */
-  private suspend fun getStreamWithOffsetGeneric(streamInfo: StreamInfo, offset: Long): InputStream? {
-    val client = NetworkClientFactory.createClient(streamInfo.connection)
-    client.connect().getOrThrow()
-
-    val stream = client.getFileStream(streamInfo.filePath).getOrNull()
-
-    if (stream != null && offset > 0) {
-      var remaining = offset
-      val buffer = ByteArray(8192)
-
-      while (remaining > 0) {
-        val toSkip = minOf(remaining, buffer.size.toLong()).toInt()
-        val skipped = stream.read(buffer, 0, toSkip)
-        if (skipped <= 0) {
-          stream.close()
-          client.disconnect()
-          return null
-        }
-        remaining -= skipped
-      }
-    }
-
-    return stream
-  }
 }

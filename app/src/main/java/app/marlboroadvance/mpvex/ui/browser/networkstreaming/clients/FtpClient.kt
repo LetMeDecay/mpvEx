@@ -1,6 +1,5 @@
 package app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients
 
-import android.net.Uri
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
 import kotlinx.coroutines.Dispatchers
@@ -301,23 +300,6 @@ class FtpClient(private val connection: NetworkConnection) : NetworkClient {
       } catch (e: Exception) {
         android.util.Log.e("FtpClient", "Exception getting file stream", e)
         return@withContext Result.failure(e)
-      }
-    }
-
-  override suspend fun getFileUri(path: String): Result<Uri> =
-    withContext(Dispatchers.IO) {
-      try {
-        // Build FTP URI for mpv
-        val uriString =
-          if (connection.isAnonymous) {
-            "ftp://${connection.host}:${connection.port}$path"
-          } else {
-            "ftp://${connection.username}:${connection.password}@${connection.host}:${connection.port}$path"
-          }
-
-        Result.success(Uri.parse(uriString))
-      } catch (e: Exception) {
-        Result.failure(e)
       }
     }
 

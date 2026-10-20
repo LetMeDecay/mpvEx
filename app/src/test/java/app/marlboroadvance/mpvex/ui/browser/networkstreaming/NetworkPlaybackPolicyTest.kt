@@ -32,27 +32,12 @@ class NetworkPlaybackPolicyTest {
     }
   }
 
-  @Test fun nextItemPrefetchRequiresUsefulBufferAndStablePosition() {
-    val policy = NetworkPlaybackPolicy()
-    policy.setPlayback("a")
-    assertTrue(policy.canPrefetch(15.0, 10.0, false, false))
-    assertTrue(policy.canPrefetch(3.0, 3.0, false, false))
-    assertFalse(policy.canPrefetch(15.0, 1.0, false, false))
-    assertFalse(policy.canPrefetch(15.0, 10.0, true, false))
-    assertFalse(policy.canPrefetch(15.0, 10.0, false, true))
-    assertFalse(policy.canPrefetch(0.0, 10.0, false, false))
-    assertFalse(policy.canPrefetch(30.0, 30.0, false, false))
-    assertFalse(policy.canPrefetch(Double.NaN, 10.0, false, false))
-    policy.setPlayback(null)
-    assertFalse(policy.canPrefetch(15.0, 10.0, false, false))
-  }
   @Test fun retainedEofReleasesMetadataAndReplayRestoresGateWithoutRevivingOldFiles() = runBlocking {
     withTimeout(5000) {
       val policy = NetworkPlaybackPolicy()
       policy.setPlayback("a")
       policy.setEnded("a", true)
       policy.awaitMetadata()
-      assertFalse(policy.canPrefetch(3.0, 3.0, false, false))
       policy.setEnded("a", false)
       val replay = async(start = CoroutineStart.UNDISPATCHED) { policy.awaitMetadata() }
       assertFalse(replay.isCompleted)

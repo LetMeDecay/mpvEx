@@ -204,66 +204,6 @@ object MediaFileRepository {
     )
   }
 
-  /**
-   * Creates a Video object from a file with pre-fetched metadata
-   * Use this when metadata has already been batch-extracted
-   */
-  private fun createVideoFromFileWithMetadata(
-    file: File,
-    bucketId: String,
-    bucketDisplayName: String,
-    metadata: MediaInfoOps.VideoMetadata?,
-  ): Video {
-    val path = file.absolutePath
-    val displayName = file.name
-    val title = file.nameWithoutExtension
-    val dateModified = file.lastModified() / 1000
-
-    val extension = file.extension.lowercase()
-    val mimeType = FileTypeUtils.getMimeTypeFromExtension(extension)
-    val uri = Uri.fromFile(file)
-
-    // Use pre-fetched metadata
-    var size = file.length()
-    var duration = 0L
-    var width = 0
-    var height = 0
-    var fps = 0f
-
-    metadata?.let {
-      if (it.sizeBytes > 0) size = it.sizeBytes
-      duration = it.durationMs
-      width = it.width
-      height = it.height
-      fps = it.fps
-    }
-    val hasEmbeddedSubtitles = metadata?.hasEmbeddedSubtitles ?: false
-    val subtitleCodec = metadata?.subtitleCodec ?: ""
-
-    return Video(
-      id = path.hashCode().toLong(),
-      title = title,
-      displayName = displayName,
-      path = path,
-      uri = uri,
-      duration = duration,
-      durationFormatted = formatDuration(duration),
-      size = size,
-      sizeFormatted = formatFileSize(size),
-      dateModified = dateModified,
-      dateAdded = dateModified,
-      mimeType = mimeType,
-      bucketId = bucketId,
-      bucketDisplayName = bucketDisplayName,
-      width = width,
-      height = height,
-      fps = fps,
-      resolution = formatResolutionWithFps(width, height, fps),
-      hasEmbeddedSubtitles = hasEmbeddedSubtitles,
-      subtitleCodec = subtitleCodec,
-    )
-  }
-
   // =============================================================================
   // FILE SYSTEM BROWSING (Tree View)
   // =============================================================================

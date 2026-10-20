@@ -49,9 +49,7 @@ import app.marlboroadvance.mpvex.ui.theme.MpvexTheme
 import app.marlboroadvance.mpvex.utils.history.RecentlyPlayedOps
 import app.marlboroadvance.mpvex.utils.media.HttpUtils
 import app.marlboroadvance.mpvex.utils.media.NetworkMediaIdentity
-import app.marlboroadvance.mpvex.utils.media.InFlightPrefetchTracker
 import app.marlboroadvance.mpvex.utils.media.PlaybackPositionPolicy
-import app.marlboroadvance.mpvex.utils.media.PlaylistPrefetchOrder
 import app.marlboroadvance.mpvex.utils.media.SubtitleOps
 import app.marlboroadvance.mpvex.utils.storage.FileTypeUtils
 import app.marlboroadvance.mpvex.utils.storage.FileFilterUtils
@@ -282,10 +280,6 @@ class PlayerActivity :
   private var initialIntentExtrasApplied = false
   private var mediaPreparationJob: Job? = null
   private var playlistLoadJob: Job? = null
-  private var nextPrefetchJob: Job? = null // Only one next-item prefetch watcher may be active
-  // Only tracks requests currently in flight. HeaderCache has a bounded LRU,
-  // so a successful prefetch must not suppress a later request forever.
-  private val inFlightPrefetchKeys = InFlightPrefetchTracker()
   private var wasPlayingBeforePause = false // Track if video was playing before pause
 
   // ==================== Background Playback ====================
@@ -640,12 +634,10 @@ class PlayerActivity :
     runCatching {
       // OPTIMIZATION: Prevent any further UI updates or callbacks
       isReady = false
-      nextPrefetchJob?.cancel()
       playlistLoadJob?.cancel()
       queuePageJob?.cancel()
       queueSelectionJob?.cancel()
       mediaPreparationJob?.cancel()
-      nextPrefetchJob = null
 
       // Only stop the service if we're not doing manual background playback
       if ((isUserFinishing || isFinishing) && !isManualBackgroundPlayback) {
@@ -1695,10 +1687,6 @@ class PlayerActivity :
         }
       }
     }
-
-    // This is the reliable lifecycle point for both the initial Surface-ready load
-    // call and later playlist loadfile calls.
-    startNextPrefetch()
 
     // Save to recently played when video actually loads and plays
     lifecycleScope.launch(Dispatchers.IO) {
@@ -2975,9 +2963,6 @@ class PlayerActivity :
   }
 
   private fun loadPlaylistItemInternal(index: Int, uri: Uri) {
-    // Stop watching the old item immediately. The new watcher is started from
-    // the FILE_LOADED event once MPV has switched to the new item.
-    cancelNextPrefetch()
     playlistLoadJob?.cancel()
     playbackStateLoadGeneration++
 
@@ -3043,119 +3028,6 @@ class PlayerActivity :
 
     // Native FILE_LOADED publishes title/duration; no fixed-delay metadata read.
 
-  }
-
-  /**
-   * Watches playback progress and, shortly before the current file ends,
-   * pre-fetches the next playlist item's file header into the proxy cache so
-   * the track switch doesn't stall on downloading the container header.
-   */
-  private fun startNextPrefetch() {
-    // A file load starts a new watcher. Cancelling here also covers duplicate
-    // FILE_LOADED callbacks and playlist changes while the old item is still
-    // waiting for its duration.
-    cancelNextPrefetch()
-
-    if (queueSize <= 1) return
-    val isNetworkPlayback = playlist.any { it.host == "127.0.0.1" || it.host == "localhost" }
-    if (!isNetworkPlayback) return
-
-    val watchedIndex = playlistIndex
-    nextPrefetchJob = lifecycleScope.launch(Dispatchers.IO) {
-      while (isActive) {
-        // Do not let a watcher for the previous item prefetch after a manual
-        // jump or an automatic track switch.
-        if (playlistIndex != watchedIndex) return@launch
-        val duration = MpvGateway.getPropertyDouble("duration") ?: 0.0
-        val pos = MpvGateway.getPropertyDouble("time-pos") ?: 0.0
-        if (duration > 0) {
-          if (duration - pos <= NEXT_PREFETCH_SECONDS && canPrefetchNext(watchedIndex)) {
-            prefetchNextPlaylistItem(watchedIndex)
-            return@launch
-          }
-        } else {
-          // Duration unknown yet - give the file a moment to load before polling
-          kotlinx.coroutines.delay(1000)
-          continue
-        }
-        kotlinx.coroutines.delay(500)
-      }
-    }
-  }
-
-  /**
-   * Pre-fetch the file header (first ~2MB) of the next playlist item through
-   * the proxy, so mpv opens it instantly at switch time. Handles repeat-all
-   * wrap-around and follows the current shuffled order when one is active.
-   */
-  private suspend fun prefetchNextPlaylistItem(currentIndex: Int) {
-    val next = nextPlaylistIndexForPrefetch(currentIndex) ?: return
-
-    val uri = resolveQueueUri(next) ?: return
-    val host = uri.host
-    if (host != "127.0.0.1" && host != "localhost") return
-
-    val streamId = uri.path?.removePrefix("/")?.substringBefore("/") ?: return
-    val info = app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy.getInstance().getStreamInfo(streamId)
-      ?: return
-
-    val streamKey = app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
-      .cacheIdentity(info.connection, info.file)
-    // add() is atomic, so a cancelled watcher that is still finishing an
-    // in-flight request cannot start a duplicate request for the same file.
-    if (!inFlightPrefetchKeys.tryStart(streamKey)) return
-
-    val file = info.file
-    try {
-      val prefetched = app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkMetadataProbe
-        .prefetchHeader(info.connection, file) { canPrefetchNext(currentIndex) }
-      if (prefetched) {
-        Log.d(TAG, "Prefetched next item header: ${info.filePath}")
-      } else {
-        Log.w(TAG, "Prefetch returned an unsuccessful response: ${info.filePath}")
-      }
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      Log.w(TAG, "Failed to prefetch next item header: ${info.filePath}", e)
-    } finally {
-      // The header LRU may evict this item later; only suppress overlap, not
-      // future prefetches after eviction.
-      inFlightPrefetchKeys.complete(streamKey)
-    }
-  }
-
-  private fun cancelNextPrefetch() {
-    nextPrefetchJob?.cancel()
-    nextPrefetchJob = null
-  }
-
-  private fun canPrefetchNext(index: Int): Boolean {
-    if (!isReady || playlistIndex != index) return false
-    val remaining = (MpvGateway.getPropertyDouble("duration") ?: return false) -
-      (MpvGateway.getPropertyDouble("time-pos") ?: return false)
-    return app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkPlaybackPolicy.shared.canPrefetch(
-      remaining,
-      MpvGateway.getPropertyDouble("demuxer-cache-duration") ?: 0.0,
-      MpvGateway.getPropertyBoolean("seeking") ?: false,
-      MpvGateway.getPropertyBoolean("paused-for-cache") ?: false,
-    )
-  }
-
-  /**
-   * Resolve the actual next item in playback order. In shuffle mode the
-   * shuffled index list is the source of truth; playlistIndex + 1 is not.
-   * At the end of a shuffled repeat cycle we skip prefetch because the next
-   * cycle is regenerated randomly and is not known yet.
-   */
-  private fun nextPlaylistIndexForPrefetch(currentIndex: Int): Int? {
-    return PlaylistPrefetchOrder.nextIndex(
-      currentIndex = currentIndex,
-      playlistSize = queueSize,
-      shuffleEnabled = viewModel.shuffleEnabled.value,
-      shuffledIndices = shuffledIndices,
-      repeatAll = viewModel.repeatMode.value == app.marlboroadvance.mpvex.ui.player.RepeatMode.ALL,
-    )
   }
 
   /**
@@ -3452,7 +3324,6 @@ class PlayerActivity :
           activeQueueUri = parsePathFromIntent(intent)?.let(Uri::parse)
           viewModel.refreshPlaylistItems(probeNetworkMetadata = false)
           if (viewModel.shuffleEnabled.value) onShuffleToggled(true)
-          if (isReady) startNextPrefetch()
         }
       } catch (cancelled: CancellationException) {
         throw cancelled
@@ -3547,7 +3418,6 @@ class PlayerActivity :
      * Trigger the next-item header prefetch when this many seconds remain in
      * the current file.
      */
-    private const val NEXT_PREFETCH_SECONDS = 20
 
     /**
      * Constant for "brightness not set".

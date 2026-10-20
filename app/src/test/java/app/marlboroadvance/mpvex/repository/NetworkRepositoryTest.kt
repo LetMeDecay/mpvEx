@@ -1,6 +1,5 @@
 package app.marlboroadvance.mpvex.repository
 
-import android.net.Uri
 import app.marlboroadvance.mpvex.database.dao.NetworkConnectionDao
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
@@ -115,7 +114,6 @@ class NetworkRepositoryTest {
       return Result.success(emptyList())
     }
     override suspend fun getFileStream(path: String): Result<InputStream> = error("unused")
-    override suspend fun getFileUri(path: String): Result<Uri> = error("unused")
   }
 
   private class FakeDao(connection: NetworkConnection) : NetworkConnectionDao {

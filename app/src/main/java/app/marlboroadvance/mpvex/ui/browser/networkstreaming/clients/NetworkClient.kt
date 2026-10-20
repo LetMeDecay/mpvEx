@@ -1,6 +1,5 @@
 package app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients
 
-import android.net.Uri
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
 import java.io.InputStream
 
@@ -32,9 +31,4 @@ interface NetworkClient {
    * Get input stream for a file
    */
   suspend fun getFileStream(path: String): Result<InputStream>
-
-  /**
-   * Get file URI for playback
-   */
-  suspend fun getFileUri(path: String): Result<Uri>
 }

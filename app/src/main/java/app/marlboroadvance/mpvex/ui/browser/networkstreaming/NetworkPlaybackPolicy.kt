@@ -35,7 +35,4 @@ internal class NetworkPlaybackPolicy {
 
   suspend fun awaitMetadata() { playing.first { it == null } }
 
-  fun canPrefetch(remaining: Double, cachedSeconds: Double, seeking: Boolean, buffering: Boolean): Boolean =
-    playing.value != null && remaining.isFinite() && remaining > 0 && remaining <= 20 &&
-      cachedSeconds.isFinite() && cachedSeconds >= minOf(10.0, remaining) && !seeking && !buffering
 }

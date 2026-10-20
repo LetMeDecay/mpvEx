@@ -33,7 +33,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asAndroidPath
@@ -49,7 +48,6 @@ import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.preferences.AppearancePreferences
 import app.marlboroadvance.mpvex.preferences.preference.collectAsState
 import org.koin.compose.koinInject
-import kotlin.math.hypot
 
 // ============================================================================
 // Theme Transition Animation State & Components
@@ -133,61 +131,6 @@ private fun ThemeTransitionOverlay(
 ) {
     // Animation disabled - just render content immediately
     content()
-}
-
-/**
- * Custom Shape that creates an inverse circular reveal effect.
- * The circle expands from center, and the shape clips TO THE AREA OUTSIDE the circle.
- */
-private class CircularRevealShape(
-    private val progress: Float,
-    private val center: Offset,
-    private val containerSize: Size,
-) : androidx.compose.ui.graphics.Shape {
-    override fun createOutline(
-        size: Size,
-        layoutDirection: androidx.compose.ui.unit.LayoutDirection,
-        density: androidx.compose.ui.unit.Density,
-    ): androidx.compose.ui.graphics.Outline {
-        val actualCenter = if (center == Offset.Zero) {
-            Offset(size.width / 2f, size.height / 2f)
-        } else {
-            center
-        }
-        
-        // Calculate the maximum radius needed to cover entire screen from center point
-        val maxRadius = longestDistanceToCorner(size, actualCenter) * 1.1f
-        val currentRadius = maxRadius * progress
-        
-        // Create a path that represents the area OUTSIDE the circle (inverse clip)
-        val path = android.graphics.Path().apply {
-            // Add the entire rectangle
-            addRect(0f, 0f, size.width, size.height, android.graphics.Path.Direction.CW)
-            // Subtract the circle (creates hole in the middle)
-            addCircle(actualCenter.x, actualCenter.y, currentRadius, android.graphics.Path.Direction.CCW)
-        }
-        
-        return androidx.compose.ui.graphics.Outline.Generic(
-            path.asComposePath()
-        )
-    }
-    
-    private fun longestDistanceToCorner(size: Size, center: Offset): Float {
-        val topLeft = hypot(center.x, center.y)
-        val topRight = hypot(size.width - center.x, center.y)
-        val bottomLeft = hypot(center.x, size.height - center.y)
-        val bottomRight = hypot(size.width - center.x, size.height - center.y)
-        return maxOf(topLeft, topRight, bottomLeft, bottomRight)
-    }
-}
-
-/**
- * Extension to convert Android Path to Compose Path
- */
-private fun android.graphics.Path.asComposePath(): androidx.compose.ui.graphics.Path {
-    val composePath = androidx.compose.ui.graphics.Path()
-    composePath.asAndroidPath().set(this)
-    return composePath
 }
 
 @Composable

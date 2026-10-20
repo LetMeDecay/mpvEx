@@ -1300,32 +1300,6 @@ class PlayerViewModel(
     _isSeekingForwards.value = isForwards
   }
 
-  private fun seekToWithText(
-    seekValue: Int,
-    text: String?,
-  ) {
-    val currentPos = pos ?: return
-    _isSeekingForwards.value = seekValue > currentPos
-    _doubleTapSeekAmount.value = seekValue - currentPos
-    _seekText.value = text
-    seekTo(seekValue)
-  }
-
-  private fun seekByWithText(
-    value: Int,
-    text: String?,
-  ) {
-    val currentPos = pos ?: return
-    val maxDuration = duration ?: return
-
-    _doubleTapSeekAmount.update {
-      if ((value < 0 && it < 0) || currentPos + value > maxDuration) 0 else it + value
-    }
-    _seekText.value = text
-    _isSeekingForwards.value = value > 0
-    seekBy(value)
-  }
-
   // ==================== Brightness & Volume ====================
 
   fun changeBrightnessTo(brightness: Float) {

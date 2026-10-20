@@ -1,6 +1,5 @@
 package app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients
 
-import android.net.Uri
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
 import com.hierynomus.msdtyp.AccessMask
@@ -404,29 +403,6 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
           diskShare.close()
           Result.failure(Exception("Failed to open file: ${e.message}"))
         }
-      } catch (e: Exception) {
-        Result.failure(e)
-      }
-    }
-
-  override suspend fun getFileUri(path: String): Result<Uri> =
-    withContext(Dispatchers.IO) {
-      try {
-        // For SMB, we'll use the smb:// URI with credentials embedded
-        val fullPath =
-          if (path.startsWith("smb://")) path else "$baseUrl${if (path.startsWith("/")) path else "/$path"}"
-
-        // Build URI with credentials for mpv
-        val uriString =
-          if (connection.isAnonymous) {
-            fullPath
-          } else {
-            val hostPart = "${connection.host}${if (connection.port != 445) ":${connection.port}" else ""}"
-            val pathPart = if (path.startsWith("/")) path else "/$path"
-            "smb://${connection.username}:${connection.password}@$hostPart${connection.path}$pathPart"
-          }
-
-        Result.success(Uri.parse(uriString))
       } catch (e: Exception) {
         Result.failure(e)
       }

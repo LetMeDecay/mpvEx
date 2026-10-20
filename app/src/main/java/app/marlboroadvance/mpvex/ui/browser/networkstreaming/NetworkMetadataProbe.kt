@@ -7,9 +7,10 @@ import android.media.MediaMetadataRetriever
 import android.os.Build
 import android.util.Log
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
+import app.marlboroadvance.mpvex.domain.network.NetworkProtocol
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
+import app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.webDavPath
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
-import app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.readCancellable
 import `is`.xyz.mpv.FastThumbnails
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -111,9 +112,11 @@ object NetworkMetadataProbe {
   // MediaMetadataRetriever instances are independent and truly parallel, so
   // durations keep a higher concurrency for real gains.
   private val durationSemaphore = Semaphore(6)
-  private val prefetchHttpClient = okhttp3.OkHttpClient.Builder()
-    .callTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+  // Bounded, auth-carrying client for direct container header reads.
+  private val headerProbeClient = okhttp3.OkHttpClient.Builder()
+    .callTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
     .build()
+
   private val durationRequests = SharedProbeRequests<String, Long>(
     CoroutineScope(SupervisorJob() + Dispatchers.IO),
   )
@@ -231,6 +234,9 @@ object NetworkMetadataProbe {
           if (cacheGeneration.token(key) != generation) return@withPermit ProbeResult(0L, 0, 0)
           val afterWait = getCachedDuration(connection, file)
           if (afterWait > 0) return@withPermit ProbeResult(afterWait, 0, 0)
+          // Common containers expose duration/geometry in their first (or last) bytes;
+          // reading them directly avoids a second HTTP stack and a decoder start.
+          probeContainerHeader(connection, file)?.let { return@withPermit it }
           val proxy = NetworkStreamingProxy.getInstance()
           val streamId = "probe_${connection.id}_${System.nanoTime()}"
           val url =
@@ -311,6 +317,64 @@ object NetworkMetadataProbe {
       if (published) result.duration else 0L
     }
   }
+
+  /**
+   * Direct bounded read of an MP4/Matroska header over WebDAV. Returns null when the
+   * format is unknown, the server refuses ranges, or the header is not in the window,
+   * in which case the caller keeps the proxy + MediaMetadataRetriever fallback.
+   */
+  private suspend fun probeContainerHeader(
+    connection: NetworkConnection,
+    file: NetworkFile,
+  ): ProbeResult? = withContext(Dispatchers.IO) {
+    if (connection.protocol != NetworkProtocol.WEBDAV) return@withContext null
+    val protocol = if (connection.useHttps) "https" else "http"
+    val path = webDavPath(connection.path, file.path)
+    val url = "$protocol://${connection.host}:${connection.port}$path"
+    val auth = if (connection.isAnonymous) null else okhttp3.Credentials.basic(connection.username, connection.password)
+    val head = fetchHeaderBytes(url, auth, 0L, HEADER_HEAD_BYTES - 1L)
+    ContainerHeaderProbe.parse(head ?: return@withContext null)?.let {
+      return@withContext ProbeResult(it.durationMs, it.width, it.height)
+    }
+    if (file.size <= HEADER_HEAD_BYTES) return@withContext null
+    val tailStart = (file.size - HEADER_TAIL_BYTES).coerceAtLeast(0L)
+    val tail = fetchHeaderBytes(url, auth, tailStart, file.size - 1)
+    ContainerHeaderProbe.parse(tail ?: return@withContext null)?.let {
+      ProbeResult(it.durationMs, it.width, it.height)
+    }
+  }
+
+  private fun fetchHeaderBytes(url: String, auth: String?, start: Long, end: Long): ByteArray? {
+    val request = okhttp3.Request.Builder()
+      .url(url)
+      .header("Range", "bytes=$start-$end")
+      .header("Accept-Encoding", "identity")
+      .apply { if (auth != null) header("Authorization", auth) }
+      .build()
+    return try {
+      headerProbeClient.newCall(request).execute().use { response ->
+        if (response.code != 200 && response.code != 206) return null
+        val body = response.body ?: return null
+        val limit = (end - start + 1).toInt()
+        val input = body.byteStream()
+        val output = java.io.ByteArrayOutputStream(limit)
+        val buffer = ByteArray(64 * 1024)
+        var remaining = limit
+        while (remaining > 0) {
+          val read = input.read(buffer, 0, minOf(buffer.size, remaining))
+          if (read <= 0) break
+          output.write(buffer, 0, read)
+          remaining -= read
+        }
+        output.toByteArray().takeIf { it.isNotEmpty() }
+      }
+    } catch (e: Exception) {
+      null
+    }
+  }
+
+  private const val HEADER_HEAD_BYTES = 1024 * 1024
+  private const val HEADER_TAIL_BYTES = 2 * 1024 * 1024
 
   private data class ProbeResult(
     val duration: Long,
@@ -535,73 +599,6 @@ object NetworkMetadataProbe {
       }
     }
     return blackSamples < total
-  }
-
-  /**
-   * Pre-fetch bounded head and tail segments. The tail covers MP4 files whose
-   * moov/index is not fast-started and other containers with end indexes.
-   */
-  suspend fun prefetchHeader(
-    connection: NetworkConnection,
-    file: NetworkFile,
-    shouldContinue: () -> Boolean = { true },
-  ): Boolean {
-    if (file.isDirectory) return false
-    val proxy = NetworkStreamingProxy.getInstance()
-    val streamId = "prefetch_${connection.id}_${System.nanoTime()}"
-    val url =
-      proxy.registerStream(
-        streamId = streamId,
-        connection = connection,
-        file = file,
-      )
-    return try {
-      try {
-        val segmentSize = minOf(
-          file.size.takeIf { it > 0 } ?: (2L * 1024 * 1024),
-          2L * 1024 * 1024,
-        )
-        suspend fun fetch(start: Long, end: Long): Boolean {
-          if (start < 0L || end < start || !shouldContinue()) return false
-          val request = okhttp3.Request.Builder().url(url).header("Range", "bytes=$start-$end").build()
-          val context = currentCoroutineContext()
-          return prefetchHttpClient.newCall(request).readCancellable { response ->
-            if (response.code != 206) return@readCancellable false
-            val contentRange = response.header("Content-Range") ?: return@readCancellable false
-            val range = contentRange.removePrefix("bytes ").split('-', limit = 2)
-            val returnedStart = range.getOrNull(0)?.toLongOrNull()
-            val returnedEnd = range.getOrNull(1)?.substringBefore('/')?.toLongOrNull()
-            if (returnedStart != start || returnedEnd == null || returnedEnd !in start..end) return@readCancellable false
-            val stream = response.body?.byteStream() ?: return@readCancellable false
-            val buffer = ByteArray(32 * 1024)
-            var remaining = returnedEnd - start + 1
-            while (remaining > 0) {
-              context.ensureActive()
-              if (!shouldContinue()) return@readCancellable false
-              val count = stream.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
-              if (count <= 0) return@readCancellable false
-              remaining -= count
-            }
-            true
-          }
-        }
-        val headOk = fetch(0L, segmentSize - 1)
-        val tailStart = (file.size - segmentSize).coerceAtLeast(0L)
-        val tailOk = if (file.size > segmentSize && tailStart > 0L) {
-          fetch(tailStart, file.size - 1)
-        } else {
-          true
-        }
-        headOk && tailOk
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        Log.w(TAG, "Header prefetch failed for ${file.path}", e)
-        false
-      }
-    } finally {
-      proxy.unregisterStream(streamId)
-    }
   }
 
   /**

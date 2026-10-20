@@ -1,6 +1,5 @@
 package app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients
 
-import android.net.Uri
 import android.util.Log
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
@@ -166,25 +165,6 @@ class WebDavClient(private val connection: NetworkConnection) : NetworkClient {
         }
 
         Result.success(wrappedStream)
-      } catch (e: Exception) {
-        Result.failure(e)
-      }
-    }
-
-  override suspend fun getFileUri(path: String): Result<Uri> =
-    withContext(Dispatchers.IO) {
-      try {
-        val protocol = if (connection.useHttps) "https" else "http"
-        val fullPath = webDavPath(connection.path, path)
-
-        // Build WebDAV URI with credentials embedded for mpv
-        val uriString = if (connection.isAnonymous) {
-          "$protocol://${connection.host}:${connection.port}$fullPath"
-        } else {
-          "$protocol://${connection.username}:${connection.password}@${connection.host}:${connection.port}$fullPath"
-        }
-
-        Result.success(Uri.parse(uriString))
       } catch (e: Exception) {
         Result.failure(e)
       }

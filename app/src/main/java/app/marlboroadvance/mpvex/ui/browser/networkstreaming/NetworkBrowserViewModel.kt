@@ -561,8 +561,7 @@ class NetworkBrowserViewModel(
         val startIndex = queue.indexOfFirst { it.path == file.path }.takeIf { it >= 0 } ?: 0
         if (queue.isEmpty()) return@launch
 
-        // Use proxy server for protocols that need seeking support
-        val useProxy = connection.protocol in PROXY_PROTOCOLS
+        // Every supported protocol is streamed through the local proxy.
         val proxy = app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy.getInstance()
 
         // Register a proxy stream for every item so the player can switch to the
@@ -570,23 +569,17 @@ class NetworkBrowserViewModel(
         var startStreamId: String? = null
         val uris =
           withContext(Dispatchers.IO) { queue.mapIndexed { index, queued ->
-            if (useProxy) {
-              val streamId = "${connectionId}_${System.nanoTime()}_${queued.path.hashCode()}"
-              val proxyUrl =
-                proxy.registerStream(
-                  streamId = streamId,
-                  connection = connection,
-                  file = queued,
-                )
-              registeredStreams.add(streamId)
-              if (index == startIndex) startStreamId = streamId
-              android.net.Uri.parse(proxyUrl)
-            } else {
-              NetworkStreamingProvider.setConnection(connectionId, connection)
-              NetworkStreamingProvider.getUri(application, connectionId, queued.path)
-            }
+            val streamId = "${connectionId}_${System.nanoTime()}_${queued.path.hashCode()}"
+            val proxyUrl =
+              proxy.registerStream(
+                streamId = streamId,
+                connection = connection,
+                file = queued,
+              )
+            registeredStreams.add(streamId)
+            if (index == startIndex) startStreamId = streamId
+            android.net.Uri.parse(proxyUrl)
           }
-
         }
 
         val startUri = uris[startIndex]
@@ -612,10 +605,6 @@ class NetworkBrowserViewModel(
         intent.setDataAndType(startUri, file.mimeType ?: "video/*")
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
-        if (!useProxy) {
-          intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-
         Log.d("PlayerStartup", "queuePreparationMs=${android.os.SystemClock.elapsedRealtime() - clickedAt}, items=${uris.size}")
         application.startActivity(intent)
       } catch (e: Exception) {
@@ -631,13 +620,6 @@ class NetworkBrowserViewModel(
 
   companion object {
     private const val TAG = "NetworkBrowserVM"
-
-    // Protocols that require proxy server for seeking support
-    private val PROXY_PROTOCOLS = setOf(
-      NetworkProtocol.SMB,
-      NetworkProtocol.FTP,
-      NetworkProtocol.WEBDAV,
-    )
 
     fun factory(
       application: Application,
