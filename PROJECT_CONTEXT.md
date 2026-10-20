@@ -15,8 +15,9 @@
 - 附加音轨已改为 IO 打开独立资源租约，audio-add 按代次进入同一有界队列；迟到结果不写入新视频，未交付资源确定关闭，原 URI 映射供稳定轨道描述使用。外部音轨 URI 尚未持久化，不能宣称重启后自动恢复。
 - 逐帧/截图接入 typed 控制和同一串行队列；暂停与单帧命令按组执行，截图等待命令完成并核对非空文件，不再固定等待。调用方取消后等待正在执行的 native 工作结束才释放文件；MediaStore 空输出/发布失败及取消会清理未发布条目，临时文件使用独立名称。面板时间线改用当前代次快照，旧面板关闭不恢复新视频。
 - 统计页按已执行选择计算显示切换，连续点击合并后不误切换；Anime4K 着色器准备与应用串行，移除面板独立 IO 作业及空回调。视频宽高随代次发布，用于面板分辨率判断；换片清空，旧代次结果不回填。
-- 最新已交付：代码 `cf31b9e`，Release 1.2.9-rev1020，versionCode 149（ABI 1490–1494）；`../release-rev1020/` 五种 APK + idsig，原证书、包名、版本递增、签名、对齐与交付哈希见 `delivery-rev1020.json`。1.2.9-rev1017（148）保留在 `../release/`。
+- 最新已交付：代码 `ca4f854`，Release 1.2.9-rev1020.1，versionCode 150（ABI 1500–1504）；`../release-rev1020.1/` 五种 APK + idsig，原证书、包名、版本递增、签名、对齐与交付哈希见 `delivery-rev1020.1.json`。1.2.9-rev1020（149）在 `../release-rev1020/`，148 在 `../release/`。
 - 当前 PATH 无可用 ADB 命令；未安装、未做启动健康或功能/性能验收，WebDAV 1–2 秒等待与进度恢复尚无设备结论。不要把首次 UI 绘制当视频首帧。
+- 启动/预览优化（2026-10-20，rev1020.1）：无外部配置目录时用输入指纹复用配置快照，未变更启动不再拷贝/哈希 15MB 字体（设备上 copy+sha256 约 40ms，冷盘更高）；内置资源每版本解包一次并硬链接进快照；点击播放时取消该目录的时长/缩略图探测并预热 WebDAV 上游连接；缩略图失败回退按解码模式批量取时间戳（批量不可用时回退单张）；磁盘预览缓存限制 256MB 并按 mtime 淘汰。设备验证：连续两次启动第二次无 stage 目录、快照目录 mtime 不变，本地与 WebDAV 播放正常。
 - 黑屏根因（2026-10-20，设备已确认）：`BaseMPVView.initialize()` 在末尾才注册 SurfaceHolder 回调，而本应用把 native 初始化推迟到首个界面绘制之后；此时 SurfaceView 的 surface 已经创建，`surfaceCreated` 不再回调，`MPVView.surfaceReady` 始终为 false，加载一直等待 surface。设备证据：mpv 日志 0.007s 初始化后无 `wid`、143s 内没有 `loadfile`；退到后台再回前台重建 surface 后立即 attach 并起播。修复：`initialize()` 之后调用 `MPVView.adoptExistingSurface()`，接管已存在的 surface（含尺寸）。设备验证：本机视频与 WebDAV 均在 wid 0.007s、loadfile 0.056s、0.1s 起播。
 - 当前黑屏修复：审查 OpenCode 的 147 版；用户尚未测试该版，原设备根因仍未确认。实际播放按活动 streamId 使用独立 HTTP 适配：直接 GET/HEAD，不以 PROPFIND 大小校验；保留上游 200/206/416、长度和范围，接受合法缩短 206，未知长度使用 chunked，不伪造定位能力。播放不再拼接探测缓存；后台探测继续严格 Range/缓存边界。认证策略未变，HTTP 失败只记录状态码，不记录远端异常消息。
 - 本批验证：20 项 WebDAV 播放/探测与请求资源检查通过（47s）；148 / 1.2.9-rev1017 首次 Release 在 R8/lintVital 阶段遭内核 OOM kill（pid 已核对）；改用单 worker、1536MiB heap 和 2 个 JVM 处理器重试，Release/R8/lintVital 已通过（3m12s），已签名交付。日志/清单见 `.tmp/webdav-black-screen-20261017/`；前批历史查 Git。
