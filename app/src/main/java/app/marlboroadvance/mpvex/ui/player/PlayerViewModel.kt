@@ -305,6 +305,7 @@ class PlayerViewModel(
 
   fun beginFileChange(path: String) {
     if (stopPlaybackJob != null) return
+    loadWatchdog?.cancel()
     app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
       .existingInstance()?.setPlaybackUrl(path)
     playbackSession.begin(path)
@@ -352,15 +353,34 @@ class PlayerViewModel(
         playbackEvents.bind(request, entryId)
       }
     }
+    armLoadWatchdog(request.generation)
+  }
+
+  /**
+   * A load can be discarded without any native event (superseded request, rejected
+   * dispatch, stalled transport). Without this the UI would keep its spinner forever,
+   * so surface a failure instead of waiting indefinitely.
+   */
+  private fun armLoadWatchdog(generation: Long) {
+    loadWatchdog?.cancel()
+    loadWatchdog = viewModelScope.launch {
+      delay(LOAD_WATCHDOG_MS)
+      if (playbackSession.generation == generation && !playbackSession.loaded && stopPlaybackJob == null) {
+        Log.w(TAG, "Playback did not start within ${LOAD_WATCHDOG_MS}ms")
+        nativeFileFailed(generation)
+      }
+    }
   }
 
   internal fun nativeFileReady() {
+    loadWatchdog?.cancel()
     metadataDirty = true
     trackListsDirty = true
     playbackStateStore.ready(playbackSession.generation)
   }
 
   internal fun nativeFileFailed(generation: Long) {
+    loadWatchdog?.cancel()
     playbackSession.failed(generation)
     playbackStateStore.failed(generation)
   }
@@ -376,6 +396,7 @@ class PlayerViewModel(
   /** Called after the Activity has captured its final playback snapshot. */
   fun stopPlayback() {
     if (stopPlaybackJob != null) return
+    loadWatchdog?.cancel()
     playbackSession.retire()
     val retiredGeneration = playbackSession.generation
     playbackStateStore.stopping(retiredGeneration)
@@ -647,10 +668,12 @@ class PlayerViewModel(
   // Seek coalescing for smooth performance
   private var pendingSeekOffset: Int = 0
   private var seekCoalesceJob: Job? = null
+  private var loadWatchdog: Job? = null
 
   private companion object {
     const val TAG = "PlayerViewModel"
     const val SEEK_COALESCE_DELAY_MS = 60L
+    const val LOAD_WATCHDOG_MS = 20_000L
     val VALID_SUBTITLE_EXTENSIONS =
       setOf(
         // Common & modern

@@ -93,4 +93,50 @@ class WebDavRangeSourceTest {
     assertArrayEquals(data.copyOfRange(7, 48), source().open(7, 47).use { it.readBytes() })
     assertEquals("bytes=32-47", requests.single().header("Range"))
   }
+
+  private fun playbackSource(statuses: List<Int>, body: ByteArray = data): Pair<WebDavRangeSource, MutableList<Request>> {
+    val seen = mutableListOf<Request>()
+    val client = OkHttpClient.Builder().addInterceptor { chain ->
+      val request = chain.request()
+      seen.add(request)
+      val code = statuses[(seen.size - 1).coerceAtMost(statuses.lastIndex)]
+      Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(code).message("test")
+        .header("Content-Range", "bytes 0-9/${body.size}")
+        .body(if (code == 200 || code == 206) body.copyOfRange(0, 10).toResponseBody() else "".toResponseBody())
+        .build()
+    }.build()
+    val source = WebDavRangeSource(
+      client, Request.Builder().url("http://localhost/test").build(), body.size.toLong(), "file-v1", null, cache,
+    )
+    return source to seen
+  }
+
+  @Test fun playbackRetriesOneTransientServerError() {
+    val (source, seen) = playbackSource(listOf(503, 206))
+    val response = source.openPlayback("bytes=0-9")
+    try {
+      assertEquals(206, response.status)
+      assertEquals(2, seen.size)
+    } finally {
+      response.stream.close()
+    }
+  }
+
+  @Test fun playbackRetriesAtMostOnce() {
+    val (source, seen) = playbackSource(listOf(503, 503, 206))
+    try {
+      source.openPlayback("bytes=0-9").stream.close()
+      fail("Persistent failure accepted")
+    } catch (_: IOException) { }
+    assertEquals(2, seen.size)
+  }
+
+  @Test fun playbackDoesNotRetryClientErrors() {
+    val (source, seen) = playbackSource(listOf(404, 206))
+    try {
+      source.openPlayback("bytes=0-9").stream.close()
+      fail("404 accepted")
+    } catch (_: IOException) { }
+    assertEquals(1, seen.size)
+  }
 }

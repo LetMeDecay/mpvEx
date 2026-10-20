@@ -21,6 +21,11 @@ internal class WebDavRangeSource(
 ) {
   private val strongEtag = etag?.trim()?.takeIf { it.length >= 2 && it.startsWith('"') && it.endsWith('"') }
 
+  private companion object {
+    val RETRYABLE_STATUS = setOf(408, 429, 500, 502, 503, 504)
+    const val PLAYBACK_RETRY_DELAY_MS = 150L
+  }
+
   fun open(start: Long, end: Long): InputStream {
     require(start >= 0 && end >= start && end < size)
     // Without a strong validator, do not assemble bytes from multiple requests.
@@ -55,11 +60,31 @@ internal class WebDavRangeSource(
     if (head) builder.head() else builder.get()
     if (range != null && !head) builder.header("Range", range) else builder.removeHeader("Range")
     strongEtag?.let { builder.header("If-Match", it) }
+    val prepared = builder.build()
+    var attempt = 0
+    while (true) {
+      try {
+        return executePlayback(prepared, requested, head)
+      } catch (failure: Exception) {
+        // A transient upstream error usually clears within one retry, and no byte has
+        // been handed to the player yet. Deterministic failures are retried at most once.
+        if (attempt++ > 0 || !isRetryablePlaybackFailure(failure)) throw failure
+        try {
+          Thread.sleep(PLAYBACK_RETRY_DELAY_MS)
+        } catch (interrupted: InterruptedException) {
+          Thread.currentThread().interrupt()
+          throw failure
+        }
+      }
+    }
+  }
+
+  private fun executePlayback(request: Request, requested: MatchResult?, head: Boolean): PlaybackResponse {
     var status = 0
     var length = -1L
     var contentRange: String? = null
     var acceptRanges: String? = null
-    val stream = execute(builder.build(), owner) { response ->
+    val stream = execute(request, owner) { response ->
       status = response.code
       if (status != 200 && status != 206 && status != 416) throw WebDavHttpStatusException(status)
       if (response.header("Content-Encoding")?.equals("identity", ignoreCase = true) == false) {
@@ -96,6 +121,13 @@ internal class WebDavRangeSource(
       // Forward it as 200 so the demuxer can decide whether sequential playback is possible.
     }
     return PlaybackResponse(status, length, contentRange, acceptRanges, owner.own(stream))
+  }
+
+  private fun isRetryablePlaybackFailure(failure: Exception): Boolean = when (failure) {
+    is WebDavHttpStatusException -> failure.status in RETRYABLE_STATUS
+    // Transport failures happen before a body is handed to the player.
+    is IOException -> true
+    else -> false
   }
 
   private fun openRemote(start: Long, end: Long): InputStream {
