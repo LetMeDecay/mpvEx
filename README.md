@@ -1,8 +1,8 @@
 ![banner](fastlane/metadata/android/en-US/images/featureGraphic.png)
 
 # mpvExtended
-[![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/marlboro-advance/mpvex.svg?logo=github&label=GitHub&cacheSeconds=3600)](https://github.com/marlboro-advance/mpvex/releases/latest)
-[![GitHub all releases](https://img.shields.io/github/downloads/marlboro-advance/mpvex/total?logo=github&cacheSeconds=3600)](https://github.com/marlboro-advance/mpvex/releases/latest)
+[![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/LetMeDecay/mpvEx.svg?logo=github&label=GitHub&cacheSeconds=3600)](https://github.com/LetMeDecay/mpvEx/releases/latest)
+[![GitHub all releases](https://img.shields.io/github/downloads/LetMeDecay/mpvEx/total?logo=github&cacheSeconds=3600)](https://github.com/LetMeDecay/mpvEx/releases/latest)
 
 
 **mpvExtended is a fork of [mpv-android](https://github.com/mpv-android/mpv-android), built on the libmpv library. It aims
@@ -28,16 +28,27 @@ features.**
 - Custom Playlist management support
 
 **This project is still in development and is expected to have bugs. Please report any bugs you find in
-the [Issues](https://github.com/marlboro-advance/mpvEx/issues) section.**
+the [Issues](https://github.com/LetMeDecay/mpvEx/issues) section.**
+
+## Changes in this fork
+
+This fork focuses on networked playback (WebDAV/SMB/FTP) and player startup:
+
+- **WebDAV playback reliability**: fixed black screens caused by a surface callback missed when native initialisation is deferred, preserved upstream HTTP status/length/range semantics, retried transient 5xx and transport failures once, and surfaced stalled loads instead of spinning forever.
+- **Faster directory browsing**: listings drop the collection entry by path instead of assuming it is first, sorting is derived without feeding back into the list, starting playback cancels competing metadata probes, and the WebDAV connection is warmed before the player opens.
+- **Cheaper metadata**: duration/resolution are parsed directly from MP4/Matroska headers (bounded head/tail range reads, with the platform retriever as fallback); thumbnail fallbacks batch their timestamps and the on-disk preview cache is budgeted.
+- **Startup**: player configuration snapshots are reused by input fingerprint and bundled assets are hard-linked into them, removing a ~15MB copy/hash on every launch.
+- **Player robustness**: serialized command queue for loads/seeks/pause, ordered frame capture, external audio/subtitle ownership, typed tuning controls and stable track identities.
+- **Cleanup**: removed the unreachable streaming ContentProvider, the unused next-item prefetch pipeline and other dead helpers.
 
 ---
 
 ## Installation
 
 ### Stable Release
-Download the latest stable version from the [GitHub releases page](https://github.com/marlboro-advance/mpvEx/releases).
+Download the latest stable version from the [GitHub releases page](https://github.com/LetMeDecay/mpvEx/releases).
 
-[![Download Release](https://img.shields.io/badge/Download-Release-blue?style=for-the-badge)](https://github.com/marlboro-advance/mpvEx/releases)
+[![Download Release](https://img.shields.io/badge/Download-Release-blue?style=for-the-badge)](https://github.com/LetMeDecay/mpvEx/releases)
 
 Or you can get the stable releases here
 
@@ -165,10 +176,10 @@ If you find mpvExtended useful, consider supporting the development:
 ---
 ## Star History <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Travel%20and%20places/Star.png" alt="Star" width="25" height="25" />
 
-<a href="https://www.star-history.com/#marlboro-advance/mpvEx&type=date&legend=top-left">
+<a href="https://www.star-history.com/#LetMeDecay/mpvEx&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=marlboro-advance/mpvEx&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=marlboro-advance/mpvEx&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=marlboro-advance/mpvEx&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=LetMeDecay/mpvEx&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=LetMeDecay/mpvEx&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=LetMeDecay/mpvEx&type=date&legend=top-left" />
  </picture>
 </a>
