@@ -7,18 +7,19 @@ plugins {
   alias(libs.plugins.kotlinx.serialization)
   alias(libs.plugins.ksp)
   alias(libs.plugins.room)
+  alias(libs.plugins.aboutlibraries)
 }
 
 android {
   namespace = "app.marlboroadvance.mpvex"
-  compileSdk = 36
+  compileSdk = 37
 
   defaultConfig {
     applicationId = "app.marlboroadvance.mpvex"
     minSdk = 26
     targetSdk = 36
-    versionCode = 152
-    versionName = "1.2.9-rev1020.3"
+    versionCode = 153
+    versionName = "1.3.1-rev1020.4"
 
     vectorDrawables {
       useSupportLibrary = true
@@ -33,6 +34,7 @@ android {
   productFlavors {
     create("standard") {
       dimension = "distribution"
+      isDefault = true
       buildConfigField("boolean", "ENABLE_UPDATE_FEATURE", "true")
       buildConfigField("boolean", "SCOPED_STORAGE_ONLY", "false")
     }
@@ -151,7 +153,6 @@ androidComponents {
 kotlin {
   compilerOptions {
     freeCompilerArgs.addAll(
-      "-Xwhen-guards",
       "-Xcontext-parameters",
       "-Xannotation-default-target=param-property",
       "-opt-in=com.google.accompanist.permissions.ExperimentalPermissionsApi",
@@ -197,6 +198,7 @@ dependencies {
 
   implementation(libs.seeker)
   implementation(libs.compose.prefs)
+  implementation(libs.aboutlibraries.compose.m3)
 
   implementation(libs.accompanist.permissions)
 
@@ -211,7 +213,7 @@ dependencies {
   implementation(libs.truetype.parser)
   implementation(libs.fsaf)
   implementation(libs.mediainfo.lib)
-  implementation(files("libs/mpv-android-lib-v0.0.1.aar"))
+  implementation(libs.mpv.android)
 
   // Network protocol libraries
   implementation(libs.smbj)

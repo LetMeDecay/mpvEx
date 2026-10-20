@@ -16,6 +16,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -27,13 +28,8 @@ import kotlin.math.max
 class ThumbnailRepository(
   private val context: Context,
 ) {
-  private val appearancePreferences by lazy { 
-    org.koin.java.KoinJavaComponent.get<app.marlboroadvance.mpvex.preferences.AppearancePreferences>(
-      app.marlboroadvance.mpvex.preferences.AppearancePreferences::class.java
-    ) 
-  }
   private val diskCacheDimension = 1024
-  private val diskJpegQuality = 100
+  private val diskJpegQuality = 85
   private val memoryCache: LruCache<String, Bitmap>
   private val diskDir: File = File(context.filesDir, "thumbnails").apply { mkdirs() }
   private val ongoingOperations = ConcurrentHashMap<String, Deferred<Bitmap?>>()
@@ -78,7 +74,7 @@ class ThumbnailRepository(
     withContext(Dispatchers.IO) {
       val key = thumbnailKey(video, widthPx, heightPx)
 
-      if (isNetworkUrl(video.path) && !appearancePreferences.showNetworkThumbnails.get()) {
+      if (isNetworkUrl(video.path)) {
         return@withContext null
       }
 
@@ -91,13 +87,13 @@ class ThumbnailRepository(
       val deferred =
         async {
           try {
-            loadFromDisk(video)?.let { thumbnail ->
+            loadFromDisk(video, widthPx)?.let { thumbnail ->
               memoryCache.put(key, thumbnail)
               _thumbnailReadyKeys.tryEmit(key)
               return@async thumbnail
             }
 
-            if (isNetworkUrl(video.path) && !appearancePreferences.showNetworkThumbnails.get()) {
+            if (isNetworkUrl(video.path)) {
               return@async null
             }
 
@@ -144,13 +140,13 @@ class ThumbnailRepository(
     heightPx: Int,
   ): Bitmap? =
     withContext(Dispatchers.IO) {
-      if (isNetworkUrl(video.path) && !appearancePreferences.showNetworkThumbnails.get()) {
+      if (isNetworkUrl(video.path)) {
         return@withContext null
       }
       
       val key = thumbnailKey(video, widthPx, heightPx)
       synchronized(memoryCache) { memoryCache.get(key) }?.let { return@withContext it }
-      loadFromDisk(video)?.let { thumbnail ->
+      loadFromDisk(video, widthPx)?.let { thumbnail ->
         synchronized(memoryCache) { memoryCache.put(key, thumbnail) }
         return@withContext thumbnail
       }
@@ -162,7 +158,7 @@ class ThumbnailRepository(
     widthPx: Int,
     heightPx: Int,
   ): Bitmap? {
-    if (isNetworkUrl(video.path) && !appearancePreferences.showNetworkThumbnails.get()) {
+    if (isNetworkUrl(video.path)) {
       return null
     }
     
@@ -194,39 +190,37 @@ class ThumbnailRepository(
     widthPx: Int,
     heightPx: Int,
   ) {
-    val filteredVideos = if (appearancePreferences.showNetworkThumbnails.get()) {
-      videos
-    } else {
-      videos.filterNot { isNetworkUrl(it.path) }
-    }
+    if (videos.isEmpty()) return
     
-    if (filteredVideos.isEmpty()) return
-    
-    folderJobs.entries.removeAll { !it.value.isActive }
-    
-    if (folderJobs.size >= maxconcurrentfolders && !folderJobs.containsKey(folderId)) {
-      folderJobs.entries.firstOrNull()?.let { (oldestId, job) ->
-        job.cancel()
-        folderJobs.remove(oldestId)
-        folderStates.remove(oldestId)
-      }
-    }
-    
-    val signature = folderSignature(filteredVideos, widthPx, heightPx)
-    val state =
-      folderStates.compute(folderId) { _, existing ->
-        if (existing == null || existing.signature != signature) {
-          FolderState(signature = signature, nextIndex = 0)
-        } else {
-          existing
-        }
-      }!!
-
     folderJobs.remove(folderId)?.cancel()
     folderJobs[folderId] =
-      repositoryScope.launch {
+      repositoryScope.launch(Dispatchers.Default) {
+        val filteredVideos = videos.filterNot { isNetworkUrl(it.path) }
+
+        if (filteredVideos.isEmpty() || !isActive) return@launch
+
+        folderJobs.entries.removeAll { !it.value.isActive }
+
+        if (folderJobs.size >= maxconcurrentfolders && !folderJobs.containsKey(folderId)) {
+          folderJobs.entries.firstOrNull()?.let { (oldestId, job) ->
+            job.cancel()
+            folderJobs.remove(oldestId)
+            folderStates.remove(oldestId)
+          }
+        }
+
+        val signature = folderSignature(filteredVideos, widthPx, heightPx)
+        val state =
+          folderStates.compute(folderId) { _, existing ->
+            if (existing == null || existing.signature != signature) {
+              FolderState(signature = signature, nextIndex = 0)
+            } else {
+              existing
+            }
+          }!!
+
         var i = state.nextIndex
-        while (i < filteredVideos.size) {
+        while (i < filteredVideos.size && isActive) {
           val video = filteredVideos[i]
           getThumbnail(video, widthPx, heightPx)
           i++
@@ -262,20 +256,28 @@ class ThumbnailRepository(
 
   private fun diskKey(video: Video): String {
     val baseKey = videoBaseKey(video)
-    return if (isNetworkUrl(video.path)) {
-      "$baseKey|disk|d$diskCacheDimension|pos3"
-    } else {
-      "$baseKey|disk|d$diskCacheDimension"
-    }
+    return "$baseKey|disk|d$diskCacheDimension"
   }
 
-  private fun loadFromDisk(video: Video): Bitmap? {
+  private fun loadFromDisk(video: Video, targetWidthPx: Int = 0): Bitmap? {
     val diskFile = File(diskDir, keyToFileName(diskKey(video)))
     if (!diskFile.exists()) return null
     return runCatching {
       val options =
         BitmapFactory.Options().apply {
-          inPreferredConfig = Bitmap.Config.ARGB_8888
+          inPreferredConfig = Bitmap.Config.RGB_565
+          if (targetWidthPx > 0) {
+            inJustDecodeBounds = true
+            BitmapFactory.decodeFile(diskFile.absolutePath, this)
+            var sampleSize = 1
+            var w = outWidth
+            while (w / 2 >= targetWidthPx) {
+              w /= 2
+              sampleSize *= 2
+            }
+            inSampleSize = sampleSize
+            inJustDecodeBounds = false
+          }
         }
       BitmapFactory.decodeFile(diskFile.absolutePath, options)
     }.getOrNull()
@@ -431,18 +433,6 @@ class ThumbnailRepository(
   }
 
   private fun preferredPositionSeconds(video: Video): Double {
-    val isNetworkUrl = isNetworkUrl(video.path)
-    
-    if (isNetworkUrl) {
-      val durationSec = video.duration / 1000.0
-      
-      if (durationSec > 0.0) {
-        return 2.0.coerceIn(0.0, max(0.0, durationSec - 0.1))
-      }
-      
-      return 2.0
-    }
-    
     val durationSec = video.duration / 1000.0
     
     if (durationSec <= 0.0 || durationSec < 20.0) return 0.0

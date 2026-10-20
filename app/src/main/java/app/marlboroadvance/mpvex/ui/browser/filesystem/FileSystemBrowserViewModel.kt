@@ -12,13 +12,16 @@ import app.marlboroadvance.mpvex.domain.playbackstate.repository.PlaybackStateRe
 import app.marlboroadvance.mpvex.preferences.BrowserPreferences
 import app.marlboroadvance.mpvex.repository.MediaFileRepository
 import app.marlboroadvance.mpvex.ui.browser.base.BaseBrowserViewModel
+import app.marlboroadvance.mpvex.utils.media.MediaIdentifier
 import app.marlboroadvance.mpvex.utils.media.MediaLibraryEvents
 import app.marlboroadvance.mpvex.utils.media.MetadataRetrieval
 import app.marlboroadvance.mpvex.utils.sort.SortUtils
-import app.marlboroadvance.mpvex.utils.storage.FolderViewScanner
-import app.marlboroadvance.mpvex.utils.storage.TreeViewScanner
+import app.marlboroadvance.mpvex.utils.storage.FileTypeUtils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -176,8 +179,6 @@ class FileSystemBrowserViewModel(
     
     // Clear all caches to force fresh data from filesystem
     MediaFileRepository.clearCache()
-    FolderViewScanner.clearCache()
-    TreeViewScanner.clearCache()
     
     // Trigger media scan to ensure MediaStore is up-to-date
     triggerMediaScan()
@@ -206,9 +207,7 @@ class FileSystemBrowserViewModel(
       if (folder.exists() && folder.isDirectory) {
         // Scan all video files in the folder
         val videoFiles = folder.listFiles { file ->
-          file.isFile && file.extension.lowercase() in listOf(
-            "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "3gp", "mpg", "mpeg", "ts", "m2ts"
-          )
+          file.isFile && FileTypeUtils.isVideoFile(file)
         }
         
         if (!videoFiles.isNullOrEmpty()) {
@@ -434,18 +433,24 @@ class FileSystemBrowserViewModel(
 
       videoFiles.forEach { videoFile ->
         val video = videoFile.video
-        val playbackState = playbackStateRepository.getVideoDataByTitle(video.displayName)
+        val playbackState = playbackStateRepository.getVideoDataByTitle(MediaIdentifier.forLocalPath(video.path))
+          ?: playbackStateRepository.getVideoDataByTitle(video.displayName)
 
-        if (playbackState != null && video.duration > 0) {
-          val durationSeconds = video.duration / 1000
-          val timeRemaining = playbackState.timeRemaining.toLong()
-          val watched = durationSeconds - timeRemaining
-          val progressValue = (watched.toFloat() / durationSeconds.toFloat()).coerceIn(0f, 1f)
+        if (playbackState != null) {
+          val durationSeconds = if (video.duration > 0) {
+            video.duration / 1000
+          } else {
+            (playbackState.lastPosition + playbackState.timeRemaining).toLong()
+          }
+          if (durationSeconds > 0) {
+            val watched = playbackState.lastPosition.toLong()
+            val progressValue = (watched.toFloat() / durationSeconds.toFloat()).coerceIn(0f, 1f)
 
-          // Only show progress for videos that are 1-99% complete
-          // Similar to how media players show partial progress
-          if (progressValue in 0.01f..0.99f) {
-            playbackMap[video.id] = progressValue
+            // Only show progress for videos that are 1-99% complete
+            // Similar to how media players show partial progress
+            if (progressValue in 0.01f..0.99f) {
+              playbackMap[video.id] = progressValue
+            }
           }
         }
       }
@@ -453,5 +458,94 @@ class FileSystemBrowserViewModel(
       _videoFilesWithPlayback.value = playbackMap
       Log.d(TAG, "Loaded playback info for ${playbackMap.size} videos with progress")
     }
+  }
+
+  /**
+   * Searches for files/folders matching query within current directory or storage roots
+   */
+  suspend fun search(context: android.content.Context, query: String): List<FileSystemItem> =
+    kotlinx.coroutines.withContext(Dispatchers.IO) {
+      if (query.isBlank()) return@withContext emptyList()
+      val current = _currentPath.value
+      if (current == STORAGE_ROOTS_MARKER) {
+        val roots = MediaFileRepository.getStorageRoots(context)
+        val allResults = mutableListOf<FileSystemItem>()
+        for (root in roots) {
+          allResults.addAll(searchDirectoryRecursive(context, root.path, query))
+        }
+        allResults.distinctBy {
+          when (it) {
+            is FileSystemItem.VideoFile -> it.video.path
+            is FileSystemItem.Folder -> it.path
+          }
+        }
+      } else {
+        searchDirectoryRecursive(context, current, query)
+      }
+    }
+
+  private suspend fun searchDirectoryRecursive(
+    context: android.content.Context,
+    directoryPath: String,
+    query: String,
+    maxDepth: Int = 8,
+    currentDepth: Int = 0,
+  ): List<FileSystemItem> {
+    currentCoroutineContext().ensureActive()
+    if (currentDepth >= maxDepth) return emptyList()
+    val results = mutableListOf<FileSystemItem>()
+    try {
+      val items = MediaFileRepository.scanDirectory(context, directoryPath).getOrNull() ?: emptyList()
+      for (item in items) {
+        currentCoroutineContext().ensureActive()
+        when (item) {
+          is FileSystemItem.VideoFile -> {
+            if (item.video.displayName.contains(query, ignoreCase = true)) {
+              results.add(item)
+            }
+          }
+          is FileSystemItem.Folder -> {
+            if (item.name.contains(query, ignoreCase = true)) {
+              results.add(item)
+            }
+            results.addAll(searchDirectoryRecursive(context, item.path, query, maxDepth, currentDepth + 1))
+          }
+        }
+      }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      Log.e(TAG, "Error searching directory $directoryPath", e)
+    }
+    return results
+  }
+
+  /**
+   * Recursively collects all videos from a folder and its subfolders
+   */
+  suspend fun collectVideosRecursively(
+    context: android.content.Context,
+    folderPath: String,
+    maxDepth: Int = 8,
+    currentDepth: Int = 0,
+  ): List<Video> {
+    currentCoroutineContext().ensureActive()
+    if (currentDepth >= maxDepth) return emptyList()
+    val videos = mutableListOf<Video>()
+    try {
+      val items = MediaFileRepository.scanDirectory(context, folderPath).getOrNull() ?: emptyList()
+      for (item in items) {
+        currentCoroutineContext().ensureActive()
+        when (item) {
+          is FileSystemItem.VideoFile -> videos.add(item.video)
+          is FileSystemItem.Folder -> videos.addAll(collectVideosRecursively(context, item.path, maxDepth, currentDepth + 1))
+        }
+      }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      Log.e(TAG, "Error collecting videos from $folderPath", e)
+    }
+    return videos
   }
 }

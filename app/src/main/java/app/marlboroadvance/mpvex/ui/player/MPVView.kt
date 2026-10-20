@@ -16,7 +16,7 @@ import app.marlboroadvance.mpvex.domain.anime4k.Anime4KManager
 import app.marlboroadvance.mpvex.ui.player.PlayerActivity.Companion.TAG
 import app.marlboroadvance.mpvex.ui.player.controls.components.panels.toColorHexString
 import `is`.xyz.mpv.BaseMPVView
-import `is`.xyz.mpv.KeyMapping
+import `is`.xyz.mpv.keyMapping
 import `is`.xyz.mpv.MPVLib
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
@@ -136,7 +136,7 @@ class MPVView(
       property: KProperty<*>,
       value: Int,
     ) {
-      if (value == -1) MpvGateway.setPropertyString(name, "no") else MpvGateway.setPropertyInt(name, value)
+      if (value <= 0) MpvGateway.setPropertyString(name, "no") else MpvGateway.setPropertyInt(name, value)
     }
   }
 
@@ -226,7 +226,7 @@ class MPVView(
       return false
     }
 
-    var mapped = KeyMapping[event.keyCode]
+    var mapped = keyMapping[event.keyCode]
     if (mapped == null) {
       // Fallback to produced glyph
       if (!event.isPrintingKey) {
