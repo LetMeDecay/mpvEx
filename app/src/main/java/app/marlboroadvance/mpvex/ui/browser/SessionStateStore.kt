@@ -1,6 +1,9 @@
 package app.marlboroadvance.mpvex.ui.browser
 
+import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import android.content.Context
+import android.os.Build
 
 /**
  * Durable "last location" used to restore the browsing context after the process
@@ -58,5 +61,31 @@ object SessionStateStore {
       .remove(KEY_CONNECTION_NAME)
       .remove(KEY_PATH)
       .apply()
+  }
+
+  fun clearAll(context: Context) {
+    prefs(context).edit().clear().apply()
+  }
+
+  /**
+   * True only when the previous process was terminated by the system (memory
+   * pressure, excessive resource usage or an OEM memory manager). A manual
+   * swipe/force-stop reports REASON_USER_REQUESTED/USER_STOPPED, and a package
+   * update reports REASON_PACKAGE_UPDATED; those should start on the home tab.
+   */
+  fun shouldRestoreAfterSystemKill(context: Context): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
+    return runCatching {
+      val manager = context.getSystemService(ActivityManager::class.java) ?: return@runCatching false
+      val info = manager.getHistoricalProcessExitReasons(context.packageName, 0, 1).firstOrNull()
+        ?: return@runCatching false
+      when (info.reason) {
+        ApplicationExitInfo.REASON_LOW_MEMORY,
+        ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE,
+        ApplicationExitInfo.REASON_OTHER,
+        -> true
+        else -> false
+      }
+    }.getOrDefault(false)
   }
 }

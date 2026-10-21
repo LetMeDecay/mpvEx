@@ -17,7 +17,7 @@
 - 统计页按已执行选择计算显示切换，连续点击合并后不误切换；Anime4K 着色器准备与应用串行，移除面板独立 IO 作业及空回调。视频宽高随代次发布，用于面板分辨率判断；换片清空，旧代次结果不回填。
 - 最新已交付：代码 `9764f73`，Release 1.3.1-rev1020.5，versionCode 154（ABI 1540–1544）；GitHub Release 已发布 7 个 APK（Standard 5 ABI + PlayStore universal + F-Droid arm64），本地构建/签名并手动发布；1.3.1-rev1020.4 因缺少 `subfont.ttf` 导致播放配置失败，已标注弃用。历史交付在 `../release-github-1020.5/`、`release-rev1020.4`（已弃用）、`release-rev1020.3/` 等。
 - 当前 PATH 无可用 ADB 命令；未安装、未做启动健康或功能/性能验收，WebDAV 1–2 秒等待与进度恢复尚无设备结论。不要把首次 UI 绘制当视频首帧。
-- 会话恢复（2026-10-21）：新增 `SessionStateStore`，持久化最后 tab 与网络目录（connectionId + 名称 + path）；冷启动时恢复 tab 并在栈顶重建 `NetworkBrowserScreen`，返回连接列表时清除目录记录。修复系统内存压力杀进程后（`ApplicationExitInfo` 记录 `umms1_normal_mem_pressure`）重新打开落到首页的问题。本地构建约定：`-Pabi=arm64-v8a` 只出 arm64 APK；全 ABI/PlayStore/F-Droid 交给 workflow，且运行 workflow 前必须先询问。
+- 会话恢复（2026-10-21）：新增 `SessionStateStore`，持久化最后 tab 与网络目录（connectionId + 名称 + path）。仅在 `ApplicationExitInfo` 判定上次是**系统杀进程**（LOW_MEMORY / EXCESSIVE_RESOURCE_USAGE / OTHER，例如 `umms1_normal_mem_pressure`）时恢复 tab 与目录；手动滑动清理/强行停止（USER_REQUESTED/USER_STOPPED）或应用更新则清空会话并回到首页。返回连接列表时清除目录记录。本地构建约定：`-Pabi=arm64-v8a` 只出 arm64 APK；全 ABI/PlayStore/F-Droid 交给 workflow，且运行 workflow 前必须先询问。
 - 播放配置修复（2026-10-21，rev1020.5）：mpv-android 1.0.0 不再内置 `subfont.ttf`，配置快照按固定列表复制资源时抛异常，导致播放提示「无法准备播放器配置」；改为仅复制实际存在的内置资源。
 - 流程约定：**每次触发 GitHub Actions workflow 前必须先询问用户**，默认使用本地构建与手动发布，避免浪费 Actions 次数与时间。
 - 音量与播放器收尾（2026-10-20，rev1020.4）：物理音量键改走 `AudioManager.adjustStreamVolume(STREAM_MUSIC)`，跟随系统步进与上下限、不再在最大音量后继续加 mpv 增益；右侧滑动保持原有映射与增益逻辑。补上游播放器改动：`attachBaseContext` 统一 fontScale、支持显式 `file_path` extra、退出时同步写入播放状态、播放列表跳过已删除的本地文件。

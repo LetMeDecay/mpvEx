@@ -59,6 +59,7 @@ import org.koin.android.ext.android.inject
  */
 class MainActivity : AppCompatActivity() {
   private val appearancePreferences by inject<AppearancePreferences>()
+  private var restoreSessionAfterSystemKill = false
   private val networkRepository by inject<NetworkRepository>()
 
   // Create a coroutine scope tied to the activity lifecycle
@@ -76,9 +77,15 @@ class MainActivity : AppCompatActivity() {
     
     PermissionUtils.setMediaAccessLauncher(mediaAccessLauncher)
 
-    // Restore the tab the user left on, even when the process was killed while
-    // backgrounded and the system did not hand the saved instance state back.
-    MainScreen.restoreSelectedTab(SessionStateStore.lastTab(this))
+    // Only a process killed by the system (memory pressure) resumes where it
+    // was. A manual swipe/force-stop or an update starts on the home tab.
+    restoreSessionAfterSystemKill = SessionStateStore.shouldRestoreAfterSystemKill(this)
+    if (restoreSessionAfterSystemKill) {
+      MainScreen.restoreSelectedTab(SessionStateStore.lastTab(this))
+    } else {
+      SessionStateStore.clearAll(this)
+      MainScreen.restoreSelectedTab(0)
+    }
 
     setContent {
       // Set up theme and edge-to-edge display
@@ -157,7 +164,7 @@ class MainActivity : AppCompatActivity() {
     val initialBackStack = remember(context) {
       buildList<Screen> {
         add(MainScreen)
-        SessionStateStore.networkLocation(context)?.let { location ->
+        if (restoreSessionAfterSystemKill) SessionStateStore.networkLocation(context)?.let { location ->
           add(
             NetworkBrowserScreen(
               connectionId = location.connectionId,
