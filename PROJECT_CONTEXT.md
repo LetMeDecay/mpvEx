@@ -15,8 +15,10 @@
 - 附加音轨已改为 IO 打开独立资源租约，audio-add 按代次进入同一有界队列；迟到结果不写入新视频，未交付资源确定关闭，原 URI 映射供稳定轨道描述使用。外部音轨 URI 尚未持久化，不能宣称重启后自动恢复。
 - 逐帧/截图接入 typed 控制和同一串行队列；暂停与单帧命令按组执行，截图等待命令完成并核对非空文件，不再固定等待。调用方取消后等待正在执行的 native 工作结束才释放文件；MediaStore 空输出/发布失败及取消会清理未发布条目，临时文件使用独立名称。面板时间线改用当前代次快照，旧面板关闭不恢复新视频。
 - 统计页按已执行选择计算显示切换，连续点击合并后不误切换；Anime4K 着色器准备与应用串行，移除面板独立 IO 作业及空回调。视频宽高随代次发布，用于面板分辨率判断；换片清空，旧代次结果不回填。
-- 最新已交付：代码 `0c7d777`，Release 1.3.1-rev1020.4，versionCode 153（ABI 1530–1534）；GitHub Release 已发布 7 个 APK（Standard 5 ABI + PlayStore universal + F-Droid arm64），CI workflow `Make release` 构建并签名，`master` 已推送。历史交付在 `../release-rev1020.3/`、`release-rev1020.2/`、`release-rev1020.1/`、`release-rev1020/`、`release/`。
+- 最新已交付：代码 `9764f73`，Release 1.3.1-rev1020.5，versionCode 154（ABI 1540–1544）；GitHub Release 已发布 7 个 APK（Standard 5 ABI + PlayStore universal + F-Droid arm64），本地构建/签名并手动发布；1.3.1-rev1020.4 因缺少 `subfont.ttf` 导致播放配置失败，已标注弃用。历史交付在 `../release-github-1020.5/`、`release-rev1020.4`（已弃用）、`release-rev1020.3/` 等。
 - 当前 PATH 无可用 ADB 命令；未安装、未做启动健康或功能/性能验收，WebDAV 1–2 秒等待与进度恢复尚无设备结论。不要把首次 UI 绘制当视频首帧。
+- 播放配置修复（2026-10-21，rev1020.5）：mpv-android 1.0.0 不再内置 `subfont.ttf`，配置快照按固定列表复制资源时抛异常，导致播放提示「无法准备播放器配置」；改为仅复制实际存在的内置资源。
+- 流程约定：**每次触发 GitHub Actions workflow 前必须先询问用户**，默认使用本地构建与手动发布，避免浪费 Actions 次数与时间。
 - 音量与播放器收尾（2026-10-20，rev1020.4）：物理音量键改走 `AudioManager.adjustStreamVolume(STREAM_MUSIC)`，跟随系统步进与上下限、不再在最大音量后继续加 mpv 增益；右侧滑动保持原有映射与增益逻辑。补上游播放器改动：`attachBaseContext` 统一 fontScale、支持显式 `file_path` extra、退出时同步写入播放状态、播放列表跳过已删除的本地文件。
 - 上游合并（2026-10-20）：已合入 `marlboro-advance/mpvEx` 的 40 个提交（基线 `4151a45`，上游 1.3.1）；版本定为 `1.3.1-rev1020.4`（versionCode 153）。决策：移除 Wyzie 在线字幕搜索、保留网络缩略图开关与 `LocalMediaIdentity`、保留本分支 WebDAV/播放器实现并吸收上游缺失文件跳过/字幕提升/媒体信息 HTTP 支持。依赖切换到 Maven `mpv-android 1.0.0` 与 `mediainfo-android 1.0.2`（`KeyMapping` → `keyMapping` 已适配）。冲突解决后 `:app:testStandardDebugUnitTest` 与 `:app:assembleStandardRelease` 通过；设备回归待手机重新连接。
 - CI 发布（2026-10-20）：`.github/workflows/release.yml` 改为单 job 构建 Standard/PlayStore/F-Droid、逐 ABI zipalign+签名、校验包名/版本、生成 SHA-256 并发布非 draft Release；新增 `workflow_dispatch`（输入已存在的 tag）。仓库 Secrets 已配置 `SIGNING_KEYSTORE`/`SIGNING_KEY_ALIAS`/`SIGNING_STORE_PASSWORD`/`KEY_PASSWORD`（仅名称记录）。本次仅部署，未触发运行。
