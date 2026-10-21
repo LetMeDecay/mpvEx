@@ -67,6 +67,15 @@ object SessionStateStore {
     prefs(context).edit().clear().apply()
   }
 
+  /** Pure mapping used by [shouldRestoreAfterSystemKill], kept testable. */
+  internal fun shouldRestoreForExitReason(reason: Int): Boolean = when (reason) {
+    ApplicationExitInfo.REASON_LOW_MEMORY,
+    ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE,
+    ApplicationExitInfo.REASON_OTHER,
+    -> true
+    else -> false
+  }
+
   /**
    * True only when the previous process was terminated by the system (memory
    * pressure, excessive resource usage or an OEM memory manager). A manual
@@ -79,13 +88,7 @@ object SessionStateStore {
       val manager = context.getSystemService(ActivityManager::class.java) ?: return@runCatching false
       val info = manager.getHistoricalProcessExitReasons(context.packageName, 0, 1).firstOrNull()
         ?: return@runCatching false
-      when (info.reason) {
-        ApplicationExitInfo.REASON_LOW_MEMORY,
-        ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE,
-        ApplicationExitInfo.REASON_OTHER,
-        -> true
-        else -> false
-      }
+      shouldRestoreForExitReason(info.reason)
     }.getOrDefault(false)
   }
 }
