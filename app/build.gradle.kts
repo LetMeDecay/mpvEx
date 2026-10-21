@@ -52,8 +52,10 @@ android {
       buildConfigField("boolean", "ENABLE_UPDATE_FEATURE", "false")
       buildConfigField("boolean", "SCOPED_STORAGE_ONLY", "false")
 
-      ndk {
-        abiFilters += "arm64-v8a"
+      if (providers.gradleProperty("abi").orNull == null) {
+        ndk {
+          abiFilters += "arm64-v8a"
+        }
       }
     }
   }
@@ -67,8 +69,16 @@ android {
     abi {
       isEnable = true
       reset()
-      include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
-      isUniversalApk = true
+      // Local iteration can build a single ABI with -Pabi=arm64-v8a; release and
+      // CI builds keep the full split set (plus the universal APK).
+      val onlyAbi = providers.gradleProperty("abi").orNull
+      if (onlyAbi != null) {
+        include(onlyAbi)
+        isUniversalApk = false
+      } else {
+        include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        isUniversalApk = true
+      }
     }
   }
 

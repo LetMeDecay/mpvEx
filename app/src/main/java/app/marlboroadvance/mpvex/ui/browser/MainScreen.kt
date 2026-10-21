@@ -56,6 +56,11 @@ object MainScreen : Screen {
   // Use a companion object to store state more persistently
   private var persistentSelectedTab: Int = 0
 
+  /** Restores the tab from durable storage before the first composition. */
+  fun restoreSelectedTab(tab: Int) {
+    persistentSelectedTab = tab
+  }
+
   // Reactive shared state that can be updated by FileSystemBrowserScreen / selection handlers
   private val _isInSelectionMode = MutableStateFlow(false)
   val isInSelectionMode: StateFlow<Boolean> = _isInSelectionMode.asStateFlow()
@@ -117,6 +122,7 @@ object MainScreen : Screen {
     // Update persistent state whenever tab changes
     LaunchedEffect(selectedTab) {
       persistentSelectedTab = selectedTab
+      SessionStateStore.saveTab(context, selectedTab)
     }
 
     // Scaffold with bottom navigation bar

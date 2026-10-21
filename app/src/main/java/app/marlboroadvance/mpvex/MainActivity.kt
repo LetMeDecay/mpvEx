@@ -23,6 +23,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.toArgb
@@ -40,6 +41,8 @@ import app.marlboroadvance.mpvex.repository.NetworkRepository
 import app.marlboroadvance.mpvex.utils.update.UpdateDialog
 import app.marlboroadvance.mpvex.utils.update.UpdateViewModel
 import app.marlboroadvance.mpvex.ui.browser.MainScreen
+import app.marlboroadvance.mpvex.ui.browser.SessionStateStore
+import app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkBrowserScreen
 import app.marlboroadvance.mpvex.ui.theme.DarkMode
 import app.marlboroadvance.mpvex.ui.theme.MpvexTheme
 import app.marlboroadvance.mpvex.ui.utils.LocalBackStack
@@ -72,6 +75,10 @@ class MainActivity : AppCompatActivity() {
     super.onCreate(savedInstanceState)
     
     PermissionUtils.setMediaAccessLauncher(mediaAccessLauncher)
+
+    // Restore the tab the user left on, even when the process was killed while
+    // backgrounded and the system did not hand the saved instance state back.
+    MainScreen.restoreSelectedTab(SessionStateStore.lastTab(this))
 
     setContent {
       // Set up theme and edge-to-edge display
@@ -146,12 +153,39 @@ class MainActivity : AppCompatActivity() {
    */
   @Composable
   fun Navigator() {
-    val backstack = rememberNavBackStack(MainScreen)
+    val context = LocalContext.current
+    val initialBackStack = remember(context) {
+      buildList<Screen> {
+        add(MainScreen)
+        SessionStateStore.networkLocation(context)?.let { location ->
+          add(
+            NetworkBrowserScreen(
+              connectionId = location.connectionId,
+              connectionName = location.connectionName,
+              currentPath = location.path,
+            ),
+          )
+        }
+      }
+    }
+    val backstack = rememberNavBackStack(*initialBackStack.toTypedArray())
+
+    val currentRoute = backstack.lastOrNull()
+    LaunchedEffect(currentRoute) {
+      when (currentRoute) {
+        is NetworkBrowserScreen -> SessionStateStore.saveNetwork(
+          context,
+          currentRoute.connectionId,
+          currentRoute.connectionName,
+          currentRoute.currentPath,
+        )
+        else -> SessionStateStore.clearNetwork(context)
+      }
+    }
 
     @Suppress("UNCHECKED_CAST")
     val typedBackstack = backstack as NavBackStack<Screen>
 
-    val context = LocalContext.current
     val currentVersion = BuildConfig.VERSION_NAME.replace("-dev", "")
 
     // Conditionally initialize update feature based on build config
