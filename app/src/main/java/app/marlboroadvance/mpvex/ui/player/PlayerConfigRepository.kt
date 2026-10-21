@@ -152,7 +152,12 @@ internal object PlayerConfigRepository {
 
   private fun copyAssets(context: Context, target: File) {
     val assets = File(context.filesDir, "player-assets/${appUpdateStamp(context)}")
+    // The bundled mpv AAR only ships a subset of these files (subfont.ttf was
+    // dropped in mpv-android 1.0.0). Copy what exists instead of failing the
+    // whole configuration snapshot on a missing optional asset.
+    val available = runCatching { context.assets.list("").orEmpty().toSet() }.getOrDefault(emptySet())
     for (name in listOf("cacert.pem", "subfont.ttf")) {
+      if (name !in available) continue
       linkOrCopy(cachedAsset(context, assets, name), File(target, name))
     }
   }
