@@ -15,7 +15,7 @@
 - 附加音轨已改为 IO 打开独立资源租约，audio-add 按代次进入同一有界队列；迟到结果不写入新视频，未交付资源确定关闭，原 URI 映射供稳定轨道描述使用。外部音轨 URI 尚未持久化，不能宣称重启后自动恢复。
 - 逐帧/截图接入 typed 控制和同一串行队列；暂停与单帧命令按组执行，截图等待命令完成并核对非空文件，不再固定等待。调用方取消后等待正在执行的 native 工作结束才释放文件；MediaStore 空输出/发布失败及取消会清理未发布条目，临时文件使用独立名称。面板时间线改用当前代次快照，旧面板关闭不恢复新视频。
 - 统计页按已执行选择计算显示切换，连续点击合并后不误切换；Anime4K 着色器准备与应用串行，移除面板独立 IO 作业及空回调。视频宽高随代次发布，用于面板分辨率判断；换片清空，旧代次结果不回填。
-- 最新已交付：代码 `9764f73`，Release 1.3.1-rev1020.5，versionCode 154（ABI 1540–1544）；GitHub Release 已发布 7 个 APK（Standard 5 ABI + PlayStore universal + F-Droid arm64），本地构建/签名并手动发布；1.3.1-rev1020.4 因缺少 `subfont.ttf` 导致播放配置失败，已标注弃用。历史交付在 `../release-github-1020.5/`、`release-rev1020.4`（已弃用）、`release-rev1020.3/` 等。
+- 最新已交付：代码 `573f87c`，Release 1.3.1-rev1020.6，versionCode 155（ABI 1550–1554）；由 tag `v1.3.1-rev1020.6` 触发 `Make release` workflow 构建并发布 7 个 APK（Standard 5 ABI + PlayStore universal + F-Droid arm64），Release 已标记 Latest 并附本次更新说明。1.3.1-rev1020.4 因缺少 `subfont.ttf` 导致播放配置失败，已标注弃用。
 - 当前 PATH 无可用 ADB 命令；未安装、未做启动健康或功能/性能验收，WebDAV 1–2 秒等待与进度恢复尚无设备结论。不要把首次 UI 绘制当视频首帧。
 - 横向滑动定位（2026-10-26）：手势在激活时读取 `playbackState.value` 的最新 position/duration/generation（之前使用组合期捕获的 position，可能为 0/NaN，导致一拖动就从 0 开始）；seek 幅度改为按屏幕宽度归一化，全屏滑动跨度 = max(duration×15%, 屏宽×0.05) × 灵敏度(0.4–2×)，长视频不再只有固定约 1 分钟。
 - 会话恢复（2026-10-21）：新增 `SessionStateStore`，持久化最后 tab 与网络目录（connectionId + 名称 + path）。仅在 `ApplicationExitInfo` 判定上次是**系统杀进程**（LOW_MEMORY / EXCESSIVE_RESOURCE_USAGE / OTHER，例如 `umms1_normal_mem_pressure`）时恢复 tab 与目录；手动滑动清理/强行停止（USER_REQUESTED/USER_STOPPED）或应用更新则清空会话并回到首页。返回连接列表时清除目录记录。本地构建约定：`-Pabi=arm64-v8a` 只出 arm64 APK；全 ABI/PlayStore/F-Droid 交给 workflow，且运行 workflow 前必须先询问。
