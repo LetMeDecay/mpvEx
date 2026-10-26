@@ -818,6 +818,8 @@ fun GestureHandler(
           var hasStartedSeeking = false
           var initialVideoPosition = 0f
           var finalSeekPosition = 0f
+          var seekDuration = 0f
+          var seekGeneration = mediaGeneration
           // Use the sensitivity preference instead of hardcoded value
           val seekSensitivity = horizontalSwipeSensitivity
           
@@ -843,11 +845,18 @@ fun GestureHandler(
                       !isDynamicSpeedControlActive && // Don't conflict with speed control
                       panelShown == Panels.None) { // Only when no panels are shown
                     
-                    if (!viewModel.playbackSession.loaded || duration <= 0f) return@forEach
-                    viewModel.onSeekStarted(mediaGeneration)
+                    // Read the live snapshot here instead of the value captured when
+                    // this pointer handler was composed: a stale/NaN position made the
+                    // gesture start at 00:00 and seek to zero.
+                    val snapshot = viewModel.playbackState.value
+                    seekDuration = snapshot.duration ?: 0f
+                    if (!viewModel.playbackSession.loaded || seekDuration <= 0f) return@forEach
+                    seekGeneration = snapshot.generation
+                    viewModel.onSeekStarted(seekGeneration)
                     gestureType = "horizontal_seek"
                     hasStartedSeeking = true
-                    initialVideoPosition = position
+                    initialVideoPosition = snapshot.position
+                      .takeIf { it.isFinite() && it >= 0f } ?: 0f
                     finalSeekPosition = initialVideoPosition
                     
                     // Show seekbar and start seeking mode (same as seekbar scrubbing)
@@ -856,11 +865,16 @@ fun GestureHandler(
                   }
 
                   if (gestureType == "horizontal_seek" && hasStartedSeeking) {
-                    // Calculate seek amount based on horizontal movement
-                    val seekAmount = deltaX * seekSensitivity
+                    // Scale a full-width swipe to a span tied to the media length so
+                    // long videos are not stuck with the same fixed 50-ish seconds.
+                    val sensitivityScale = (seekSensitivity / 0.05f).coerceIn(0.4f, 2f)
+                    // Keep the previous fixed feel for short clips, but let long
+                    // videos cover proportionally more per swipe.
+                    val baseSpan = maxOf(seekDuration * 0.15f, size.width * 0.05f)
+                    val fullWidthSpan = baseSpan * sensitivityScale
+                    val seekAmount = (deltaX / size.width.coerceAtLeast(1)) * fullWidthSpan
                     val targetPosition = (initialVideoPosition + seekAmount).coerceAtLeast(0f)
-                    val maxDuration = duration
-                    val clampedPosition = targetPosition.coerceAtMost(maxDuration)
+                    val clampedPosition = targetPosition.coerceAtMost(seekDuration)
                     finalSeekPosition = clampedPosition
                     
                     // Format and display time position updates
@@ -899,7 +913,7 @@ fun GestureHandler(
 
           // Apply the final seek when gesture ends
           if (hasStartedSeeking) {
-            viewModel.seekTo(finalSeekPosition.toInt(), mediaGeneration)
+            viewModel.seekTo(finalSeekPosition.toInt(), seekGeneration)
             
             // Clear the horizontal seek update and hide seekbar after a short delay
             coroutineScope.launch {
